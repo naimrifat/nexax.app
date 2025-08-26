@@ -1,7 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Upload, X, PlusCircle, Image, Sparkles, CheckCircle, ArrowRight, Camera, AlertCircle } from 'lucide-react';
 
-// This is the main component for your upload page
 export default function UploadPage() {
     // --- State Management ---
     const [photos, setPhotos] = useState<File[]>([]);
@@ -13,8 +12,8 @@ export default function UploadPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // --- YOUR CREDENTIALS ---
-    const imgbbApiKey = '7b6ad3d170c93f1a32cf2cef62bfebf5'; // <-- PASTE YOUR KEY HERE
-    const makeWebhookUrl = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06'; // <-- PASTE YOUR URL HERE
+    const imgbbApiKey = '7b6ad3d170c93f1a32cf2cef62bfebf5';
+    const makeWebhookUrl = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06';
 
     // --- Photo Handling Functions ---
     const handlePhotoUpload = (files: FileList | null) => {
@@ -47,8 +46,7 @@ export default function UploadPage() {
     };
     
     // --- Main Submission Logic ---
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleSubmit = async () => {
         if (photos.length === 0) {
             setStatus('Please upload at least one image.');
             return;
@@ -120,45 +118,61 @@ export default function UploadPage() {
                         Create Professional Listings
                     </h1>
                     <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                        Upload your product photos and let our AI create optimized listings for all major marketplaces
+                        Upload your product photos and let our AI create optimized listings
                     </p>
                 </div>
 
                 {!results ? (
-                    <form onSubmit={handleSubmit} className="space-y-6">
-                        <div 
-                            className={`border-2 border-dashed rounded-lg p-8 text-center transition-all cursor-pointer ${isDragging ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-400'}`}
-                            onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} onClick={triggerFileInput}
-                        >
-                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e.target.files)} />
-                            <Upload className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-                            <h3 className="text-lg font-medium text-gray-700">Drag & drop or click to upload</h3>
-                            <p className="text-sm text-gray-500 mt-1">Up to 8 photos supported ({photos.length}/8)</p>
-                        </div>
-                        
-                        {photoPreviewUrls.length > 0 && (
-                            <div className="grid grid-cols-4 sm:grid-cols-8 gap-4">
-                                {photoPreviewUrls.map((url, index) => (
-                                    <div key={index} className="relative group aspect-square">
-                                        <img src={url} alt={`Preview ${index}`} className="w-full h-full object-cover rounded-lg border" />
-                                        <button type="button" onClick={() => removePhoto(index)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <X className="w-3 h-3" />
-                                        </button>
-                                        {index === 0 && <span className="absolute bottom-1 left-1 bg-teal-500 text-white text-xs px-2 py-1 rounded">Main</span>}
-                                    </div>
-                                ))}
+                    <div className="space-y-6">
+                        {/* Photo Upload Section */}
+                        <div className="card p-6">
+                            <h2 className="text-xl font-semibold mb-4 flex items-center">
+                                <Image className="w-5 h-5 mr-2 text-teal-600" />
+                                Upload Product Photos
+                            </h2>
+                            <div 
+                                className={`border-2 border-dashed rounded-lg p-8 text-center transition-all cursor-pointer ${isDragging ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-400'}`}
+                                onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} onClick={triggerFileInput}
+                            >
+                                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e.target.files)} />
+                                <Upload className="w-12 h-12 mx-auto text-gray-400 mb-4" />
+                                <h3 className="text-lg font-medium text-gray-700">Drag & drop or click to upload</h3>
+                                <p className="text-sm text-gray-500 mt-1">Up to 8 photos supported ({photos.length}/8)</p>
                             </div>
-                        )}
+                            
+                            {photoPreviewUrls.length > 0 && (
+                                <div className="grid grid-cols-4 sm:grid-cols-8 gap-4 mt-4">
+                                    {photoPreviewUrls.map((url, index) => (
+                                        <div key={index} className="relative group aspect-square">
+                                            <img src={url} alt={`Preview ${index}`} className="w-full h-full object-cover rounded-lg border" />
+                                            <button type="button" onClick={() => removePhoto(index)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                            {index === 0 && <span className="absolute bottom-1 left-1 bg-teal-500 text-white text-xs px-2 py-1 rounded">Main</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
 
-                        <div className="text-center">
-                            <button type="submit" disabled={isLoading || photos.length === 0} className="w-full sm:w-auto flex items-center justify-center gap-2 btn bg-teal-600 text-white hover:bg-teal-700 px-8 py-3 text-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-                                <Sparkles className="w-5 h-5" />
+                        {/* Generate Button Section */}
+                        <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white text-center">
+                            <h3 className="text-xl font-semibold mb-2">Ready to Generate</h3>
+                            <p className="text-teal-100 mb-6">Click the button below to start the AI magic!</p>
+                            <button
+                                type="button"
+                                onClick={handleSubmit}
+                                disabled={isLoading || photos.length === 0}
+                                className="btn bg-white text-teal-700 hover:bg-teal-50 px-8 py-3 text-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <Sparkles className="w-5 h-5 mr-2" />
                                 {isLoading ? 'Generating...' : 'Generate Listings'}
                             </button>
-                            {status && <p className={`mt-4 font-medium ${status.includes('Error') ? 'text-red-600' : 'text-gray-600'}`}>{status}</p>}
+                            {status && <p className={`mt-4 font-medium ${status.includes('Error') ? 'text-yellow-300' : 'text-teal-100'}`}>{status}</p>}
                         </div>
-                    </form>
+                    </div>
                 ) : (
+                    /* --- Results Section --- */
                     <div className="space-y-6">
                          <div className="flex items-center justify-between">
                             <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
@@ -166,7 +180,6 @@ export default function UploadPage() {
                                 Start Another
                             </button>
                         </div>
-
                         {results.titles && (
                             <div>
                                 <h3 className="text-lg font-semibold mb-2">Titles</h3>
