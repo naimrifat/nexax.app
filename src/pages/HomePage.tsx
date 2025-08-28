@@ -15,8 +15,18 @@ export default function HomePage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // --- YOUR CREDENTIALS ---
-    const imgbbApiKey = '7b6ad3d170c93f1a32cf2cef62bfebf5';
     const makeWebhookUrl = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06';
+
+    // Helper function to convert a file to a Base64 string
+    const toBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+            const base64String = (reader.result as string).split(',')[1];
+            resolve(base64String);
+        };
+        reader.onerror = error => reject(error);
+    });
 
     // --- Photo Handling Functions ---
     const handlePhotoUpload = (files: FileList | null) => {
@@ -31,7 +41,6 @@ export default function HomePage() {
         setPhotoPreviewUrls(prev => [...prev, ...newUrls]);
     };
     
-    // THIS FUNCTION WAS MISSING
     const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         handlePhotoUpload(e.target.files);
     };
@@ -51,7 +60,7 @@ export default function HomePage() {
         handlePhotoUpload(e.dataTransfer.files);
     };
     
-    // --- The REAL Submission Logic ---
+    // --- The REAL Submission Logic (with Base64) ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (photos.length === 0) {
@@ -63,32 +72,26 @@ export default function HomePage() {
         setStatus('Starting process...');
         console.log('--- Starting Generation ---');
         try {
-            setStatus('Step 1 of 2: Uploading your main image...');
+            setStatus('Step 1 of 2: Preparing image...');
             const mainPhoto = photos[0];
-            const formData = new FormData();
-            formData.append('image', mainPhoto);
-            console.log('Uploading main image to ImgBB...');
-            const imgResponse = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, {
-                method: 'POST',
-                body: formData,
-            });
-            if (!imgResponse.ok) throw new Error('Image upload failed. Please check the image file.');
-            const imgData = await imgResponse.json();
-            if (!imgData.success) throw new Error(imgData.error?.message || 'Unknown error uploading image.');
-            const imageUrl = imgData.data.url;
-            console.log('Image uploaded successfully:', imageUrl);
-            setStatus('Step 2 of 2: Analyzing image with AI...');
-            const payload = { image_url: imageUrl };
-            console.log('Sending payload to Make.com:', payload);
+            const base64Image = await toBase64(mainPhoto);
+            console.log('Image converted successfully.');
+
+            setStatus('Step 2 of 2: Sending to AI engine...');
+            const payload = { image_base64: base64Image };
+            console.log('Sending payload to Make.com...');
+            
             const makeResponse = await fetch(makeWebhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
+
             if (!makeResponse.ok) {
                 const errorData = await makeResponse.json();
                 throw new Error(errorData.message || 'The AI engine returned an error.');
             }
+
             const resultData = await makeResponse.json();
             console.log('Received results from Make.com:', resultData);
             setResults(resultData);
@@ -104,7 +107,7 @@ export default function HomePage() {
     // --- JSX to Render the Page ---
     return (
         <div className="flex flex-col">
-            {/* ... Your other page sections (Hero, etc.) can remain ... */}
+            {/* ... Your other page sections (Hero, etc.) ... */}
 
             <section className="py-16 md:py-24 bg-white">
                 <div className="container mx-auto px-4">
@@ -159,7 +162,9 @@ export default function HomePage() {
                             /* --- REAL Results Section --- */
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                                 <div className="lg:col-span-1">
-                                    {/* This section can display the main uploaded photo, etc. */}
+                                    <div className="card overflow-hidden">
+                                        <img src={photoPreviewUrls[0]} alt="Main product" className="w-full h-auto object-cover"/>
+                                    </div>
                                 </div>
                                 <div className="lg:col-span-2 space-y-6">
                                     <div className="flex items-center justify-between">
@@ -178,25 +183,3 @@ export default function HomePage() {
                                             <pre className="bg-gray-50 p-4 rounded-lg whitespace-pre-wrap text-sm">{JSON.stringify(results.specifics, null, 2)}</pre>
                                         </div>
                                     )}
-                                    {results.description && (
-                                        <div>
-                                            <h3 className="text-lg font-semibold mb-2">Description</h3>
-                                            <div className="bg-gray-50 p-4 rounded-lg whitespace-pre-wrap text-sm leading-relaxed">{results.description}</div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </section>
-            
-            {/* ... Your other page sections (How It Works, Testimonials, etc.) can remain ... */}
-        </div>
-    );
-};
-
-// You might need to re-create or import these helper components if they are not in this file
-const StepCard: React.FC<any> = ({ number, title, description, icon }) => (<div>{/* Your StepCard JSX */}</div>);
-const FeatureCard: React.FC<any> = ({ title, description, icon }) => (<div>{/* Your FeatureCard JSX */}</div>);
-const TestimonialCard: React.FC<any> = ({ quote, author, role, platform }) => (<div>{/* Your TestimonialCard JSX */}</div>);
