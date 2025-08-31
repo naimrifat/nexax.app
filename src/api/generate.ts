@@ -1,44 +1,71 @@
-// File: src/api/generate.ts
+// This file acts as a secure, server-side middleman.
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // 1. Check if the request is a POST request
+    // 1. Only allow POST requests
     if (req.method !== 'POST') {
-        return res.status(405).json({ message: 'Only POST requests allowed' });
+        return res.status(405).json({ message: 'Only POST requests are allowed' });
     }
 
     try {
-        // 2. Get the image_url from the request body
-        const { image_url } = req.body;
-        if (!image_url) {
-            return res.status(400).json({ message: 'Missing image_url in request body' });
+        // 2. Get the Base64 image data from the browser's request
+        const { image_base64 } = req.body;
+        if (!image_base64) {
+            return res.status(400).json({ message: 'Missing image_base64 in request body' });
         }
 
-        // 3. Get the secure Make.com webhook URL from environment variables
+        // 3. Get secret keys securely from Vercel's environment variables
+        const imgbbApiKey = process.env.IMGBB_API_KEY;
         const makeWebhookUrl = process.env.MAKE_WEBHOOK_URL;
-        if (!makeWebhookUrl) {
-            console.error("MAKE_WEBHOOK_URL is not set in environment variables.");
+
+        if (!imgbbApiKey || !makeWebhookUrl) {
+            console.error("Missing environment variables on Vercel.");
             return res.status(500).json({ message: 'Server configuration error.' });
         }
 
-        // 4. Forward the request to Make.com
+        // 4. Upload the image to ImgBB from the server
+        const formData = new URLSearchParams();
+        formData.append('image', image_base64);
+
+        const imgbbResponse = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!imgbbResponse.ok) {
+            const errorText = await imgbbResponse.text();
+            console.error("Error from ImgBB:", errorText);
+            return res.status(502).json({ message: 'Error from image hosting service.' });
+        }
+        
+        const imgbbData = await imgbbResponse.json();
+        if (!imgbbData.success) {
+            console.error("ImgBB upload failed:", imgbbData);
+            return res.status(500).json({ message: 'Image hosting failed.' });
+        }
+        const imageUrl = imgbbData.data.url;
+
+        // 5. Trigger the Make.com scenario with the new image URL
         const makeResponse = await fetch(makeWebhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_url: image_url }),
+            body: JSON.stringify({ image_url: imageUrl }),
         });
 
         if (!makeResponse.ok) {
-            console.error("Error from Make.com:", await makeResponse.text());
+            const errorText = await makeResponse.text();
+            console.error("Error from Make.com:", errorText);
             return res.status(502).json({ message: 'Error from AI service.' });
         }
 
-        // 5. Send the successful response from Make.com back to the browser
+        // 6. Send the final, successful response from Make.com back to the browser
         const resultData = await makeResponse.json();
         return res.status(200).json(resultData);
 
     } catch (error) {
-        console.error("Internal server error:", error);
-        return res.status(500).json({ message: 'Internal server error.' });
+        console.error("Internal Server Error:", error);
+        return res.status(500).json({ message: 'An internal server error occurred.' });
     }
 }
+
