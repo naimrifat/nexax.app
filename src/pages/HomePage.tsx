@@ -15,8 +15,8 @@ export default function HomePage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // --- YOUR CREDENTIALS ---
-    const imgbbApiKey = 'YOUR_IMGBB_API_KEY'; // <-- PASTE YOUR KEY HERE
-    const makeWebhookUrl = 'YOUR_MAKE_COM_WEBHOOK_URL'; // <-- PASTE YOUR URL HERE
+    const imgbbApiKey = '7b6ad3d170c93f1a32cf2cef62bfebf5'; // <-- PASTE YOUR KEY HERE
+    const makeWebhookUrl = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06'; // <-- PASTE YOUR URL HERE
 
     // --- Photo Handling Functions ---
     const handlePhotoUpload = (files: FileList | null) => {
