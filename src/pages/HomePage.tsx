@@ -9,14 +9,14 @@ export default function HomePage() {
     const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
     const [isDragging, setIsDragging] = useState(false);
     const [status, setStatus] = useState('');
-    const [results, setResults] = useState<any>(null);
+    const [results, setResults] = useState<any>(null); // This will hold the REAL AI data
     const [isLoading, setIsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<string>('eBay');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // --- YOUR CREDENTIALS ---
-    const imgbbApiKey = '7b6ad3d170c93f1a32cf2cef62bfebf5';
-    const makeWebhookUrl = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06';
+    const imgbbApiKey = 'YOUR_IMGBB_API_KEY'; // <-- PASTE YOUR KEY HERE
+    const makeWebhookUrl = 'YOUR_MAKE_COM_WEBHOOK_URL'; // <-- PASTE YOUR URL HERE
 
     // --- Photo Handling Functions ---
     const handlePhotoUpload = (files: FileList | null) => {
@@ -211,12 +211,24 @@ export default function HomePage() {
                 </div>
             </section>
             
-            {/* ... Your other page sections (How It Works, Testimonials, etc.) ... */}
+            {/* Other page sections */}
+            <section className="py-16 md:py-24 bg-gray-50">
+                <div className="container mx-auto px-4">
+                    <div className="text-center mb-16">
+                        <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">How It Works</h2>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+                        <StepCard number={1} title="Upload Photos" description="Drag and drop your product photos." icon={<Upload className="w-8 h-8" />} />
+                        <StepCard number={2} title="AI Works Magic" description="Our AI analyzes your photos to identify the product, category, and key selling points." icon={<Sparkles className="w-8 h-8" />} />
+                        <StepCard number={3} title="Get Your Listings" description="Review, edit, and export to your preferred marketplace." icon={<ShoppingBag className="w-8 h-8" />} />
+                    </div>
+                </div>
+            </section>
         </div>
     );
 };
 
-// --- Helper Components (Re-added from your original code) ---
+// --- Helper Components ---
 interface StepCardProps { number: number; title: string; description: string; icon: React.ReactNode; }
 const StepCard: React.FC<StepCardProps> = ({ number, title, description, icon }) => (
     <div className="card hover:shadow-md px-6 py-8 flex flex-col items-center text-center">
@@ -224,29 +236,5 @@ const StepCard: React.FC<StepCardProps> = ({ number, title, description, icon })
         <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white font-bold mb-3">{number}</div>
         <h3 className="text-xl font-semibold text-gray-900 mb-2">{title}</h3>
         <p className="text-gray-600">{description}</p>
-    </div>
-);
-
-interface FeatureCardProps { title: string; description: string; icon: React.ReactNode; }
-const FeatureCard: React.FC<FeatureCardProps> = ({ title, description, icon }) => (
-    <div className="card hover:shadow-md p-6">
-        <div className="mb-4">{icon}</div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
-        <p className="text-gray-600 text-sm">{description}</p>
-    </div>
-);
-
-interface TestimonialCardProps { quote: string; author: string; role: string; platform: string; }
-const TestimonialCard: React.FC<TestimonialCardProps> = ({ quote, author, role, platform }) => (
-    <div className="card hover:shadow-md p-6">
-        <div className="mb-4 text-yellow-500 flex">
-            <Award className="w-5 h-5" /><Award className="w-5 h-5" /><Award className="w-5 h-5" /><Award className="w-5 h-5" /><Award className="w-5 h-5" />
-        </div>
-        <p className="text-gray-700 mb-4 italic">"{quote}"</p>
-        <div>
-            <p className="font-semibold text-gray-900">{author}</p>
-            <p className="text-sm text-gray-500">{role}</p>
-            <p className="text-xs text-teal-600 mt-1">{platform}</p>
-        </div>
     </div>
 );
