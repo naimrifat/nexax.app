@@ -2,7 +2,13 @@ import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Upload, X, PlusCircle, Image, Sparkles, CheckCircle, ArrowRight, Camera, AlertCircle, ShoppingBag, Award, Smartphone, Edit, Tag } from 'lucide-react';
 import MarketplaceLogo from '../components/MarketplaceLogo';
-import imageCompression from 'browser-image-compression'; // Import the library
+import imageCompression from 'browser-image-compression'; // Import the new library
+
+// Helper components that might be in your project
+const StepCard: React.FC<any> = ({ number, title, description, icon }) => (<div></div>);
+const FeatureCard: React.FC<any> = ({ title, description, icon }) => (<div></div>);
+const TestimonialCard: React.FC<any> = ({ quote, author, role, platform }) => (<div></div>);
+
 
 export default function HomePage() {
     const [photos, setPhotos] = useState<File[]>([]);
@@ -11,6 +17,7 @@ export default function HomePage() {
     const [status, setStatus] = useState('');
     const [results, setResults] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [activeTab, setActiveTab] = useState<string>('eBay');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Helper function to convert a file to a Base64 text string
@@ -71,7 +78,8 @@ export default function HomePage() {
             setStatus('Step 1 of 3: Compressing image...');
             const mainPhoto = photos[0];
 
-            // --- NEW: Compress the image before doing anything else ---
+            // --- THIS IS THE CRITICAL FIX ---
+            // Compress the image before doing anything else
             const options = {
                 maxSizeMB: 1,           // Set max size to 1MB
                 maxWidthOrHeight: 1920, // Resize to a web-friendly resolution
@@ -201,9 +209,4 @@ export default function HomePage() {
         </div>
     );
 };
-
-// Helper components that might be in your project
-const StepCard: React.FC<any> = ({ number, title, description, icon }) => (<div></div>);
-const FeatureCard: React.FC<any> = ({ title, description, icon }) => (<div></div>);
-const TestimonialCard: React.FC<any> = ({ quote, author, role, platform }) => (<div></div>);
 
