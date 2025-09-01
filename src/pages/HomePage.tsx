@@ -83,7 +83,7 @@ export default function HomePage() {
             const base64Image = await toBase64(compressedFile);
 
             setStatus('Step 3 of 3: Sending to AI engine...');
-            const payload = { image_base_64: base64Image };
+            const payload = { image_base64: base64Image };
             
             // Call our own secure serverless function
             const response = await fetch('/api/generate', {
