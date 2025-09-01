@@ -10,8 +10,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         // 2. Get the Base64 image data from the browser's request
-        const { image_base64 } = req.body;
-        if (!image_base64) {
+        const { image_base64 } = req.body; // Correct variable name
+        if (!image_base64) { // Correct variable name used here
             return res.status(400).json({ message: 'Missing image_base64 in request body' });
         }
 
@@ -26,7 +26,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // 4. Upload the image to ImgBB from the server
         const formData = new URLSearchParams();
-        formData.append('image', image_base64);
+        formData.append('image', image_base64); // Correct variable name used here
 
         const imgbbResponse = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, {
             method: 'POST',
