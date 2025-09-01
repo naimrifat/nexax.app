@@ -16,8 +16,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 3. Get secret keys securely from Vercel's environment variables
-        const imgbbApiKey = process.env.IMGBB_API_KEY;
-        const makeWebhookUrl = process.env.MAKE_WEBHOOK_URL;
+        const imgbbApiKey = process.env.VITE_IMGBB_API_KEY;
+        const makeWebhookUrl = process.env.VITE_MAKE_WEBHOOK_URL;
 
         if (!imgbbApiKey || !makeWebhookUrl) {
             console.error("Missing environment variables on Vercel.");
@@ -68,3 +68,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ message: 'An internal server error occurred.' });
     }
 }
+
