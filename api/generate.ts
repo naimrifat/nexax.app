@@ -58,7 +58,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // FIXED: Get raw text first, handle markdown-wrapped responses
     const rawText = await makeResponse.text();
     
-    console.log("Raw response (first 300 chars):", rawText.substring(0, 300));
+    console.log("Raw response (first 500 chars):", rawText.substring(0, 500));
+    console.log("Raw response length:", rawText.length);
     
     let rawData;
     try {
