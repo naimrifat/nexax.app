@@ -58,28 +58,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // FIXED: Get raw text first, clean it thoroughly, then parse
     const rawText = await makeResponse.text();
     
-    // More aggressive cleaning - remove ALL control characters except newlines and tabs
-    const cleanedRawText = rawText
-      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove all control chars except \t and \n
-      .replace(/\r\n/g, '\n')   // normalize line endings
-      .replace(/\r/g, '\n')     // convert remaining \r to \n
+    // Debug: Log the problematic area (position 22, line 2)
+    console.log("Raw response length:", rawText.length);
+    console.log("Character codes around position 22:", 
+      rawText.substring(15, 30).split('').map((char, i) => 
+        `${i + 15}: '${char}' (${char.charCodeAt(0)})`
+      ).join(', ')
+    );
+    
+    // Ultra aggressive cleaning - only keep printable ASCII + basic whitespace
+    const ultraClean = rawText
+      .split('')
+      .map(char => {
+        const code = char.charCodeAt(0);
+        // Keep: space (32), printable ASCII (33-126), tab (9), newline (10)
+        if (code === 32 || (code >= 33 && code <= 126) || code === 9 || code === 10) {
+          return char;
+        }
+        return ''; // Remove everything else
+      })
+      .join('')
+      .replace(/\s+/g, ' ') // collapse multiple spaces
       .trim();
+
+    console.log("Ultra cleaned response (first 100 chars):", ultraClean.substring(0, 100));
 
     let rawData;
     try {
-      rawData = JSON.parse(cleanedRawText);
+      rawData = JSON.parse(ultraClean);
     } catch (parseError) {
-      console.error("Failed to parse Make.com response after cleaning:", parseError);
-      console.error("Raw response (first 500 chars):", rawText.substring(0, 500));
-      console.error("Cleaned response (first 500 chars):", cleanedRawText.substring(0, 500));
+      console.error("Even ultra clean parsing failed:", parseError);
+      console.error("Problem area in ultra clean:", 
+        ultraClean.substring(15, 30).split('').map((char, i) => 
+          `${i + 15}: '${char}' (${char.charCodeAt(0)})`
+        ).join(', ')
+      );
       
-      // Try one more aggressive clean - remove ALL non-printable characters except spaces
-      const ultraClean = rawText.replace(/[^\x20-\x7E\n\t]/g, '');
+      // Last resort - try to fix common JSON issues
+      let lastResort = ultraClean
+        .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":') // Add quotes to unquoted keys
+        .replace(/:\s*([^"{\[\s][^,}\]]*[^,}\]\s])\s*([,}\]])/g, ':"$1"$2') // Quote unquoted string values
+        .replace(/,\s*([}\]])/g, '$1') // Remove trailing commas
+        .replace(/\n/g, '\\n'); // Escape newlines in strings
+      
       try {
-        rawData = JSON.parse(ultraClean);
-        console.log("Ultra clean parsing succeeded");
+        rawData = JSON.parse(lastResort);
+        console.log("Last resort parsing succeeded!");
       } catch (finalError) {
-        console.error("Even ultra clean parsing failed:", finalError);
+        console.error("All parsing attempts failed:", finalError);
+        console.error("Final attempt content:", lastResort.substring(0, 200));
         return res.status(502).json({ message: 'Invalid response format from AI service.' });
       }
     }
