@@ -55,7 +55,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(502).json({ message: 'Error from AI service.' });
     }
 
-    const rawData = await makeResponse.json();
+    // FIXED: Get raw text first, clean it, then parse
+    const rawText = await makeResponse.text();
+    const cleanedRawText = rawText
+      .replace(/\u0000/g, '')   // null
+      .replace(/\u0008/g, '')   // backspace
+      .replace(/\u0001/g, '')   // start of heading
+      .replace(/\u0002/g, '')   // start of text
+      .replace(/\u0003/g, '')   // end of text
+      .replace(/\u0004/g, '')   // end of transmission
+      .replace(/\u0005/g, '')   // enquiry
+      .replace(/\u0006/g, '')   // acknowledge
+      .replace(/\u0007/g, '')   // bell
+      .replace(/\u000B/g, '')   // vertical tab
+      .replace(/\u000C/g, '')   // form feed
+      .replace(/\u000E/g, '')   // shift out
+      .replace(/\u000F/g, '')   // shift in
+      .replace(/[\u0010-\u001F]/g, '') // other control characters
+      .replace(/\r/g, '');      // carriage return
+
+    let rawData;
+    try {
+      rawData = JSON.parse(cleanedRawText);
+    } catch (parseError) {
+      console.error("Failed to parse Make.com response after cleaning:", parseError);
+      console.error("Raw response:", rawText);
+      return res.status(502).json({ message: 'Invalid response format from AI service.' });
+    }
 
     // Cleaner function to strip Markdown formatting and bad control characters
     const cleanJSONString = (raw: string) => {
