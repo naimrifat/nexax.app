@@ -55,32 +55,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(502).json({ message: 'Error from AI service.' });
     }
 
-    // FIXED: Get raw text first, clean it, then parse
+    // FIXED: Get raw text first, clean it thoroughly, then parse
     const rawText = await makeResponse.text();
+    
+    // More aggressive cleaning - remove ALL control characters except newlines and tabs
     const cleanedRawText = rawText
-      .replace(/\u0000/g, '')   // null
-      .replace(/\u0008/g, '')   // backspace
-      .replace(/\u0001/g, '')   // start of heading
-      .replace(/\u0002/g, '')   // start of text
-      .replace(/\u0003/g, '')   // end of text
-      .replace(/\u0004/g, '')   // end of transmission
-      .replace(/\u0005/g, '')   // enquiry
-      .replace(/\u0006/g, '')   // acknowledge
-      .replace(/\u0007/g, '')   // bell
-      .replace(/\u000B/g, '')   // vertical tab
-      .replace(/\u000C/g, '')   // form feed
-      .replace(/\u000E/g, '')   // shift out
-      .replace(/\u000F/g, '')   // shift in
-      .replace(/[\u0010-\u001F]/g, '') // other control characters
-      .replace(/\r/g, '');      // carriage return
+      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove all control chars except \t and \n
+      .replace(/\r\n/g, '\n')   // normalize line endings
+      .replace(/\r/g, '\n')     // convert remaining \r to \n
+      .trim();
 
     let rawData;
     try {
       rawData = JSON.parse(cleanedRawText);
     } catch (parseError) {
       console.error("Failed to parse Make.com response after cleaning:", parseError);
-      console.error("Raw response:", rawText);
-      return res.status(502).json({ message: 'Invalid response format from AI service.' });
+      console.error("Raw response (first 500 chars):", rawText.substring(0, 500));
+      console.error("Cleaned response (first 500 chars):", cleanedRawText.substring(0, 500));
+      
+      // Try one more aggressive clean - remove ALL non-printable characters except spaces
+      const ultraClean = rawText.replace(/[^\x20-\x7E\n\t]/g, '');
+      try {
+        rawData = JSON.parse(ultraClean);
+        console.log("Ultra clean parsing succeeded");
+      } catch (finalError) {
+        console.error("Even ultra clean parsing failed:", finalError);
+        return res.status(502).json({ message: 'Invalid response format from AI service.' });
+      }
     }
 
     // Cleaner function to strip Markdown formatting and bad control characters
