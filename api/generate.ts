@@ -158,7 +158,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const titles = extractJSON(rawData.titles, 'titles');
     const specifics = extractJSON(rawData.specifics, 'specifics');
-    const description = rawData.description;
+    
+    // Description should be a plain string, not JSON
+    let description = rawData.description;
+    if (typeof description === 'string') {
+      // Clean any markdown formatting from description but don't parse as JSON
+      description = description
+        .replace(/```json\n?/gi, '')
+        .replace(/```/gi, '')
+        .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+        .trim();
+    }
+
+    console.log("Processed data:", {
+      titles: titles,
+      specifics: specifics, 
+      description: description,
+      descriptionType: typeof description
+    });
 
     if (!titles || !specifics || !description) {
       console.error("Missing required data:", { 
