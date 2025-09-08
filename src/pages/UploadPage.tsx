@@ -60,3 +60,4 @@ const handleImageUpload = async (imageFile: File) => {
         setIsLoading(false);
     }
 };
+export default UploadPage;
