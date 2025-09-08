@@ -8,6 +8,9 @@ import PricingPage from './pages/PricingPage';
 import { ListingProvider } from './context/ListingContext';
 import './App.css';
 
+// 👇 1. IMPORT THE NEW UPLOAD PAGE
+import UploadPage from './pages/UploadPage';
+
 function App() {
   return (
     <Router>
@@ -18,6 +21,11 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/results/:id" element={<ResultsPage />} />
             <Route path="/pricing" element={<PricingPage />} />
+            
+            {/* 👇 2. ADD THE ROUTES FOR THE NEW PAGES */}
+            <Route path="/create-listing" element={<UploadPage />} />
+            <Route path="/results" element={<ResultsPage />} />
+
           </Routes>
         </Layout>
       </ListingProvider>
@@ -25,4 +33,4 @@ function App() {
   );
 }
 
-export default App
+export default App;
