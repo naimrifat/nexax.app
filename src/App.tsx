@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import DashboardPage from './pages/DashboardPage';
-import UploadPage from './pages/UploadPage';
 import ResultsPage from './pages/ResultsPage';
 import PricingPage from './pages/PricingPage';
 import { ListingProvider } from './context/ListingContext';
