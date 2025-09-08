@@ -2,8 +2,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const imgbbApiKey = '7b6ad3d170c93f1a32cf2cef62bfebf5'; // ⚠️ move to env/server if possible
-const yourAIWebhookURL = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06'; // ⚠️ same note
+const imgbbApiKey = '7b6ad3d170c93f1a32cf2cef62bfebf5'; // ⚠️ move to env/server
+const yourAIWebhookURL = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06'; // ⚠️ server/proxy in prod
 
 const UploadPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -16,7 +16,7 @@ const UploadPage: React.FC = () => {
 
     let imageUrl = '';
 
-    // --- Step 1: Upload the image to ImgBB to get a public URL ---
+    // --- Step 1: upload image to ImgBB ---
     try {
       const formData = new FormData();
       formData.append('image', imageFile);
@@ -26,21 +26,21 @@ const UploadPage: React.FC = () => {
         { method: 'POST', body: formData }
       );
 
-      if (!imgbbResponse.ok) throw new Error('Image hosting request failed.');
+      if (!imgbbResponse.ok) throw new Error('Image hosting request failed');
 
       const imgbbData = await imgbbResponse.json();
-      if (imgbbData?.success && imgbbData?.data?.url) {
-        imageUrl = imgbbData.data.url as string;
-      } else {
-        throw new Error('Image hosting failed.');
+      imageUrl = imgbbData?.data?.url;
+      if (!imgbbData?.success || !imageUrl) {
+        throw new Error('Image hosting failed');
       }
-    } catch (error) {
+    } catch (err) {
+      console.error('[ImgBB] error:', err);
       setStatusMessage('Error: Could not upload the image. Please try again.');
       setIsLoading(false);
       return;
     }
 
-    // --- Step 2: Send the public URL to your Make.com webhook ---
+    // --- Step 2: call Make webhook with the public URL ---
     try {
       setStatusMessage('Step 2 of 2: Analyzing image...');
 
@@ -50,17 +50,40 @@ const UploadPage: React.FC = () => {
         body: JSON.stringify({ image_url: imageUrl }),
       });
 
+      const raw = await aiResponse.text();
+      console.log('[Webhook] status:', aiResponse.status);
+      console.log('[Webhook] raw body:', raw);
+
+      // Keep a copy for debugging
+      sessionStorage.setItem('aiListingDataRaw', raw);
+
       if (!aiResponse.ok) {
-        throw new Error('AI analysis failed. Please try another image.');
+        throw new Error(`AI analysis failed (status ${aiResponse.status})`);
       }
 
-      const aiData = await aiResponse.json();
-      sessionStorage.setItem('aiListingData', JSON.stringify(aiData));
+      // Safely parse JSON
+      let aiData: any;
+      try {
+        aiData = JSON.parse(raw);
+      } catch (e) {
+        throw new Error('Server did not return valid JSON');
+      }
 
-      // Navigate to the results page
+      // Merge in the image URL if the server didn’t provide one
+      const payload = {
+        ...aiData,
+        image_url: aiData?.image_url ?? imageUrl,
+      };
+
+      // Save the final payload for the Results page
+      sessionStorage.setItem('aiListingData', JSON.stringify(payload));
+      console.log('[Upload] saved aiListingData');
+
+      // Done → go to results
       navigate('/results');
-    } catch (error: any) {
-      setStatusMessage(`Error: ${error.message ?? 'Unknown error'}`);
+    } catch (err: any) {
+      console.error('[Webhook] error:', err);
+      setStatusMessage(`Error: ${err?.message ?? 'Unknown error'}`);
       setIsLoading(false);
     }
   };
