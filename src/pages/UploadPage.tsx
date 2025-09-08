@@ -1,79 +1,62 @@
-// src/pages/UploadPage.tsx
+// In src/pages/UploadPage.tsx
 
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import './UploadPage.css'; // We will create this CSS file next
+const handleImageUpload = async (imageFile: File) => {
+    setIsLoading(true);
+    setStatusMessage('Step 1 of 2: Uploading image...');
 
-const UploadPage = () => {
-    const [statusMessage, setStatusMessage] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const navigate = useNavigate();
+    const imgbbApiKey = '7b6ad3d170c93f1a32cf2cef62bfebf5'; // <-- ❗ PASTE YOUR IMGBB KEY HERE
+    const yourAIWebhookURL = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06'; // <-- ❗ PASTE YOUR MAKE.COM URL HERE
+    
+    let imageUrl = '';
 
-    const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (file) {
-            handleImageUpload(file);
+    // --- Step 1: Upload the image to ImgBB to get a public URL ---
+    try {
+        const formData = new FormData();
+        formData.append('image', imageFile);
+
+        const imgbbResponse = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        const imgbbData = await imgbbResponse.json();
+
+        if (imgbbData.success) {
+            imageUrl = imgbbData.data.url;
+        } else {
+            throw new Error('Image hosting failed.');
         }
-    };
 
-    const handleImageUpload = async (imageFile: File) => {
-        setIsLoading(true);
-        setStatusMessage('Uploading and analyzing image... Please wait.');
+    } catch (error) {
+        setStatusMessage('Error: Could not upload the image. Please try again.');
+        setIsLoading(false);
+        return;
+    }
 
-        const yourAIWebhookURL = 'https://hook.us2.make.com/e1e7hqg3p3oh28x8nxx25urjjn92qu06'; // <-- ❗ PASTE YOUR URL HERE
+    // --- Step 2: Send the public URL to your Make.com webhook ---
+    try {
+        setStatusMessage('Step 2 of 2: Analyzing image...');
 
-        try {
-            const formData = new FormData();
-            formData.append('image', imageFile);
+        const aiResponse = await fetch(yourAIWebhookURL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ image_url: imageUrl }), // Send the URL as JSON
+        });
 
-            const response = await fetch(yourAIWebhookURL, {
-                method: 'POST',
-                body: formData,
-            });
-
-            if (!response.ok) {
-                throw new Error('AI analysis failed. Please try another image.');
-            }
-
-            const aiData = await response.json();
-            sessionStorage.setItem('aiListingData', JSON.stringify(aiData));
-            
-            // Navigate to the results page after success
-            navigate('/results');
-
-        } catch (error: any) {
-            setStatusMessage(`Error: ${error.message}`);
-            setIsLoading(false);
+        if (!aiResponse.ok) {
+            throw new Error('AI analysis failed. Please try another image.');
         }
-    };
 
-    return (
-        <div className="upload-page-background">
-            <div className="upload-container">
-                <h1>Generate a New Listing</h1>
-                <p>Upload a product photo to get started. Our AI will handle the rest.</p>
-                
-                <input 
-                    type="file" 
-                    id="imageInput" 
-                    accept="image/*" 
-                    style={{ display: 'none' }}
-                    onChange={handleFileSelect}
-                    disabled={isLoading}
-                />
-                
-                <button 
-                    className="upload-btn" 
-                    onClick={() => document.getElementById('imageInput')?.click()}
-                    disabled={isLoading}
-                >
-                    {isLoading ? 'Processing...' : '📷 Upload Photo'}
-                </button>
-                
-                <div className="status-message">{statusMessage}</div>
-            </div>
-        </div>
-    );
+        const aiData = await aiResponse.json();
+        sessionStorage.setItem('aiListingData', JSON.stringify(aiData));
+        
+        // Navigate to the results page
+        navigate('/results');
+
+    } catch (error: any) {
+        setStatusMessage(`Error: ${error.message}`);
+        setIsLoading(false);
+    }
 };
-
-export default UploadPage;
