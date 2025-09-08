@@ -3,10 +3,13 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import DashboardPage from './pages/DashboardPage';
-import ResultsPage from './pages/ResultsPage'; // <-- This was the missing line
+import ResultsPage from './pages/ResultsPage';
 import PricingPage from './pages/PricingPage';
+import UploadPage from './pages/UploadPage'; // <-- Moved here for better organization
 import { ListingProvider } from './context/ListingContext';
 import './App.css';
+
+// ... rest of your App function
 
 // 1. IMPORT THE NEW UPLOAD PAGE
 import UploadPage from './pages/UploadPage';
