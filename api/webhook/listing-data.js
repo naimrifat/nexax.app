@@ -1,6 +1,3 @@
-// Simple in-memory storage (for production, use a database)
-const dataStore = new Map();
-
 export default function handler(req, res) {
   // Only allow POST requests
   if (req.method !== 'POST') {
@@ -30,27 +27,25 @@ export default function handler(req, res) {
     // Generate unique session ID
     const sessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
     
-    // Store data (expires in 1 hour)
-    dataStore.set(sessionId, {
+    // For now, we'll use a simpler approach - store in a global variable
+    // In production, you'd use a proper database
+    global.listingDataStore = global.listingDataStore || new Map();
+    
+    global.listingDataStore.set(sessionId, {
       data: transformedData,
       expires: Date.now() + (60 * 60 * 1000) // 1 hour
     });
 
-    // Clean up expired data
-    for (const [key, value] of dataStore.entries()) {
-      if (Date.now() > value.expires) {
-        dataStore.delete(key);
-      }
-    }
+    console.log('Stored data for session:', sessionId);
 
-    // Return success with redirect URL
+    // Return success with session ID
     res.status(200).json({ 
       success: true, 
-      redirectUrl: `https://www.nexax.app/results?session=${sessionId}`
+      sessionId: sessionId
     });
 
   } catch (error) {
     console.error('Webhook error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 }
