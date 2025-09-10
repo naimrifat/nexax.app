@@ -54,31 +54,77 @@ export default function ResultsPage() {
 
   // Read once on mount
   useEffect(() => {
-    const raw = sessionStorage.getItem('aiListingData');
-    if (!raw) {
-      navigate('/create-listing', { replace: true });
+    // Check for session ID in URL first
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('session');
+    
+    if (sessionId) {
+      // Fetch data from API
+      fetch(`/api/listing-data/${sessionId}`)
+        .then(res => {
+          if (!res.ok) {
+            throw new Error('Failed to fetch data');
+          }
+          return res.json();
+        })
+        .then(data => {
+          console.log('Received data from API:', data);
+          
+          setTitle(data.title ?? '');
+          setDescription(data.description ?? '');
+          setPrice(
+            typeof data.price_suggestion?.optimal === 'number'
+              ? data.price_suggestion.optimal.toFixed(2)
+              : (data.price_suggestion?.optimal as string) ?? '0.00'
+          );
+          setImageUrl(data.image_url ?? '');
+          setCategory(data.category ?? null);
+          setCategorySuggestions(data.category_suggestions ?? []);
+          setSpecifics(normalizeSpecifics(data.item_specifics));
+
+          const kw = Array.isArray(data.keywords) 
+            ? data.keywords.join(', ') 
+            : (data.keywords ?? '');
+          setKeywords(kw);
+        })
+        .catch(error => {
+          console.error('Error fetching listing data:', error);
+          // Fallback to sessionStorage
+          checkSessionStorage();
+        });
       return;
     }
-    try {
-      const data: AiData = JSON.parse(raw);
 
-      setTitle(data.title ?? '');
-      setDescription(data.description ?? '');
-      setPrice(
-        typeof data.price_suggestion?.optimal === 'number'
-          ? data.price_suggestion.optimal.toFixed(2)
-          : (data.price_suggestion?.optimal as string) ?? '0.00'
-      );
-      setImageUrl(data.image_url ?? '');
-      setCategory(data.category ?? null);
-      setCategorySuggestions(data.category_suggestions ?? []);
-      setSpecifics(normalizeSpecifics((data as any).item_specifics));
+    // Fallback to existing sessionStorage logic
+    checkSessionStorage();
 
-      const kw =
-        Array.isArray(data.keywords) ? data.keywords.join(', ') : (data.keywords ?? '');
-      setKeywords(kw);
-    } catch (e) {
-      console.error('Bad aiListingData:', e);
+    function checkSessionStorage() {
+      const raw = sessionStorage.getItem('aiListingData');
+      if (!raw) {
+        navigate('/create-listing', { replace: true });
+        return;
+      }
+      try {
+        const data: AiData = JSON.parse(raw);
+
+        setTitle(data.title ?? '');
+        setDescription(data.description ?? '');
+        setPrice(
+          typeof data.price_suggestion?.optimal === 'number'
+            ? data.price_suggestion.optimal.toFixed(2)
+            : (data.price_suggestion?.optimal as string) ?? '0.00'
+        );
+        setImageUrl(data.image_url ?? '');
+        setCategory(data.category ?? null);
+        setCategorySuggestions(data.category_suggestions ?? []);
+        setSpecifics(normalizeSpecifics((data as any).item_specifics));
+
+        const kw =
+          Array.isArray(data.keywords) ? data.keywords.join(', ') : (data.keywords ?? '');
+        setKeywords(kw);
+      } catch (e) {
+        console.error('Bad aiListingData:', e);
+      }
     }
   }, [navigate]);
 
