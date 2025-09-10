@@ -1,42 +1,62 @@
 export default function handler(req, res) {
+  // Set CORS headers first
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
   console.log('=== WEBHOOK DEBUG ===');
   console.log('Method:', req.method);
-  console.log('Headers:', JSON.stringify(req.headers, null, 2));
-  console.log('Body type:', typeof req.body);
-  console.log('Body content:', JSON.stringify(req.body, null, 2));
-  console.log('Raw body:', req.body);
+  console.log('Body:', req.body);
   
-  // Handle different content types
   if (req.method !== 'POST') {
-    console.log('Wrong method, returning 405');
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    let webhookData = req.body;
+    const webhookData = req.body;
     
-    // If body is a string, try to parse it
-    if (typeof webhookData === 'string') {
-      console.log('Body is string, parsing...');
-      webhookData = JSON.parse(webhookData);
-    }
+    // Transform the data
+    const transformedData = {
+      title: webhookData.title || '',
+      description: webhookData.description || '',
+      price_suggestion: { 
+        optimal: parseFloat(webhookData.price) || 0 
+      },
+      image_url: webhookData.image_url || '',
+      keywords: webhookData.keywords || '',
+      item_specifics: webhookData.item_specifics || [],
+      category: webhookData.category_id ? { 
+        id: webhookData.category_id, 
+        name: 'Auto-detected' 
+      } : null
+    };
+
+    // Generate session ID
+    const sessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
     
-    console.log('Parsed webhook data:', webhookData);
-    
-    // Return success with the data we received
+    // Store data
+    global.listingDataStore = global.listingDataStore || new Map();
+    global.listingDataStore.set(sessionId, {
+      data: transformedData,
+      expires: Date.now() + (60 * 60 * 1000)
+    });
+
+    console.log('Stored data for session:', sessionId);
+
+    // Return success
     res.status(200).json({ 
       success: true, 
-      sessionId: "test123",
-      receivedData: webhookData,
-      dataType: typeof webhookData
+      sessionId: sessionId
     });
-    
+
   } catch (error) {
-    console.log('Error occurred:', error.message);
-    console.log('Error stack:', error.stack);
-    res.status(500).json({ 
-      error: error.message,
-      stack: error.stack 
-    });
+    console.error('Webhook error:', error);
+    res.status(500).json({ error: error.message });
   }
 }
