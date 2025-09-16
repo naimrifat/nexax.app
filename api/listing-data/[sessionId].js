@@ -1,9 +1,7 @@
-import { NextApiRequest, NextApiResponse } from "next";
-
 // Same storage as webhook file
-let store: Record<string, any> = {};
+let store = {};
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req, res) {
   const { sessionId } = req.query;
 
   if (req.method === "GET") {
