@@ -1,9 +1,7 @@
-import { NextApiRequest, NextApiResponse } from "next";
-
 // Temporary storage
-let store: Record<string, any> = {};
+let store = {};
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req, res) {
   if (req.method === "POST") {
     try {
       // Get data from Make.com
@@ -22,7 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         success: true,
         sessionId: sessionId
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error saving webhook data:", error);
       return res.status(500).json({ success: false, error: error.message });
     }
