@@ -1,28 +1,19 @@
-export default function handler(req, res) {
-  // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+import { NextApiRequest, NextApiResponse } from "next";
 
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+// Same storage as webhook file
+let store: Record<string, any> = {};
 
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { sessionId } = req.query;
-  
-  if (!sessionId) {
-    return res.status(400).json({ error: 'Session ID required' });
+
+  if (req.method === "GET") {
+    if (sessionId && typeof sessionId === "string" && store[sessionId]) {
+      return res.status(200).json(store[sessionId]);
+    } else {
+      return res.status(404).json({ error: "Session not found" });
+    }
   }
 
-  // Access the same global store
-  global.listingDataStore = global.listingDataStore || new Map();
-  
-  const stored = global.listingDataStore.get(sessionId);
-  
-  if (!stored || Date.now() > stored.expires) {
-    return res.status(404).json({ error: 'Data not found or expired' });
-  }
-
-  console.log('Retrieved data for session:', sessionId);
-  res.status(200).json(stored.data);
+  res.setHeader("Allow", ["GET"]);
+  res.status(405).end(`Method ${req.method} Not Allowed`);
 }
