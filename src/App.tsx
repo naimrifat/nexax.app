@@ -6,7 +6,6 @@ import DashboardPage from './pages/DashboardPage';
 import ResultsPage from './pages/ResultsPage'; // keep as default export
 import PricingPage from './pages/PricingPage';
 import { ListingProvider } from './context/ListingContext';
-import UploadPage from './pages/UploadPage';
 import './App.css';
 
 function App() {
