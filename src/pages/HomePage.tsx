@@ -9,7 +9,6 @@ const StepCard: React.FC<any> = ({ number, title, description, icon }) => (<div>
 const FeatureCard: React.FC<any> = ({ title, description, icon }) => (<div></div>);
 const TestimonialCard: React.FC<any> = ({ quote, author, role, platform }) => (<div></div>);
 
-
 export default function HomePage() {
     const [photos, setPhotos] = useState<File[]>([]);
     const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
@@ -72,42 +71,28 @@ export default function HomePage() {
         }
         setIsLoading(true);
         setResults(null);
-        setStatus('Starting process...');
+        setStatus('Uploading images...');
 
         try {
-            setStatus('Step 1 of 3: Compressing image...');
-            const mainPhoto = photos[0];
+            // Upload all photos to ImgBB and get URLs
+            const uploadedUrls = await Promise.all(photos.map(async (file) => {
+                const formData = new FormData();
+                formData.append('image', file);
+                const res = await fetch(`https://api.imgbb.com/1/upload?key=7b6ad3d170c93f1a32cf2cef62bfebf5`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error('Image upload failed');
+                return data.data.url;
+            }));
 
-            // --- THIS IS THE CRITICAL FIX ---
-            // Compress the image before doing anything else
-            const options = {
-                maxSizeMB: 1,           // Set max size to 1MB
-                maxWidthOrHeight: 1920, // Resize to a web-friendly resolution
-                useWebWorker: true,
-            };
-            const compressedFile = await imageCompression(mainPhoto, options);
-            
-            setStatus('Step 2 of 3: Preparing image data...');
-            const base64Image = await toBase64(compressedFile);
+            setStatus('Images uploaded successfully!');
+            console.log('Uploaded URLs:', uploadedUrls);
 
-            setStatus('Step 3 of 3: Sending to AI engine...');
-            const payload = { image_base64: base64Image };
-            
-            // Call our own secure serverless function
-            const response = await fetch('/api/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'The AI engine returned an error.');
-            }
-
-            const resultData = await response.json();
-            setResults(resultData);
-            setStatus('Success! Your listing is ready.');
+            // For now, just show URLs in results (we'll send to Make.com next)
+            setResults({ uploadedUrls });
+            setStatus('Ready to send to AI engine.');
 
         } catch (error: any) {
             setStatus(`Error: ${error.message}`);
@@ -182,22 +167,14 @@ export default function HomePage() {
                                         <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
                                         <button onClick={() => { setResults(null); setPhotos([]); setPhotoPreviewUrls([]); setStatus(''); }} className="btn btn-outline">Create Another</button>
                                     </div>
-                                    {results.titles && (
+                                    {results.uploadedUrls && (
                                         <div>
-                                            <h3 className="text-lg font-semibold mb-2">Titles</h3>
-                                            <pre className="bg-gray-50 p-4 rounded-lg whitespace-pre-wrap text-sm">{JSON.stringify(results.titles, null, 2)}</pre>
-                                        </div>
-                                    )}
-                                    {results.specifics && (
-                                        <div>
-                                            <h3 className="text-lg font-semibold mb-2">Item Specifics</h3>
-                                            <pre className="bg-gray-50 p-4 rounded-lg whitespace-pre-wrap text-sm">{JSON.stringify(results.specifics, null, 2)}</pre>
-                                        </div>
-                                    )}
-                                    {results.description && (
-                                        <div>
-                                            <h3 className="text-lg font-semibold mb-2">Description</h3>
-                                            <div className="bg-gray-50 p-4 rounded-lg whitespace-pre-wrap text-sm leading-relaxed">{results.description}</div>
+                                            <h3 className="text-lg font-semibold mb-2">Uploaded Image URLs</h3>
+                                            <ul className="list-disc list-inside text-sm text-gray-700">
+                                                {results.uploadedUrls.map((url: string, idx: number) => (
+                                                    <li key={idx}><a href={url} target="_blank" rel="noopener noreferrer" className="text-teal-600 underline">{url}</a></li>
+                                                ))}
+                                            </ul>
                                         </div>
                                     )}
                                 </div>
@@ -209,4 +186,3 @@ export default function HomePage() {
         </div>
     );
 };
-
