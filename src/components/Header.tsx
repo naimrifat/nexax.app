@@ -45,7 +45,7 @@ const Header: React.FC = () => {
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center space-x-6">
             <NavLink to="/" label="Home" icon={<Home className="w-4 h-4" />} active={location.pathname === '/'} />
-            <NavLink to="/create-listing" label="Create Listing" icon={<Upload className="w-4 h-4" />} active={location.pathname === '/create-listing'} /> {/* <-- ADD THIS LINE */}
+            {/* Removed Create Listing link */}
             <NavLink to="/dashboard" label="Dashboard" icon={<LayoutDashboard className="w-4 h-4" />} active={location.pathname === '/dashboard'} />
             <NavLink to="/pricing" label="Pricing" active={location.pathname === '/pricing'} />
             
@@ -74,7 +74,7 @@ const Header: React.FC = () => {
         <div className="md:hidden bg-white absolute top-full left-0 w-full shadow-md animate-fade-in">
           <div className="container mx-auto px-4 py-4 flex flex-col space-y-4">
             <MobileNavLink to="/" label="Home" icon={<Home className="w-5 h-5" />} active={location.pathname === '/'} />
-            <MobileNavLink to="/create-listing" label="Create Listing" icon={<Upload className="w-5 h-5" />} active={location.pathname === '/create-listing'} /> {/* <-- ADD THIS LINE */}
+            {/* Removed Create Listing link */}
             <MobileNavLink to="/dashboard" label="Dashboard" icon={<LayoutDashboard className="w-5 h-5" />} active={location.pathname === '/dashboard'} />
             <MobileNavLink to="/pricing" label="Pricing" active={location.pathname === '/pricing'} />
             <hr className="border-gray-200" />
