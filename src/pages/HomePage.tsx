@@ -90,9 +90,30 @@ export default function HomePage() {
             setStatus('Images uploaded successfully!');
             console.log('Uploaded URLs:', uploadedUrls);
 
-            // For now, just show URLs in results (we'll send to Make.com next)
+            // Send uploaded URLs to Make.com webhook
+            setStatus('Sending image URLs to Make.com webhook...');
+
+            const webhookUrl = 'https://hook.us2.make.com/op1fgzl23wfpoillxsaq21ldr7kro488';
+
+            const payload = {
+                session_id: Date.now().toString(), // simple unique session id
+                images: uploadedUrls,
+            };
+
+            const webhookResponse = await fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (!webhookResponse.ok) {
+                const errorData = await webhookResponse.json();
+                throw new Error(errorData.message || 'Failed to send data to Make.com webhook');
+            }
+
+            setStatus('Image URLs sent! Waiting for AI processing...');
+            // For now, just show uploaded URLs in results
             setResults({ uploadedUrls });
-            setStatus('Ready to send to AI engine.');
 
         } catch (error: any) {
             setStatus(`Error: ${error.message}`);
