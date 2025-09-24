@@ -111,9 +111,8 @@ export default function HomePage() {
                 throw new Error(errorData.message || 'Failed to send data to Make.com webhook');
             }
 
-            setStatus('Image URLs sent! Waiting for AI processing...');
-            // For now, just show uploaded URLs in results
-            setResults({ uploadedUrls });
+            setStatus('Image URLs sent! Processing your listing...');
+            setResults(null);  // Do NOT show URLs on the page
 
         } catch (error: any) {
             setStatus(`Error: ${error.message}`);
@@ -188,16 +187,7 @@ export default function HomePage() {
                                         <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
                                         <button onClick={() => { setResults(null); setPhotos([]); setPhotoPreviewUrls([]); setStatus(''); }} className="btn btn-outline">Create Another</button>
                                     </div>
-                                    {results.uploadedUrls && (
-                                        <div>
-                                            <h3 className="text-lg font-semibold mb-2">Uploaded Image URLs</h3>
-                                            <ul className="list-disc list-inside text-sm text-gray-700">
-                                                {results.uploadedUrls.map((url: string, idx: number) => (
-                                                    <li key={idx}><a href={url} target="_blank" rel="noopener noreferrer" className="text-teal-600 underline">{url}</a></li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    )}
+                                    {/* You can add listing display here when you implement receiving data from Make.com */}
                                 </div>
                             </div>
                         )}
