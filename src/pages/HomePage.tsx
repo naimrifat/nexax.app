@@ -93,7 +93,7 @@ export default function HomePage() {
             // Send uploaded URLs to Make.com webhook
             setStatus('Sending image URLs to Make.com webhook...');
 
-            const webhookUrl = 'https://hook.us2.make.com/op1fgzl23wfpoillxsaq21ldr7kro488';
+            const webhookUrl = 'https://hook.us2.make.com/s6gz2nslwwl1ix3k43bduxiebd1w8k48';
 
             const payload = {
                 session_id: Date.now().toString(), // simple unique session id
