@@ -51,7 +51,7 @@ export default function HomePage() {
         handlePhotoUpload(e.dataTransfer.files);
     };
     
-    // --- The Final Submission Logic with ImageKit ---
+    // --- The Final Submission Logic with Cloudinary ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (photos.length === 0) {
@@ -63,33 +63,20 @@ export default function HomePage() {
         setStatus('Uploading images...');
 
         try {
-            // Upload all photos to ImageKit and get URLs
+            // Upload all photos to Cloudinary and get URLs
             const uploadedUrls = await Promise.all(photos.map(async (file) => {
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('fileName', `listing_${Date.now()}_${file.name}`);
-                formData.append('publicKey', 'public_T9iccT+N5JPmEgRhNMaLZtkfHig='); // Replace with your actual public key
+                formData.append('upload_preset', 'ebay_listings'); // Replace with your preset name
                 
-                // Get auth signature from your API
-                const authResponse = await fetch('/api/imagekit-auth');
-                const authData = await authResponse.json();
-                
-                if (authData.error) {
-                    throw new Error('Authentication failed: ' + authData.error);
-                }
-                
-                formData.append('signature', authData.signature);
-                formData.append('expire', authData.expire.toString());
-                formData.append('token', authData.token);
-
-                const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
+                const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
                     method: 'POST',
                     body: formData,
                 });
                 
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.message || 'Image upload failed');
-                return data.url;
+                if (!res.ok) throw new Error(data.error?.message || 'Image upload failed');
+                return data.secure_url;
             }));
 
             setStatus('Images uploaded successfully!');
@@ -157,7 +144,7 @@ export default function HomePage() {
                                                 <div key={index} className="relative group aspect-square">
                                                     <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover rounded-lg" />
                                                     <button type="button" onClick={(e) => { e.stopPropagation(); removePhoto(index); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100">
-                                        <X className="w-3 h-3" />
+                                                        <X className="w-3 h-3" />
                                                     </button>
                                                     {index === 0 && <span className="absolute bottom-1 left-1 bg-teal-500 text-white text-xs px-1.5 py-0.5 rounded">Main</span>}
                                                 </div>
