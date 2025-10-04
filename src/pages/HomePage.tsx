@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Upload, X, PlusCircle, Image, Sparkles, CheckCircle, ArrowRight, Camera, AlertCircle, ShoppingBag, Award, Smartphone, Edit, Tag } from 'lucide-react';
 import MarketplaceLogo from '../components/MarketplaceLogo';
-import imageCompression from 'browser-image-compression'; // Import the new library
+import imageCompression from 'browser-image-compression';
 
 // Helper components that might be in your project
 const StepCard: React.FC<any> = ({ number, title, description, icon }) => (<div></div>);
@@ -18,17 +18,6 @@ export default function HomePage() {
     const [isLoading, setIsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<string>('eBay');
     const fileInputRef = useRef<HTMLInputElement>(null);
-
-    // Helper function to convert a file to a Base64 text string
-    const toBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => {
-            const base64String = (reader.result as string).split(',')[1];
-            resolve(base64String);
-        };
-        reader.onerror = error => reject(error);
-    });
 
     // --- Photo Handling Functions ---
     const handlePhotoUpload = (files: FileList | null) => {
@@ -62,7 +51,7 @@ export default function HomePage() {
         handlePhotoUpload(e.dataTransfer.files);
     };
     
-    // --- The Final Submission Logic ---
+    // --- The Final Submission Logic with ImageKit ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (photos.length === 0) {
@@ -74,17 +63,33 @@ export default function HomePage() {
         setStatus('Uploading images...');
 
         try {
-            // Upload all photos to ImgBB and get URLs
+            // Upload all photos to ImageKit and get URLs
             const uploadedUrls = await Promise.all(photos.map(async (file) => {
                 const formData = new FormData();
-                formData.append('image', file);
-                const res = await fetch(`https://api.imgbb.com/1/upload?key=7b6ad3d170c93f1a32cf2cef62bfebf5`, {
+                formData.append('file', file);
+                formData.append('fileName', `listing_${Date.now()}_${file.name}`);
+                formData.append('publicKey', 'public_T9iccT+N5JPmEgRhNMaLZtkfHig='); // Replace with your actual public key
+                
+                // Get auth signature from your API
+                const authResponse = await fetch('/api/imagekit-auth');
+                const authData = await authResponse.json();
+                
+                if (authData.error) {
+                    throw new Error('Authentication failed: ' + authData.error);
+                }
+                
+                formData.append('signature', authData.signature);
+                formData.append('expire', authData.expire.toString());
+                formData.append('token', authData.token);
+
+                const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
                     method: 'POST',
                     body: formData,
                 });
+                
                 const data = await res.json();
-                if (!data.success) throw new Error('Image upload failed');
-                return data.data.url;
+                if (!res.ok) throw new Error(data.message || 'Image upload failed');
+                return data.url;
             }));
 
             setStatus('Images uploaded successfully!');
@@ -96,7 +101,7 @@ export default function HomePage() {
             const webhookUrl = 'https://hook.us2.make.com/s6gz2nslwwl1ix3k43bduxiebd1w8k48';
 
             const payload = {
-                session_id: Date.now().toString(), // simple unique session id
+                session_id: Date.now().toString(),
                 images: uploadedUrls,
             };
 
@@ -112,7 +117,7 @@ export default function HomePage() {
             }
 
             setStatus('Image URLs sent! Processing your listing...');
-            setResults(null);  // Do NOT show URLs on the page
+            setResults(null);
 
         } catch (error: any) {
             setStatus(`Error: ${error.message}`);
@@ -152,7 +157,7 @@ export default function HomePage() {
                                                 <div key={index} className="relative group aspect-square">
                                                     <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover rounded-lg" />
                                                     <button type="button" onClick={(e) => { e.stopPropagation(); removePhoto(index); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100">
-                                                        <X className="w-3 h-3" />
+                                        <X className="w-3 h-3" />
                                                     </button>
                                                     {index === 0 && <span className="absolute bottom-1 left-1 bg-teal-500 text-white text-xs px-1.5 py-0.5 rounded">Main</span>}
                                                 </div>
