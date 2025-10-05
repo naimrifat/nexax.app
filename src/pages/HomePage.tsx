@@ -23,8 +23,9 @@ export default function HomePage() {
     const handlePhotoUpload = (files: FileList | null) => {
         if (!files) return;
         const newFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
-        if (photos.length + newFiles.length > 8) {
-            alert("You can upload a maximum of 8 photos.");
+        // Updated to allow up to 12 photos
+        if (photos.length + newFiles.length > 12) {
+            alert("You can upload a maximum of 12 photos.");
             return;
         }
         const newUrls = newFiles.map(file => URL.createObjectURL(file));
@@ -51,7 +52,7 @@ export default function HomePage() {
         handlePhotoUpload(e.dataTransfer.files);
     };
     
-    // --- The Final Submission Logic with Cloudinary ---
+    // --- Updated Submission Logic ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (photos.length === 0) {
@@ -60,14 +61,14 @@ export default function HomePage() {
         }
         setIsLoading(true);
         setResults(null);
-        setStatus('Uploading images...');
+        setStatus('Uploading images to Cloudinary...');
 
         try {
-            // Upload all photos to Cloudinary and get URLs
+            // Step 1: Upload all photos to Cloudinary
             const uploadedUrls = await Promise.all(photos.map(async (file) => {
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('upload_preset', 'ebay_listings'); // Replace with your preset name
+                formData.append('upload_preset', 'ebay_listings');
                 
                 const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
                     method: 'POST',
@@ -79,34 +80,39 @@ export default function HomePage() {
                 return data.secure_url;
             }));
 
-            setStatus('Images uploaded successfully!');
+            setStatus('Images uploaded! Analyzing with AI...');
             console.log('Uploaded URLs:', uploadedUrls);
 
-            // Send uploaded URLs to Make.com webhook
-            setStatus('Sending image URLs to Make.com webhook...');
-
-            const webhookUrl = 'https://hook.us2.make.com/s6gz2nslwwl1ix3k43bduxiebd1w8k48';
-
-            const payload = {
-                session_id: Date.now().toString(),
-                images: uploadedUrls,
-            };
-
-            const webhookResponse = await fetch(webhookUrl, {
+            // Step 2: Call your Vercel API endpoint for OpenAI analysis
+            const analysisResponse = await fetch('/api/analyze-listing', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    session_id: Date.now().toString(),
+                    images: uploadedUrls
+                })
             });
 
-            if (!webhookResponse.ok) {
-                const errorData = await webhookResponse.json();
-                throw new Error(errorData.message || 'Failed to send data to Make.com webhook');
+            if (!analysisResponse.ok) {
+                const errorData = await analysisResponse.json();
+                throw new Error(errorData.error || 'Failed to analyze images');
             }
 
-            setStatus('Image URLs sent! Processing your listing...');
-            setResults(null);
+            const analysisResult = await analysisResponse.json();
+            
+            // Parse the JSON response from OpenAI
+            const listingData = typeof analysisResult.data === 'string' 
+                ? JSON.parse(analysisResult.data) 
+                : analysisResult.data;
+
+            setStatus('Listing generated successfully!');
+            setResults(listingData);
+
+            // Log for debugging
+            console.log('Analysis complete:', listingData);
 
         } catch (error: any) {
+            console.error('Error:', error);
             setStatus(`Error: ${error.message}`);
         } finally {
             setIsLoading(false);
@@ -122,7 +128,7 @@ export default function HomePage() {
                     <div className="max-w-6xl mx-auto">
                         <div className="text-center mb-12">
                             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Try It Now - Free Demo</h2>
-                            <p className="text-lg text-gray-600 max-w-2xl mx-auto">Upload up to 8 photos and see how our AI creates professional listings instantly</p>
+                            <p className="text-lg text-gray-600 max-w-2xl mx-auto">Upload up to 12 photos and see how our AI creates professional listings instantly</p>
                         </div>
 
                         {!results ? (
@@ -151,7 +157,7 @@ export default function HomePage() {
                                             ))}
                                         </div>
                                     )}
-                                    <p className="text-sm text-gray-500 text-center">{photos.length}/8 photos uploaded</p>
+                                    <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
                                 </div>
                                 <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
                                     <h3 className="text-xl font-semibold mb-4 flex items-center"><Sparkles className="w-5 h-5 mr-2" /> AI-Powered Generation</h3>
@@ -159,6 +165,7 @@ export default function HomePage() {
                                         <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Smart title optimization</span></div>
                                         <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">SEO-optimized descriptions</span></div>
                                         <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Auto-categorization</span></div>
+                                        <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Analyzes up to 12 photos</span></div>
                                     </div>
                                     <button type="submit" disabled={isLoading || photos.length === 0} className="btn bg-white text-teal-700 hover:bg-teal-50 w-full py-3 flex items-center justify-center">
                                         <Sparkles className="w-5 h-5 mr-2" />
@@ -179,7 +186,51 @@ export default function HomePage() {
                                         <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
                                         <button onClick={() => { setResults(null); setPhotos([]); setPhotoPreviewUrls([]); setStatus(''); }} className="btn btn-outline">Create Another</button>
                                     </div>
-                                    {/* You can add listing display here when you implement receiving data from Make.com */}
+                                    
+                                    {/* Display the generated listing data */}
+                                    <div className="bg-white rounded-lg shadow p-6 space-y-4">
+                                        <div>
+                                            <h3 className="text-sm font-semibold text-gray-600 mb-1">Title</h3>
+                                            <p className="text-lg font-medium text-gray-900">{results.title}</p>
+                                        </div>
+                                        
+                                        <div>
+                                            <h3 className="text-sm font-semibold text-gray-600 mb-1">Category</h3>
+                                            <p className="text-gray-700">{results.category}</p>
+                                        </div>
+                                        
+                                        <div>
+                                            <h3 className="text-sm font-semibold text-gray-600 mb-1">Description</h3>
+                                            <p className="text-gray-700 whitespace-pre-line">{results.description}</p>
+                                        </div>
+                                        
+                                        {results.item_specifics && (
+                                            <div>
+                                                <h3 className="text-sm font-semibold text-gray-600 mb-2">Item Specifics</h3>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    {results.item_specifics.map((spec: any, index: number) => (
+                                                        <div key={index} className="flex">
+                                                            <span className="font-medium text-gray-600">{spec.name}:</span>
+                                                            <span className="ml-2 text-gray-900">{spec.value}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {results.keywords && (
+                                            <div>
+                                                <h3 className="text-sm font-semibold text-gray-600 mb-2">Keywords</h3>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {results.keywords.map((keyword: string, index: number) => (
+                                                        <span key={index} className="px-2 py-1 bg-teal-100 text-teal-700 rounded text-sm">
+                                                            {keyword}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         )}
