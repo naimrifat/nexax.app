@@ -293,24 +293,45 @@ export default function HomePage() {
                                         {listingData.item_specifics && (
                                             <div>
                                                 <label className="block text-sm font-semibold text-gray-600 mb-2">Item Specifics</label>
-                                                {listingData.item_specifics.map((spec: any, index: number) => (
-                                                    <div key={index} className="grid grid-cols-2 gap-2 mb-2">
-                                                        <input 
-                                                            type="text" 
-                                                            className="px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
-                                                            value={spec.name}
-                                                            readOnly
-                                                        />
-                                                        <input 
-                                                            type="text" 
-                                                            className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                                                            value={spec.value}
-                                                            onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
-                                                        />
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
+                                                {/* V-- REPLACE THE EXISTING .map() WITH THIS LOGIC --V */}
+        {listingData.item_specifics.map((spec: any, index: number) => (
+            <div key={index} className="grid grid-cols-2 gap-2 mb-2">
+                <input 
+                    type="text" 
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
+                    value={spec.name}
+                    readOnly
+                />
+
+                {/* Check if the spec has options to display a dropdown */}
+                {spec.options && spec.options.length > 0 ? (
+                    <select
+                        className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        value={spec.value}
+                        onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
+                    >
+                        <option value="">Select...</option>
+                        {spec.options.map((option: any) => (
+                            <option key={option.value} value={option.value}>
+                                {option.value}
+                            </option>
+                        ))}
+                    </select>
+                ) : (
+                    // Otherwise, display a regular text input
+                    <input 
+                        type="text" 
+                        className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        value={spec.value}
+                        onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
+                    />
+                )}
+            </div>
+        ))}
+        {/* ^-- END OF REPLACEMENT --^ */}
+
+    </div>
+)}
                                         
                                         {/* ... Keywords display (can remain as is) ... */}
 
