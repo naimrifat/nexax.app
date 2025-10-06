@@ -19,7 +19,47 @@ export default function HomePage() {
     const [isLoading, setIsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<string>('eBay');
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [showCategorySelector, setShowCategorySelector] = useState(false);
+    const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
+    const [loadingSpecifics, setLoadingSpecifics] = useState(false);
 
+    const fetchEbaySpecifics = async (categoryId: string) => {
+  setLoadingSpecifics(true);
+  try {
+    const response = await fetch('/api/ebay-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'getCategorySpecifics',
+        categoryId: categoryId
+      })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      const mergedSpecifics = data.aspects.map((aspect: any) => {
+        const existing = results.item_specifics?.find((s: any) => s.name === aspect.name);
+        return {
+          name: aspect.name,
+          value: existing?.value || '',
+          required: aspect.required,
+          options: aspect.values || []
+        };
+      });
+      setEbaySpecifics(mergedSpecifics);
+    }
+  } catch (error) {
+    console.error('Failed to fetch eBay specifics:', error);
+  } finally {
+    setLoadingSpecifics(false);
+  }
+};
+
+const handleCategoryChange = (categoryPath: string, categoryId: string) => {
+  setResults({...results, category: categoryPath, ebay_category_id: categoryId});
+  fetchEbaySpecifics(categoryId);
+};
+    
     // --- Photo Handling Functions ---
     const handlePhotoUpload = (files: FileList | null) => {
         if (!files) return;
