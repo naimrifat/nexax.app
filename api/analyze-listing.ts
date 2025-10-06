@@ -144,7 +144,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Invalid response format from OpenAI');
     }
 
-    // Step 3: Send to Make.com webhook if configured
+    // Step 3: Get eBay category suggestion
+    try {
+      console.log('Getting eBay category suggestion...');
+      
+      // Construct the full URL for the API call
+      const origin = req.headers.origin || `https://${req.headers.host}`;
+      const ebayApiUrl = `${origin}/api/ebay-categories`;
+      
+      const ebayResponse = await fetch(ebayApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'getSuggestedCategories',
+          title: parsedAnalysis.title,
+          keywords: parsedAnalysis.keywords || []
+        })
+      });
+      
+      if (ebayResponse.ok) {
+        const ebayData = await ebayResponse.json();
+        parsedAnalysis.ebay_category_id = ebayData.categoryId;
+        parsedAnalysis.ebay_category_name = ebayData.categoryName;
+        console.log('eBay category found:', ebayData.categoryName);
+      } else {
+        console.error('eBay API response not ok:', ebayResponse.status);
+      }
+    } catch (error) {
+      console.error('Failed to get eBay category:', error);
+      // Don't fail the whole request if eBay lookup fails
+      // Set default category for clothing
+      parsedAnalysis.ebay_category_id = '11450';
+      parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
+    }
+
+    // Step 4: Send to Make.com webhook if configured
     if (process.env.VITE_MAKE_WEBHOOK_URL) {
       console.log('Sending results to Make.com webhook...');
       
