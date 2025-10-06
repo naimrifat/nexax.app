@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Upload, X, PlusCircle, Image, Sparkles, CheckCircle, ArrowRight, Camera, AlertCircle, ShoppingBag, Award, Smartphone, Edit, Tag } from 'lucide-react';
 import MarketplaceLogo from '../components/MarketplaceLogo';
 import imageCompression from 'browser-image-compression';
+import CategorySelector from '../components/CategorySelector';
 
 // Helper components that might be in your project
 const StepCard: React.FC<any> = ({ number, title, description, icon }) => (<div></div>);
