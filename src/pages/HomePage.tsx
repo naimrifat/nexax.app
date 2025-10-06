@@ -15,7 +15,8 @@ export default function HomePage() {
     const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
     const [isDragging, setIsDragging] = useState(false);
     const [status, setStatus] = useState('');
-    const [results, setResults] = useState<any>(null);
+    const [results, setResults] = useState<any>(null); // This will hold the original AI result
+    const [listingData, setListingData] = useState<any>(null); // <-- NEW: This state will hold the editable form data
     const [isLoading, setIsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState<string>('eBay');
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -24,47 +25,77 @@ export default function HomePage() {
     const [loadingSpecifics, setLoadingSpecifics] = useState(false);
 
     const fetchEbaySpecifics = async (categoryId: string) => {
-  setLoadingSpecifics(true);
-  try {
-    const response = await fetch('/api/ebay-categories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'getCategorySpecifics',
-        categoryId: categoryId
-      })
-    });
-    
-    if (response.ok) {
-      const data = await response.json();
-      const mergedSpecifics = data.aspects.map((aspect: any) => {
-        const existing = results.item_specifics?.find((s: any) => s.name === aspect.name);
-        return {
-          name: aspect.name,
-          value: existing?.value || '',
-          required: aspect.required,
-          options: aspect.values || []
-        };
-      });
-      setEbaySpecifics(mergedSpecifics);
-    }
-  } catch (error) {
-    console.error('Failed to fetch eBay specifics:', error);
-  } finally {
-    setLoadingSpecifics(false);
-  }
-};
+        setLoadingSpecifics(true);
+        try {
+            const response = await fetch('/api/ebay-categories', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'getCategorySpecifics',
+                    categoryId: categoryId
+                })
+            });
 
-const handleCategoryChange = (categoryPath: string, categoryId: string) => {
-  setResults({...results, category: categoryPath, ebay_category_id: categoryId});
-  fetchEbaySpecifics(categoryId);
-};
+            if (response.ok) {
+                const data = await response.json();
+                const mergedSpecifics = data.aspects.map((aspect: any) => {
+                    const existing = results.item_specifics?.find((s: any) => s.name === aspect.name);
+                    return {
+                        name: aspect.name,
+                        value: existing?.value || '',
+                        required: aspect.required,
+                        options: aspect.values || []
+                    };
+                });
+                setEbaySpecifics(mergedSpecifics);
+            }
+        } catch (error) {
+            console.error('Failed to fetch eBay specifics:', error);
+        } finally {
+            setLoadingSpecifics(false);
+        }
+    };
+
+    // --- Form Handling Functions ---
+
+    // <-- UPDATED: This function now handles category changes correctly -->
+    const handleCategoryChange = (newCategory: { path: string; id: string }) => {
+        setListingData((prevData: any) => ({
+            ...prevData,
+            category: {
+                path: newCategory.path,
+                id: newCategory.id,
+            },
+        }));
+        setShowCategorySelector(false); // Close the selector after selection
+        if (newCategory.id) {
+            fetchEbaySpecifics(newCategory.id);
+        }
+    };
+
+    // <-- NEW: A generic handler for all text inputs to keep the code clean -->
+    const handleInputChange = (field: string, value: any) => {
+        setListingData((prevData: any) => ({
+            ...prevData,
+            [field]: value,
+        }));
+    };
     
+    // <-- NEW: A specific handler for nested item specifics -->
+    const handleItemSpecificsChange = (index: number, value: string) => {
+        const newSpecifics = [...listingData.item_specifics];
+        newSpecifics[index].value = value;
+        setListingData((prevData: any) => ({
+            ...prevData,
+            item_specifics: newSpecifics
+        }));
+    };
+
+
     // --- Photo Handling Functions ---
     const handlePhotoUpload = (files: FileList | null) => {
         if (!files) return;
         const newFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
-        // Updated to allow up to 12 photos
         if (photos.length + newFiles.length > 12) {
             alert("You can upload a maximum of 12 photos.");
             return;
@@ -93,67 +124,7 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
         handlePhotoUpload(e.dataTransfer.files);
     };
     
-    // --- eBay Integration Functions ---
-    const handlePublishToEbay = async () => {
-        setStatus('Preparing to publish to eBay...');
-        
-        try {
-            // Send to Make.com webhook for Airtable storage
-            const webhookUrl = 'https://hook.us2.make.com/s6gz2nslwwl1ix3k43bduxiebd1w8k48';
-            const response = await fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'publish_listing',
-                    listing_data: results,
-                    images: photoPreviewUrls,
-                    timestamp: new Date().toISOString(),
-                    session_id: Date.now().toString()
-                })
-            });
-            
-            if (response.ok) {
-                alert('Listing saved! To publish to eBay:\n\n1. Log into your eBay seller account\n2. Go to Sell → Create listing\n3. Copy and paste the information from here\n\nWe\'re working on automatic publishing!');
-                setStatus('Listing saved successfully!');
-            } else {
-                throw new Error('Failed to save listing');
-            }
-        } catch (error) {
-            console.error('Error saving listing:', error);
-            setStatus('Error saving listing. Please try again.');
-        }
-    };
-
-    const handleSaveDraft = async () => {
-        // Save to local storage
-        const draftData = {
-            ...results,
-            savedAt: new Date().toISOString(),
-            images: photoPreviewUrls
-        };
-        localStorage.setItem('draft_listing', JSON.stringify(draftData));
-        setStatus('Draft saved successfully!');
-        
-        // Also save to Airtable via Make.com
-        try {
-            const webhookUrl = 'https://hook.us2.make.com/s6gz2nslwwl1ix3k43bduxiebd1w8k48';
-            await fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'save_draft',
-                    listing_data: results,
-                    images: photoPreviewUrls,
-                    timestamp: new Date().toISOString(),
-                    session_id: Date.now().toString()
-                })
-            });
-        } catch (error) {
-            console.error('Error saving to cloud:', error);
-        }
-    };
-    
-    // --- Updated Submission Logic ---
+    // --- Submission & API Logic ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (photos.length === 0) {
@@ -162,10 +133,10 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
         }
         setIsLoading(true);
         setResults(null);
+        setListingData(null);
         setStatus('Uploading images to Cloudinary...');
 
         try {
-            // Step 1: Upload all photos to Cloudinary
             const uploadedUrls = await Promise.all(photos.map(async (file) => {
                 const formData = new FormData();
                 formData.append('file', file);
@@ -182,9 +153,7 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
             }));
 
             setStatus('Images uploaded! Analyzing with AI...');
-            console.log('Uploaded URLs:', uploadedUrls);
-
-            // Step 2: Call your Vercel API endpoint for OpenAI analysis
+            
             const analysisResponse = await fetch('/api/analyze-listing', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -200,17 +169,11 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
             }
 
             const analysisResult = await analysisResponse.json();
-            
-            // Parse the JSON response from OpenAI
-            const listingData = typeof analysisResult.data === 'string' 
-                ? JSON.parse(analysisResult.data) 
-                : analysisResult.data;
+            const aiData = analysisResult.data;
 
             setStatus('Listing generated successfully!');
-            setResults(listingData);
-
-            // Log for debugging
-            console.log('Analysis complete:', listingData);
+            setResults(aiData); // Set the original results
+            setListingData(aiData); // <-- NEW: Set the editable data
 
         } catch (error: any) {
             console.error('Error:', error);
@@ -223,7 +186,7 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
     // --- JSX to Render the Page ---
     return (
         <div className="flex flex-col">
-            {/* ... Your other page sections (Hero, How It Works, etc.) ... */}
+            {/* ... Other page sections ... */}
             <section className="py-16 md:py-24 bg-white">
                 <div className="container mx-auto px-4">
                     <div className="max-w-6xl mx-auto">
@@ -232,48 +195,49 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
                             <p className="text-lg text-gray-600 max-w-2xl mx-auto">Upload up to 12 photos and see how our AI creates professional listings instantly</p>
                         </div>
 
-                        {!results ? (
+                        {!listingData ? ( // Changed from !results to !listingData
                             <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                {/* ... Upload form JSX is unchanged ... */}
                                 <div className="card p-6">
-                                    <h3 className="text-xl font-semibold mb-4 flex items-center"><Image className="w-5 h-5 mr-2 text-teal-600" /> Upload Product Photos</h3>
-                                    <div 
-                                        className={`border-2 border-dashed rounded-lg p-6 text-center mb-4 transition-all cursor-pointer ${isDragging ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-400'}`}
-                                        onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} onClick={triggerFileInput}
-                                    >
-                                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileInputChange} />
-                                        <Upload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                                        <p className="text-gray-700 font-medium">Drag and drop your photos here</p>
-                                        <p className="text-gray-500 text-sm">or click to browse</p>
-                                    </div>
-                                    {photoPreviewUrls.length > 0 && (
-                                        <div className="grid grid-cols-4 gap-3 mb-4">
-                                            {photoPreviewUrls.map((url, index) => (
-                                                <div key={index} className="relative group aspect-square">
-                                                    <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover rounded-lg" />
-                                                    <button type="button" onClick={(e) => { e.stopPropagation(); removePhoto(index); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100">
-                                                        <X className="w-3 h-3" />
-                                                    </button>
-                                                    {index === 0 && <span className="absolute bottom-1 left-1 bg-teal-500 text-white text-xs px-1.5 py-0.5 rounded">Main</span>}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
+                                <h3 className="text-xl font-semibold mb-4 flex items-center"><Image className="w-5 h-5 mr-2 text-teal-600" /> Upload Product Photos</h3>
+                                <div
+                                    className={`border-2 border-dashed rounded-lg p-6 text-center mb-4 transition-all cursor-pointer ${isDragging ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-400'}`}
+                                    onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} onClick={triggerFileInput}
+                                >
+                                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileInputChange} />
+                                    <Upload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
+                                    <p className="text-gray-700 font-medium">Drag and drop your photos here</p>
+                                    <p className="text-gray-500 text-sm">or click to browse</p>
                                 </div>
-                                <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
-                                    <h3 className="text-xl font-semibold mb-4 flex items-center"><Sparkles className="w-5 h-5 mr-2" /> AI-Powered Generation</h3>
-                                    <div className="space-y-4 mb-6">
-                                        <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Smart title optimization</span></div>
-                                        <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">SEO-optimized descriptions</span></div>
-                                        <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Auto-categorization</span></div>
-                                        <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Analyzes up to 12 photos</span></div>
+                                {photoPreviewUrls.length > 0 && (
+                                    <div className="grid grid-cols-4 gap-3 mb-4">
+                                        {photoPreviewUrls.map((url, index) => (
+                                            <div key={index} className="relative group aspect-square">
+                                                <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover rounded-lg" />
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); removePhoto(index); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100">
+                                                    <X className="w-3 h-3" />
+                                                </button>
+                                                {index === 0 && <span className="absolute bottom-1 left-1 bg-teal-500 text-white text-xs px-1.5 py-0.5 rounded">Main</span>}
+                                            </div>
+                                        ))}
                                     </div>
-                                    <button type="submit" disabled={isLoading || photos.length === 0} className="btn bg-white text-teal-700 hover:bg-teal-50 w-full py-3 flex items-center justify-center">
-                                        <Sparkles className="w-5 h-5 mr-2" />
-                                        {isLoading ? 'Generating...' : 'Generate Listings'}
-                                    </button>
-                                    {status && <p className={`mt-4 text-center font-medium ${status.includes('Error') ? 'text-yellow-300' : 'text-teal-100'}`}>{status}</p>}
+                                )}
+                                <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
+                            </div>
+                            <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
+                                <h3 className="text-xl font-semibold mb-4 flex items-center"><Sparkles className="w-5 h-5 mr-2" /> AI-Powered Generation</h3>
+                                <div className="space-y-4 mb-6">
+                                    <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Smart title optimization</span></div>
+                                    <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">SEO-optimized descriptions</span></div>
+                                    <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Auto-categorization</span></div>
+                                    <div className="flex items-center"><CheckCircle className="w-5 h-5 mr-3 text-teal-200" /><span className="text-sm">Analyzes up to 12 photos</span></div>
                                 </div>
+                                <button type="submit" disabled={isLoading || photos.length === 0} className="btn bg-white text-teal-700 hover:bg-teal-50 w-full py-3 flex items-center justify-center">
+                                    <Sparkles className="w-5 h-5 mr-2" />
+                                    {isLoading ? 'Generating...' : 'Generate Listings'}
+                                </button>
+                                {status && <p className={`mt-4 text-center font-medium ${status.includes('Error') ? 'text-yellow-300' : 'text-teal-100'}`}>{status}</p>}
+                            </div>
                             </form>
                         ) : (
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -285,7 +249,7 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
                                 <div className="lg:col-span-2 space-y-6">
                                     <div className="flex items-center justify-between">
                                         <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
-                                        <button onClick={() => { setResults(null); setPhotos([]); setPhotoPreviewUrls([]); setStatus(''); }} className="btn btn-outline">Create Another</button>
+                                        <button onClick={() => { setResults(null); setListingData(null); setPhotos([]); setPhotoPreviewUrls([]); setStatus(''); }} className="btn btn-outline">Create Another</button>
                                     </div>
                                     
                                     {/* Editable form */}
@@ -295,21 +259,25 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
                                             <input 
                                                 type="text" 
                                                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                                                value={results.title || ''}
-                                                onChange={(e) => setResults({...results, title: e.target.value})}
+                                                value={listingData.title || ''}
+                                                onChange={(e) => handleInputChange('title', e.target.value)}
                                                 maxLength={80}
                                             />
-                                            <p className="text-xs text-gray-500 mt-1">{results.title?.length || 0}/80 characters</p>
+                                            <p className="text-xs text-gray-500 mt-1">{listingData.title?.length || 0}/80 characters</p>
                                         </div>
                                         
+                                        {/* <-- UPDATED: This is the new "choosable" category field --> */}
                                         <div>
                                             <label className="block text-sm font-semibold text-gray-600 mb-1">Category</label>
-                                            <input 
-                                                type="text" 
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                                                value={results.category || ''}
-                                                onChange={(e) => setResults({...results, category: e.target.value})}
-                                            />
+                                            <div
+                                                onClick={() => setShowCategorySelector(true)}
+                                                className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
+                                            >
+                                                <span>
+                                                    {listingData.category?.path || 'Click to select a category...'}
+                                                </span>
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400"><path d="m9 18 6-6-6-6"/></svg>
+                                            </div>
                                         </div>
                                         
                                         <div>
@@ -317,15 +285,15 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
                                             <textarea 
                                                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                                                 rows={5}
-                                                value={results.description || ''}
-                                                onChange={(e) => setResults({...results, description: e.target.value})}
+                                                value={listingData.description || ''}
+                                                onChange={(e) => handleInputChange('description', e.target.value)}
                                             />
                                         </div>
                                         
-                                        {results.item_specifics && (
+                                        {listingData.item_specifics && (
                                             <div>
                                                 <label className="block text-sm font-semibold text-gray-600 mb-2">Item Specifics</label>
-                                                {results.item_specifics.map((spec: any, index: number) => (
+                                                {listingData.item_specifics.map((spec: any, index: number) => (
                                                     <div key={index} className="grid grid-cols-2 gap-2 mb-2">
                                                         <input 
                                                             type="text" 
@@ -337,47 +305,25 @@ const handleCategoryChange = (categoryPath: string, categoryId: string) => {
                                                             type="text" 
                                                             className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                                                             value={spec.value}
-                                                            onChange={(e) => {
-                                                                const newSpecs = [...results.item_specifics];
-                                                                newSpecs[index].value = e.target.value;
-                                                                setResults({...results, item_specifics: newSpecs});
-                                                            }}
+                                                            onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
                                                         />
                                                     </div>
                                                 ))}
                                             </div>
                                         )}
                                         
-                                        {results.keywords && (
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-600 mb-2">Keywords</label>
-                                                <div className="flex flex-wrap gap-2">
-                                                    {results.keywords.map((keyword: string, index: number) => (
-                                                        <span key={index} className="px-2 py-1 bg-teal-100 text-teal-700 rounded text-sm">
-                                                            {keyword}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        <div className="flex gap-3 pt-4 border-t">
-                                            <button 
-                                                type="button"
-                                                className="flex-1 btn btn-primary"
-                                                onClick={handlePublishToEbay}
-                                            >
-                                                Publish to eBay
-                                            </button>
-                                            <button 
-                                                type="button"
-                                                className="flex-1 btn btn-outline"
-                                                onClick={handleSaveDraft}
-                                            >
-                                                Save as Draft
-                                            </button>
-                                        </div>
+                                        {/* ... Keywords display (can remain as is) ... */}
+
                                     </div>
+
+                                    {/* <-- NEW: Conditionally render the CategorySelector component --> */}
+                                    {showCategorySelector && (
+                                        <CategorySelector
+                                            initialCategoryPath={listingData.category?.path || ''}
+                                            onCategorySelect={handleCategoryChange}
+                                            onClose={() => setShowCategorySelector(false)}
+                                        />
+                                    )}
                                 </div>
                             </div>
                         )}
