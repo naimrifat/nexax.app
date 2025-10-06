@@ -182,6 +182,33 @@ export default function HomePage() {
             setIsLoading(false);
         }
     };
+
+    // --- NEW: Publish to eBay Logic ---
+    const handlePublishToEbay = async () => {
+        setStatus('Publishing to eBay...');
+        try {
+            const response = await fetch('/api/publish-listing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ // Send the final, EDITED data
+                    listing_data: listingData,
+                    images: photoPreviewUrls 
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to start the publishing process.');
+            }
+
+            setStatus('Listing sent to eBay for publishing!');
+            alert('Your listing has been sent to eBay! It may take a minute to appear.');
+
+        } catch (error: any) {
+            console.error('Error publishing listing:', error);
+            setStatus(`Error: ${error.message}`);
+            alert(`An error occurred: ${error.message}`);
+        }
+    };
     
     // --- JSX to Render the Page ---
     return (
@@ -249,7 +276,10 @@ export default function HomePage() {
                                 <div className="lg:col-span-2 space-y-6">
                                     <div className="flex items-center justify-between">
                                         <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
-                                        <button onClick={() => { setResults(null); setListingData(null); setPhotos([]); setPhotoPreviewUrls([]); setStatus(''); }} className="btn btn-outline">Create Another</button>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={handlePublishToEbay} className="btn bg-teal-600 text-white hover:bg-teal-700">Publish to eBay</button>
+                                            <button onClick={() => { setResults(null); setListingData(null); setPhotos([]); setPhotoPreviewUrls([]); setStatus(''); }} className="btn btn-outline">Create Another</button>
+                                        </div>
                                     </div>
                                     
                                     {/* Editable form */}
