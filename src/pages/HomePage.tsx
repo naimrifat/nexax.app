@@ -52,6 +52,66 @@ export default function HomePage() {
         handlePhotoUpload(e.dataTransfer.files);
     };
     
+    // --- eBay Integration Functions ---
+    const handlePublishToEbay = async () => {
+        setStatus('Preparing to publish to eBay...');
+        
+        try {
+            // Send to Make.com webhook for Airtable storage
+            const webhookUrl = 'https://hook.us2.make.com/s6gz2nslwwl1ix3k43bduxiebd1w8k48';
+            const response = await fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'publish_listing',
+                    listing_data: results,
+                    images: photoPreviewUrls,
+                    timestamp: new Date().toISOString(),
+                    session_id: Date.now().toString()
+                })
+            });
+            
+            if (response.ok) {
+                alert('Listing saved! To publish to eBay:\n\n1. Log into your eBay seller account\n2. Go to Sell → Create listing\n3. Copy and paste the information from here\n\nWe\'re working on automatic publishing!');
+                setStatus('Listing saved successfully!');
+            } else {
+                throw new Error('Failed to save listing');
+            }
+        } catch (error) {
+            console.error('Error saving listing:', error);
+            setStatus('Error saving listing. Please try again.');
+        }
+    };
+
+    const handleSaveDraft = async () => {
+        // Save to local storage
+        const draftData = {
+            ...results,
+            savedAt: new Date().toISOString(),
+            images: photoPreviewUrls
+        };
+        localStorage.setItem('draft_listing', JSON.stringify(draftData));
+        setStatus('Draft saved successfully!');
+        
+        // Also save to Airtable via Make.com
+        try {
+            const webhookUrl = 'https://hook.us2.make.com/s6gz2nslwwl1ix3k43bduxiebd1w8k48';
+            await fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'save_draft',
+                    listing_data: results,
+                    images: photoPreviewUrls,
+                    timestamp: new Date().toISOString(),
+                    session_id: Date.now().toString()
+                })
+            });
+        } catch (error) {
+            console.error('Error saving to cloud:', error);
+        }
+    };
+    
     // --- Updated Submission Logic ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -187,40 +247,69 @@ export default function HomePage() {
                                         <button onClick={() => { setResults(null); setPhotos([]); setPhotoPreviewUrls([]); setStatus(''); }} className="btn btn-outline">Create Another</button>
                                     </div>
                                     
-                                    {/* Display the generated listing data */}
+                                    {/* Editable form */}
                                     <div className="bg-white rounded-lg shadow p-6 space-y-4">
                                         <div>
-                                            <h3 className="text-sm font-semibold text-gray-600 mb-1">Title</h3>
-                                            <p className="text-lg font-medium text-gray-900">{results.title}</p>
+                                            <label className="block text-sm font-semibold text-gray-600 mb-1">Title</label>
+                                            <input 
+                                                type="text" 
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                                                value={results.title || ''}
+                                                onChange={(e) => setResults({...results, title: e.target.value})}
+                                                maxLength={80}
+                                            />
+                                            <p className="text-xs text-gray-500 mt-1">{results.title?.length || 0}/80 characters</p>
                                         </div>
                                         
                                         <div>
-                                            <h3 className="text-sm font-semibold text-gray-600 mb-1">Category</h3>
-                                            <p className="text-gray-700">{results.category}</p>
+                                            <label className="block text-sm font-semibold text-gray-600 mb-1">Category</label>
+                                            <input 
+                                                type="text" 
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                                                value={results.category || ''}
+                                                onChange={(e) => setResults({...results, category: e.target.value})}
+                                            />
                                         </div>
                                         
                                         <div>
-                                            <h3 className="text-sm font-semibold text-gray-600 mb-1">Description</h3>
-                                            <p className="text-gray-700 whitespace-pre-line">{results.description}</p>
+                                            <label className="block text-sm font-semibold text-gray-600 mb-1">Description</label>
+                                            <textarea 
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                                                rows={5}
+                                                value={results.description || ''}
+                                                onChange={(e) => setResults({...results, description: e.target.value})}
+                                            />
                                         </div>
                                         
                                         {results.item_specifics && (
                                             <div>
-                                                <h3 className="text-sm font-semibold text-gray-600 mb-2">Item Specifics</h3>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    {results.item_specifics.map((spec: any, index: number) => (
-                                                        <div key={index} className="flex">
-                                                            <span className="font-medium text-gray-600">{spec.name}:</span>
-                                                            <span className="ml-2 text-gray-900">{spec.value}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
+                                                <label className="block text-sm font-semibold text-gray-600 mb-2">Item Specifics</label>
+                                                {results.item_specifics.map((spec: any, index: number) => (
+                                                    <div key={index} className="grid grid-cols-2 gap-2 mb-2">
+                                                        <input 
+                                                            type="text" 
+                                                            className="px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
+                                                            value={spec.name}
+                                                            readOnly
+                                                        />
+                                                        <input 
+                                                            type="text" 
+                                                            className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                                                            value={spec.value}
+                                                            onChange={(e) => {
+                                                                const newSpecs = [...results.item_specifics];
+                                                                newSpecs[index].value = e.target.value;
+                                                                setResults({...results, item_specifics: newSpecs});
+                                                            }}
+                                                        />
+                                                    </div>
+                                                ))}
                                             </div>
                                         )}
                                         
                                         {results.keywords && (
                                             <div>
-                                                <h3 className="text-sm font-semibold text-gray-600 mb-2">Keywords</h3>
+                                                <label className="block text-sm font-semibold text-gray-600 mb-2">Keywords</label>
                                                 <div className="flex flex-wrap gap-2">
                                                     {results.keywords.map((keyword: string, index: number) => (
                                                         <span key={index} className="px-2 py-1 bg-teal-100 text-teal-700 rounded text-sm">
@@ -230,6 +319,23 @@ export default function HomePage() {
                                                 </div>
                                             </div>
                                         )}
+                                        
+                                        <div className="flex gap-3 pt-4 border-t">
+                                            <button 
+                                                type="button"
+                                                className="flex-1 btn btn-primary"
+                                                onClick={handlePublishToEbay}
+                                            >
+                                                Publish to eBay
+                                            </button>
+                                            <button 
+                                                type="button"
+                                                className="flex-1 btn btn-outline"
+                                                onClick={handleSaveDraft}
+                                            >
+                                                Save as Draft
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
