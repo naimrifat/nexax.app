@@ -1,27 +1,49 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createHash } from 'crypto';
+
+// These values MUST match what you've entered in the eBay developer portal
+const VERIFICATION_TOKEN = 'nexax_ebay_deletion_verification_token_2024_secure';
+const ENDPOINT_URL = 'https://nexax.app/api/ebay-account-deletion';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  console.log('--- NEW REQUEST RECEIVED ---');
+  // --- Validation Challenge (GET request) ---
+  if (req.method === 'GET') {
+    const challengeCode = req.query.challenge_code as string;
 
-  try {
-    // Log all the important details of the request
-    console.log(`METHOD: ${req.method}`);
-    console.log(`URL: ${req.url}`);
-    console.log('QUERY PARAMETERS:', JSON.stringify(req.query, null, 2));
-    console.log('HEADERS:', JSON.stringify(req.headers, null, 2));
-
-    // For POST requests, also log the body
-    if (req.method === 'POST') {
-      console.log('BODY:', JSON.stringify(req.body, null, 2));
+    if (!challengeCode) {
+      console.error('❌ Missing challenge_code in GET request.');
+      return res.status(400).send('Missing challenge_code');
     }
-    
-    console.log('--- END OF REQUEST DETAILS ---');
 
-    // Always respond with 200 OK to prevent any errors on eBay's side
-    res.status(200).send('Request details logged successfully.');
+    // Create the required hash for the challenge response
+    const hash = createHash('sha256');
+    hash.update(challengeCode);
+    hash.update(VERIFICATION_TOKEN);
+    hash.update(ENDPOINT_URL);
+    const challengeResponse = hash.digest('hex');
 
-  } catch (error: any) {
-    console.error('❌ FATAL ERROR IN LOGGER:', error);
-    res.status(500).send('An error occurred while logging.');
+    // Respond with the hash in the correct JSON format
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).json({
+      challengeResponse: challengeResponse
+    });
   }
+
+  // --- Account Deletion Notification (POST request) ---
+  if (req.method === 'POST') {
+    console.log('🗑️ Received POST request with account deletion notification.');
+    
+    // IMPORTANT: Add signature verification for production
+    // For now, we will just log the body
+    console.log(req.body);
+    
+    // Your logic to delete user data from your database goes here
+    
+    // Respond to eBay to acknowledge receipt
+    return res.status(204).end();
+  }
+
+  // Handle any other HTTP methods
+  res.setHeader('Allow', ['GET', 'POST']);
+  return res.status(405).end(`Method ${req.method} Not Allowed`);
 }
