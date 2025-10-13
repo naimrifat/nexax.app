@@ -1,12 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// TEMPORARY: Test eBay API with known sandbox data
+// TEMPORARY: Test eBay API with production data
 async function testEbayConnection() {
   const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
   
   console.log('🔑 Using App ID:', EBAY_APP_ID?.substring(0, 10) + '...');
+  console.log('🔑 App ID exists?', !!EBAY_APP_ID);
   
-  const testQuery = 'shirt'; // Just test one
+  const testQuery = 'shirt';
   
   console.log(`\n🧪 Testing with: "${testQuery}"`);
   
@@ -24,7 +25,6 @@ async function testEbayConnection() {
     const response = await fetch(apiUrl);
     const data = await response.json();
     
-    // LOG THE ENTIRE RESPONSE
     console.log('📋 FULL API RESPONSE:', JSON.stringify(data, null, 2));
     
     const searchResult = data?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0];
@@ -32,40 +32,15 @@ async function testEbayConnection() {
     
     console.log(`📦 Found ${items.length} items`);
     
+    if (items.length > 0) {
+      const firstItem = items[0];
+      const catId = firstItem.primaryCategory?.[0]?.categoryId?.[0];
+      const catName = firstItem.primaryCategory?.[0]?.categoryName?.[0];
+      console.log(`✅ Category: ${catName} (${catId})`);
+    }
+    
   } catch (error: any) {
     console.log(`❌ Error: ${error.message}`);
-  }
-};
-    
-    const apiUrl = 
-      `https://svcs.ebay.com/services/search/FindingService/v1?` +
-      `OPERATION-NAME=findItemsByKeywords&` +
-      `SERVICE-VERSION=1.0.0&` +
-      `SECURITY-APPNAME=${EBAY_APP_ID}&` +
-      `RESPONSE-DATA-FORMAT=JSON&` +
-      `REST-PAYLOAD&` +
-      `keywords=${encodeURIComponent(query)}&` +
-      `paginationInput.entriesPerPage=3`;
-    
-    try {
-      const response = await fetch(apiUrl);
-      const data = await response.json();
-      
-      const searchResult = data?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0];
-      const items = searchResult?.item || [];
-      
-      console.log(`   📦 Found ${items.length} items`);
-      
-      if (items.length > 0) {
-        const firstItem = items[0];
-        const catId = firstItem.primaryCategory?.[0]?.categoryId?.[0];
-        const catName = firstItem.primaryCategory?.[0]?.categoryName?.[0];
-        console.log(`   ✅ Category: ${catName} (${catId})`);
-      }
-      
-    } catch (error: any) {
-      console.log(`   ❌ Error: ${error.message}`);
-    }
   }
 }
 
@@ -80,8 +55,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { action, parentCategoryId, categoryId, keywords, title, query } = req.body;
-    
-    const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
 
     // TEST CONNECTION ACTION
     if (action === 'testConnection') {
