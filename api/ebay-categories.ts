@@ -4,7 +4,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 async function testEbayConnection() {
   const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
   
-  const testQueries = ['shirt', 'phone', 'book', 'shoes'];
+  const testQueries = ['nike shirt', 'iphone', 'dress', 'laptop'];
   
   for (const query of testQueries) {
     console.log(`\n🧪 Testing with: "${query}"`);
@@ -94,6 +94,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 // ============================================
 // REAL EBAY FINDING API IMPLEMENTATION
+// NOW USING PRODUCTION API FOR BETTER DATA
 // ============================================
 
 async function getSmartCategorySuggestions(title: string, keywords: string[]) {
@@ -112,6 +113,7 @@ async function getSmartCategorySuggestions(title: string, keywords: string[]) {
       return getFallbackCategory();
     }
     
+    // PRODUCTION API - More reliable data
     const apiUrl = 
       `https://svcs.ebay.com/services/search/FindingService/v1?` +
       `OPERATION-NAME=findItemsByKeywords&` +
@@ -122,7 +124,7 @@ async function getSmartCategorySuggestions(title: string, keywords: string[]) {
       `keywords=${encodeURIComponent(searchQuery)}&` +
       `paginationInput.entriesPerPage=10`;
     
-    console.log('🔍 Calling eBay Finding API...');
+    console.log('🔍 Calling eBay Finding API (PRODUCTION)...');
     console.log('📝 Search query:', searchQuery);
     
     const response = await fetch(apiUrl);
@@ -133,6 +135,7 @@ async function getSmartCategorySuggestions(title: string, keywords: string[]) {
     
     const data = await response.json();
     
+    // Check for API errors
     if (data.errorMessage) {
       console.error('❌ eBay API error:', data.errorMessage);
       return getFallbackCategory();
@@ -224,14 +227,17 @@ async function fetchEbayCategoriesFromAPI(parentId: string) {
       { id: '11450', name: 'Clothing, Shoes & Accessories', hasChildren: true },
       { id: '293', name: 'Electronics', hasChildren: true },
       { id: '11700', name: 'Home & Garden', hasChildren: true },
-      { id: '888', name: 'Sporting Goods', hasChildren: true }
+      { id: '888', name: 'Sporting Goods', hasChildren: true },
+      { id: '6000', name: 'eBay Motors', hasChildren: true },
+      { id: '1', name: 'Collectibles', hasChildren: true }
     ];
   }
   
   if (parentId === '11450') {
     return [
       { id: '15724', name: 'Women', hasChildren: true },
-      { id: '1059', name: 'Men', hasChildren: true }
+      { id: '1059', name: 'Men', hasChildren: true },
+      { id: '175984', name: 'Kids', hasChildren: true }
     ];
   }
   
@@ -251,7 +257,9 @@ async function getCategorySpecificsFromAPI(categoryId: string) {
       { name: 'Brand', required: true, type: 'FreeText', values: [] },
       { name: 'Size', required: true, type: 'SelectionOnly', values: ['XS', 'S', 'M', 'L', 'XL', 'XXL'] },
       { name: 'Color', required: true, type: 'FreeText', values: [] },
-      { name: 'Condition', required: true, type: 'SelectionOnly', values: ['New with tags', 'New without tags', 'Pre-owned'] }
+      { name: 'Condition', required: true, type: 'SelectionOnly', values: ['New with tags', 'New without tags', 'Pre-owned'] },
+      { name: 'Material', required: false, type: 'FreeText', values: [] },
+      { name: 'Style', required: false, type: 'FreeText', values: [] }
     ]
   };
 }
