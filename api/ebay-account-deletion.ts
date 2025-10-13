@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createHash, createPublicKey, createVerify, KeyObject } from 'crypto';
+import { createHash } from 'crypto';
+import { Message, Config } from '@ebay/event-notification-nodejs-sdk';
 
 export const config = {
   api: {
@@ -10,90 +11,12 @@ export const config = {
 const VERIFICATION_TOKEN = 'nexax_ebay_deletion_verification_token_2024_secure';
 const ENDPOINT_URL = 'https://www.nexax.app/api/ebay-account-deletion';
 
-const keyCache = new Map<string, KeyObject>();
-let appToken: { access_token: string; expires_at: number } | null = null;
-
-async function getRawBody(req: VercelRequest): Promise<Buffer> {
+async function getRawBody(req: VercelRequest): Promise<string> {
   const chunks = [];
   for await (const chunk of req) {
     chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
   }
-  return Buffer.concat(chunks);
-}
-
-async function getAppToken(): Promise<string> {
-  if (appToken && appToken.expires_at > Date.now()) {
-    return appToken.access_token;
-  }
-  
-  const clientId = process.env.EBAY_CLIENT_ID;
-  const clientSecret = process.env.EBAY_CLIENT_SECRET;
-  
-  if (!clientId || !clientSecret) {
-    throw new Error('eBay client ID or secret is not configured.');
-  }
-  
-  const encodedCreds = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-  
-  const response = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
-    method: 'POST',
-    headers: { 
-      'Content-Type': 'application/x-www-form-urlencoded', 
-      'Authorization': `Basic ${encodedCreds}` 
-    },
-    body: 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope',
-  });
-  
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to get eBay access token: ${errorText}`);
-  }
-  
-  const data = await response.json();
-  
-  appToken = {
-    access_token: data.access_token,
-    expires_at: Date.now() + (data.expires_in - 300) * 1000,
-  };
-  
-  return appToken.access_token;
-}
-
-async function getPublicKey(keyId: string): Promise<KeyObject> {
-  if (keyCache.has(keyId)) {
-    return keyCache.get(keyId)!;
-  }
-
-  const token = await getAppToken();
-  
-  const response = await fetch(`https://api.ebay.com/commerce/notification/v1/public_key/${keyId}`, {
-    headers: { 
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/json'
-    },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to fetch public key ${keyId}: ${errorText}`);
-  }
-  
-  const keyData = await response.json();
-
-  // Format as PUBLIC KEY (not CERTIFICATE)
-  const publicKeyPem = `-----BEGIN PUBLIC KEY-----\n${keyData.key}\n-----END PUBLIC KEY-----`;
-  
-  let publicKey: KeyObject;
-  
-  try {
-    publicKey = createPublicKey(publicKeyPem);
-  } catch (error: any) {
-    console.error('Failed to create public key:', error);
-    throw new Error(`Invalid public key format: ${error.message}`);
-  }
-  
-  keyCache.set(keyId, publicKey);
-  return publicKey;
+  return Buffer.concat(chunks).toString('utf-8');
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -121,40 +44,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     try {
       const rawBody = await getRawBody(req);
+      const signatureHeader = req.headers['x-ebay-signature'] as string;
       
-      const signatureHeaderRaw = req.headers['x-ebay-signature'] as string;
-      
-      if (!signatureHeaderRaw) {
+      if (!signatureHeader) {
         console.error('❌ Missing X-EBAY-SIGNATURE header');
         return res.status(400).json({ error: 'Missing signature header' });
       }
-      
-      const signatureHeader = JSON.parse(
-        Buffer.from(signatureHeaderRaw, 'base64').toString('utf-8')
-      );
-      
-      console.log('📋 Signature header:', signatureHeader);
-      
-      const publicKey = await getPublicKey(signatureHeader.kid);
 
-      // Use SHA256 (despite what the header says)
-      const verifier = createVerify('sha256');
-      verifier.update(rawBody);
-      
-      const isVerified = verifier.verify(
-        publicKey, 
-        signatureHeader.signature, 
-        'base64'
-      );
+      // Configure SDK
+      const sdkConfig = new Config({
+        clientId: process.env.EBAY_CLIENT_ID!,
+        clientSecret: process.env.EBAY_CLIENT_SECRET!,
+        environment: 'PRODUCTION'
+      });
 
-      if (!isVerified) {
+      // Validate signature using SDK
+      const message = new Message(sdkConfig);
+      const isValid = await message.validate(rawBody, signatureHeader);
+
+      if (!isValid) {
         console.error('❌ Signature verification failed');
-        return res.status(401).json({ error: 'Signature verification failed' });
+        return res.status(401).json({ error: 'Invalid signature' });
       }
 
       console.log('✅ Signature verified successfully');
       
-      const notification = JSON.parse(rawBody.toString('utf-8'));
+      const notification = JSON.parse(rawBody);
       
       console.log('🗑️ Account deletion notification:', {
         notificationId: notification.notification?.notificationId,
@@ -163,7 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         userId: notification.notification?.data?.userId
       });
       
-      // TODO: Implement actual user data deletion logic here
+      // TODO: Implement actual user data deletion logic
       // Example: await deleteUserData(notification.notification.data.userId);
       
       return res.status(204).end();
