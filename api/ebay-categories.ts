@@ -16,9 +16,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (action === 'getCategories') {
       // Fetch categories from eBay Taxonomy API
-      // For sandbox, we'll simulate with a structured response
-      // In production, use: https://api.ebay.com/commerce/taxonomy/v1/category_tree/0/get_categories
-      
       const categories = await fetchEbayCategoriesFromAPI(parentCategoryId);
       return res.status(200).json({ categories });
     }
@@ -30,7 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (action === 'getSuggestedCategories') {
-      // Get AI-suggested categories based on keywords
+      // Get AI-suggested categories based on keywords - NOW USES REAL EBAY API
       const suggestions = await getSmartCategorySuggestions(title, keywords);
       return res.status(200).json(suggestions);
     }
@@ -52,12 +49,143 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-async function fetchEbayCategoriesFromAPI(parentId: string) {
-  // In production, call actual eBay API
-  // For now, return structured mock data based on parent
+// ============================================
+// REAL EBAY FINDING API IMPLEMENTATION
+// ============================================
+
+async function getSmartCategorySuggestions(title: string, keywords: string[]) {
+  const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
   
+  if (!EBAY_APP_ID) {
+    console.error('❌ EBAY_SANDBOX_APP_ID not found in environment variables');
+    return getFallbackCategory();
+  }
+  
+  try {
+    // Combine title and keywords for search
+    const searchQuery = `${title} ${keywords.join(' ')}`.trim();
+    
+    if (!searchQuery) {
+      console.log('⚠️ Empty search query, using fallback');
+      return getFallbackCategory();
+    }
+    
+    // Call eBay Finding API
+    const apiUrl = 
+      `https://svcs.sandbox.ebay.com/services/search/FindingService/v1?` +
+      `OPERATION-NAME=findItemsByKeywords&` +
+      `SERVICE-VERSION=1.0.0&` +
+      `SECURITY-APPNAME=${EBAY_APP_ID}&` +
+      `RESPONSE-DATA-FORMAT=JSON&` +
+      `REST-PAYLOAD&` +
+      `keywords=${encodeURIComponent(searchQuery)}&` +
+      `paginationInput.entriesPerPage=10`;
+    
+    console.log('🔍 Calling eBay Finding API...');
+    console.log('📝 Search query:', searchQuery);
+    
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`eBay API returned status ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Check for API errors in response
+    if (data.errorMessage) {
+      console.error('❌ eBay API error:', data.errorMessage);
+      return getFallbackCategory();
+    }
+    
+    // Extract categories from search results
+    const categories = extractCategoriesFromResults(data);
+    
+    if (categories.length === 0) {
+      console.log('⚠️ No categories found in eBay results, using fallback');
+      return getFallbackCategory();
+    }
+    
+    console.log('✅ Found categories:', categories.map(c => c.name));
+    
+    // Return the most common category as primary, rest as suggestions
+    return {
+      categoryId: categories[0].id,
+      categoryName: categories[0].name,
+      suggestions: categories.slice(0, 3) // Top 3 suggestions
+    };
+    
+  } catch (error: any) {
+    console.error('❌ Error calling eBay Finding API:', error.message);
+    return getFallbackCategory();
+  }
+}
+
+function extractCategoriesFromResults(data: any) {
+  const categoryMap = new Map<string, { id: string; name: string; count: number }>();
+  
+  try {
+    // Navigate eBay's nested response structure
+    const searchResult = data?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0];
+    const items = searchResult?.item || [];
+    
+    console.log(`📦 Found ${items.length} items from eBay search`);
+    
+    if (items.length === 0) {
+      return [];
+    }
+    
+    // Count categories from all items
+    for (const item of items) {
+      const categoryId = item.primaryCategory?.[0]?.categoryId?.[0];
+      const categoryName = item.primaryCategory?.[0]?.categoryName?.[0];
+      
+      if (categoryId && categoryName) {
+        if (categoryMap.has(categoryId)) {
+          const existing = categoryMap.get(categoryId)!;
+          existing.count++;
+        } else {
+          categoryMap.set(categoryId, {
+            id: categoryId,
+            name: categoryName,
+            count: 1
+          });
+        }
+      }
+    }
+    
+    // Sort by count (most common first)
+    const sortedCategories = Array.from(categoryMap.values())
+      .sort((a, b) => b.count - a.count)
+      .map(cat => ({ id: cat.id, name: cat.name }));
+    
+    console.log('📊 Category breakdown:', sortedCategories.map(c => `${c.name} (${c.id})`));
+    
+    return sortedCategories;
+    
+  } catch (error) {
+    console.error('❌ Error extracting categories:', error);
+    return [];
+  }
+}
+
+function getFallbackCategory() {
+  return {
+    categoryId: '11450',
+    categoryName: 'Clothing, Shoes & Accessories',
+    suggestions: [
+      { id: '11450', name: 'Clothing, Shoes & Accessories' }
+    ]
+  };
+}
+
+// ============================================
+// PLACEHOLDER FUNCTIONS (Will update in Task 2)
+// ============================================
+
+async function fetchEbayCategoriesFromAPI(parentId: string) {
+  // Root categories
   if (!parentId || parentId === '0') {
-    // Root categories
     return [
       { id: '11450', name: 'Clothing, Shoes & Accessories', hasChildren: true },
       { id: '293', name: 'Electronics', hasChildren: true },
@@ -70,7 +198,7 @@ async function fetchEbayCategoriesFromAPI(parentId: string) {
     ];
   }
   
-  // Add logic for child categories based on parentId
+  // Child categories
   if (parentId === '11450') {
     return [
       { id: '15724', name: 'Women', hasChildren: true },
@@ -80,55 +208,28 @@ async function fetchEbayCategoriesFromAPI(parentId: string) {
     ];
   }
   
-  // Return empty for leaf nodes
   return [];
 }
 
 async function searchEbayCategoriesAPI(query: string) {
-  // Implement category search logic
-  // This would call eBay's search API in production
+  // TODO: Implement category search logic
   return [];
 }
 
-async function getSmartCategorySuggestions(title: string, keywords: string[]) {
-  // Analyze title and keywords to suggest best categories
-  // This could use eBay's ML-based category suggestion API
-  
-  const searchTerms = [title, ...keywords].join(' ').toLowerCase();
-  const suggestions = [];
-  
-  if (searchTerms.includes('shirt') || searchTerms.includes('pullover') || searchTerms.includes('top')) {
-    suggestions.push({
-      id: '53159',
-      path: 'Clothing, Shoes & Accessories > Men > Men\'s Clothing > Activewear > Activewear Tops',
-      confidence: 0.95
-    });
-  }
-  
-  return { suggestions };
-}
-
 async function getCategorySpecificsFromAPI(categoryId: string) {
-  // Fetch actual required/optional fields for this category
-  // In production, use eBay's Get Item Aspects API
+  // TODO: Will implement real eBay GetCategorySpecifics API in Task 2
+  // For now, return basic structure
+  console.log('⚠️ Using mock category specifics - Task 2 will fix this');
   
-  // Return dynamic specifics based on category
-  const specifics = {
+  return {
+    categoryId,
     aspects: [
-      { name: 'Brand', required: true, values: [] },
-      { name: 'Size', required: true, values: ['XS', 'S', 'M', 'L', 'XL', 'XXL'] },
-      { name: 'Color', required: true, values: [] },
-      { name: 'Condition', required: true, values: ['New with tags', 'New without tags', 'Pre-owned'] }
+      { name: 'Brand', required: true, type: 'FreeText', values: [] },
+      { name: 'Size', required: true, type: 'SelectionOnly', values: ['XS', 'S', 'M', 'L', 'XL', 'XXL'] },
+      { name: 'Color', required: true, type: 'FreeText', values: [] },
+      { name: 'Condition', required: true, type: 'SelectionOnly', values: ['New with tags', 'New without tags', 'Pre-owned'] },
+      { name: 'Material', required: false, type: 'FreeText', values: [] },
+      { name: 'Style', required: false, type: 'FreeText', values: [] }
     ]
   };
-  
-  // Add category-specific fields
-  if (categoryId.startsWith('537')) { // Activewear
-    specifics.aspects.push(
-      { name: 'Activity', required: false, values: ['Running', 'Gym', 'Yoga', 'Training'] },
-      { name: 'Performance/Activity', required: false, values: ['Moisture Wicking', 'Breathable', 'Stretch'] }
-    );
-  }
-  
-  return specifics;
 }
