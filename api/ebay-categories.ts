@@ -4,10 +4,38 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 async function testEbayConnection() {
   const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
   
-  const testQueries = ['nike shirt', 'iphone', 'dress', 'laptop'];
+  console.log('🔑 Using App ID:', EBAY_APP_ID?.substring(0, 10) + '...');
   
-  for (const query of testQueries) {
-    console.log(`\n🧪 Testing with: "${query}"`);
+  const testQuery = 'shirt'; // Just test one
+  
+  console.log(`\n🧪 Testing with: "${testQuery}"`);
+  
+  const apiUrl = 
+    `https://svcs.ebay.com/services/search/FindingService/v1?` +
+    `OPERATION-NAME=findItemsByKeywords&` +
+    `SERVICE-VERSION=1.0.0&` +
+    `SECURITY-APPNAME=${EBAY_APP_ID}&` +
+    `RESPONSE-DATA-FORMAT=JSON&` +
+    `REST-PAYLOAD&` +
+    `keywords=${encodeURIComponent(testQuery)}&` +
+    `paginationInput.entriesPerPage=3`;
+  
+  try {
+    const response = await fetch(apiUrl);
+    const data = await response.json();
+    
+    // LOG THE ENTIRE RESPONSE
+    console.log('📋 FULL API RESPONSE:', JSON.stringify(data, null, 2));
+    
+    const searchResult = data?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0];
+    const items = searchResult?.item || [];
+    
+    console.log(`📦 Found ${items.length} items`);
+    
+  } catch (error: any) {
+    console.log(`❌ Error: ${error.message}`);
+  }
+};
     
     const apiUrl = 
       `https://svcs.ebay.com/services/search/FindingService/v1?` +
