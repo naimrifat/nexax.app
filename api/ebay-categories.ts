@@ -1,49 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// TEMPORARY: Test eBay API with production data
-async function testEbayConnection() {
-  const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
-  
-  console.log('🔑 Using App ID:', EBAY_APP_ID?.substring(0, 10) + '...');
-  console.log('🔑 App ID exists?', !!EBAY_APP_ID);
-  
-  const testQuery = 'shirt';
-  
-  console.log(`\n🧪 Testing with: "${testQuery}"`);
-  
-  const apiUrl = 
-    `https://svcs.ebay.com/services/search/FindingService/v1?` +
-    `OPERATION-NAME=findItemsByKeywords&` +
-    `SERVICE-VERSION=1.0.0&` +
-    `SECURITY-APPNAME=${EBAY_APP_ID}&` +
-    `RESPONSE-DATA-FORMAT=JSON&` +
-    `REST-PAYLOAD&` +
-    `keywords=${encodeURIComponent(testQuery)}&` +
-    `paginationInput.entriesPerPage=3`;
-  
-  try {
-    const response = await fetch(apiUrl);
-    const data = await response.json();
-    
-    console.log('📋 FULL API RESPONSE:', JSON.stringify(data, null, 2));
-    
-    const searchResult = data?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0];
-    const items = searchResult?.item || [];
-    
-    console.log(`📦 Found ${items.length} items`);
-    
-    if (items.length > 0) {
-      const firstItem = items[0];
-      const catId = firstItem.primaryCategory?.[0]?.categoryId?.[0];
-      const catName = firstItem.primaryCategory?.[0]?.categoryName?.[0];
-      console.log(`✅ Category: ${catName} (${catId})`);
-    }
-    
-  } catch (error: any) {
-    console.log(`❌ Error: ${error.message}`);
-  }
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
@@ -55,12 +11,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { action, parentCategoryId, categoryId, keywords, title, query } = req.body;
-
-    // TEST CONNECTION ACTION
-    if (action === 'testConnection') {
-      await testEbayConnection();
-      return res.status(200).json({ message: 'Check server logs' });
-    }
 
     if (action === 'getCategories') {
       const categories = await fetchEbayCategoriesFromAPI(parentCategoryId);
@@ -94,15 +44,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // ============================================
-// REAL EBAY FINDING API IMPLEMENTATION
-// NOW USING PRODUCTION API FOR BETTER DATA
+// PRODUCTION EBAY FINDING API
+// Uses production API for real category data
 // ============================================
 
 async function getSmartCategorySuggestions(title: string, keywords: string[]) {
-  const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
+  const EBAY_PRODUCTION_APP_ID = process.env.EBAY_PRODUCTION_APP_ID;
   
-  if (!EBAY_APP_ID) {
-    console.error('❌ EBAY_SANDBOX_APP_ID not found in environment variables');
+  if (!EBAY_PRODUCTION_APP_ID) {
+    console.error('❌ EBAY_PRODUCTION_APP_ID not found');
     return getFallbackCategory();
   }
   
@@ -110,22 +60,22 @@ async function getSmartCategorySuggestions(title: string, keywords: string[]) {
     const searchQuery = `${title} ${keywords.join(' ')}`.trim();
     
     if (!searchQuery) {
-      console.log('⚠️ Empty search query, using fallback');
+      console.log('⚠️ Empty search query');
       return getFallbackCategory();
     }
     
-    // PRODUCTION API - More reliable data
+    // PRODUCTION Finding API
     const apiUrl = 
       `https://svcs.ebay.com/services/search/FindingService/v1?` +
       `OPERATION-NAME=findItemsByKeywords&` +
       `SERVICE-VERSION=1.0.0&` +
-      `SECURITY-APPNAME=${EBAY_APP_ID}&` +
+      `SECURITY-APPNAME=${EBAY_PRODUCTION_APP_ID}&` +
       `RESPONSE-DATA-FORMAT=JSON&` +
       `REST-PAYLOAD&` +
       `keywords=${encodeURIComponent(searchQuery)}&` +
       `paginationInput.entriesPerPage=10`;
     
-    console.log('🔍 Calling eBay Finding API (PRODUCTION)...');
+    console.log('🔍 Calling eBay PRODUCTION Finding API...');
     console.log('📝 Search query:', searchQuery);
     
     const response = await fetch(apiUrl);
@@ -136,7 +86,6 @@ async function getSmartCategorySuggestions(title: string, keywords: string[]) {
     
     const data = await response.json();
     
-    // Check for API errors
     if (data.errorMessage) {
       console.error('❌ eBay API error:', data.errorMessage);
       return getFallbackCategory();
@@ -145,7 +94,7 @@ async function getSmartCategorySuggestions(title: string, keywords: string[]) {
     const categories = extractCategoriesFromResults(data);
     
     if (categories.length === 0) {
-      console.log('⚠️ No categories found in eBay results, using fallback');
+      console.log('⚠️ No categories found');
       return getFallbackCategory();
     }
     
@@ -158,7 +107,7 @@ async function getSmartCategorySuggestions(title: string, keywords: string[]) {
     };
     
   } catch (error: any) {
-    console.error('❌ Error calling eBay Finding API:', error.message);
+    console.error('❌ Error:', error.message);
     return getFallbackCategory();
   }
 }
@@ -170,11 +119,9 @@ function extractCategoriesFromResults(data: any) {
     const searchResult = data?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0];
     const items = searchResult?.item || [];
     
-    console.log(`📦 Found ${items.length} items from eBay search`);
+    console.log(`📦 Found ${items.length} items`);
     
-    if (items.length === 0) {
-      return [];
-    }
+    if (items.length === 0) return [];
     
     for (const item of items) {
       const categoryId = item.primaryCategory?.[0]?.categoryId?.[0];
@@ -182,25 +129,20 @@ function extractCategoriesFromResults(data: any) {
       
       if (categoryId && categoryName) {
         if (categoryMap.has(categoryId)) {
-          const existing = categoryMap.get(categoryId)!;
-          existing.count++;
+          categoryMap.get(categoryId)!.count++;
         } else {
-          categoryMap.set(categoryId, {
-            id: categoryId,
-            name: categoryName,
-            count: 1
-          });
+          categoryMap.set(categoryId, { id: categoryId, name: categoryName, count: 1 });
         }
       }
     }
     
-    const sortedCategories = Array.from(categoryMap.values())
+    const sorted = Array.from(categoryMap.values())
       .sort((a, b) => b.count - a.count)
       .map(cat => ({ id: cat.id, name: cat.name }));
     
-    console.log('📊 Category breakdown:', sortedCategories.map(c => `${c.name} (${c.id})`));
+    console.log('📊 Categories:', sorted.map(c => `${c.name} (${c.id})`));
     
-    return sortedCategories;
+    return sorted;
     
   } catch (error) {
     console.error('❌ Error extracting categories:', error);
@@ -212,9 +154,7 @@ function getFallbackCategory() {
   return {
     categoryId: '11450',
     categoryName: 'Clothing, Shoes & Accessories',
-    suggestions: [
-      { id: '11450', name: 'Clothing, Shoes & Accessories' }
-    ]
+    suggestions: [{ id: '11450', name: 'Clothing, Shoes & Accessories' }]
   };
 }
 
@@ -227,21 +167,9 @@ async function fetchEbayCategoriesFromAPI(parentId: string) {
     return [
       { id: '11450', name: 'Clothing, Shoes & Accessories', hasChildren: true },
       { id: '293', name: 'Electronics', hasChildren: true },
-      { id: '11700', name: 'Home & Garden', hasChildren: true },
-      { id: '888', name: 'Sporting Goods', hasChildren: true },
-      { id: '6000', name: 'eBay Motors', hasChildren: true },
-      { id: '1', name: 'Collectibles', hasChildren: true }
+      { id: '11700', name: 'Home & Garden', hasChildren: true }
     ];
   }
-  
-  if (parentId === '11450') {
-    return [
-      { id: '15724', name: 'Women', hasChildren: true },
-      { id: '1059', name: 'Men', hasChildren: true },
-      { id: '175984', name: 'Kids', hasChildren: true }
-    ];
-  }
-  
   return [];
 }
 
@@ -250,17 +178,15 @@ async function searchEbayCategoriesAPI(query: string) {
 }
 
 async function getCategorySpecificsFromAPI(categoryId: string) {
-  console.log('⚠️ Using mock category specifics - Task 2 will fix this');
+  console.log('⚠️ Using mock - Task 2 will fix this');
   
   return {
     categoryId,
     aspects: [
       { name: 'Brand', required: true, type: 'FreeText', values: [] },
-      { name: 'Size', required: true, type: 'SelectionOnly', values: ['XS', 'S', 'M', 'L', 'XL', 'XXL'] },
+      { name: 'Size', required: true, type: 'SelectionOnly', values: ['XS', 'S', 'M', 'L', 'XL'] },
       { name: 'Color', required: true, type: 'FreeText', values: [] },
-      { name: 'Condition', required: true, type: 'SelectionOnly', values: ['New with tags', 'New without tags', 'Pre-owned'] },
-      { name: 'Material', required: false, type: 'FreeText', values: [] },
-      { name: 'Style', required: false, type: 'FreeText', values: [] }
+      { name: 'Condition', required: true, type: 'SelectionOnly', values: ['New with tags', 'New without tags', 'Pre-owned'] }
     ]
   };
 }
