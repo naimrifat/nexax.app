@@ -67,11 +67,15 @@ async function getPublicKey(keyId: string): Promise<KeyObject> {
   
   const keyData = await response.json();
 
-  // --- THIS IS THE FINAL FIX ---
-  // The key from eBay is a raw base64 string. We wrap it in PEM headers
-  // to create the full format that Node.js's crypto library requires.
-  const pemKey = `-----BEGIN PUBLIC KEY-----\n${keyData.key}\n-----END PUBLIC KEY-----`;
-  const publicKey = createPublicKey(pemKey);
+  // --- THE DEFINITIVE FIX ---
+  // The key from eBay is a base64-encoded string of a key in DER format.
+  // We must decode it into a buffer and explicitly tell createPublicKey the exact format.
+  const keyBuffer = Buffer.from(keyData.key, 'base64');
+  const publicKey = createPublicKey({
+    key: keyBuffer,
+    type: 'spki',
+    format: 'der'
+  });
   
   keyCache.set(keyId, publicKey);
   return publicKey;
