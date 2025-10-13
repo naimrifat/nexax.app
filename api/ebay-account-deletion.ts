@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 
 // These values MUST match what you've entered in the eBay developer portal
 const VERIFICATION_TOKEN = 'nexax_ebay_deletion_verification_token_2024_secure';
-const ENDPOINT_URL = 'https://nexax.app/api/ebay-account-deletion';
+const ENDPOINT_URL = 'https://www.nexax.app/api/ebay-account-deletion';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // --- Validation Challenge (GET request) ---
