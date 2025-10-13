@@ -1,5 +1,72 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
+// TEMPORARY: Test eBay API with known sandbox data
+export async function testEbayConnection() {
+  const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
+  
+  const testQueries = ['shirt', 'phone', 'book', 'shoes'];
+  
+  for (const query of testQueries) {
+    console.log(`\n🧪 Testing with: "${query}"`);
+    
+    const apiUrl = 
+      `https://svcs.sandbox.ebay.com/services/search/FindingService/v1?` +
+      `OPERATION-NAME=findItemsByKeywords&` +
+      `SERVICE-VERSION=1.0.0&` +
+      `SECURITY-APPNAME=${EBAY_APP_ID}&` +
+      `RESPONSE-DATA-FORMAT=JSON&` +
+      `REST-PAYLOAD&` +
+      `keywords=${encodeURIComponent(query)}&` +
+      `paginationInput.entriesPerPage=3`;
+    
+    try {
+      const response = await fetch(apiUrl);
+      const data = await response.json();
+      
+      const searchResult = data?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0];
+      const items = searchResult?.item || [];
+      
+      console.log(`   📦 Found ${items.length} items`);
+      
+      if (items.length > 0) {
+        const firstItem = items[0];
+        const catId = firstItem.primaryCategory?.[0]?.categoryId?.[0];
+        const catName = firstItem.primaryCategory?.[0]?.categoryName?.[0];
+        console.log(`   ✅ Category: ${catName} (${catId})`);
+      }
+      
+    } catch (error: any) {
+      console.log(`   ❌ Error: ${error.message}`);
+    }
+  }
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  try {
+    const { action, parentCategoryId, categoryId, keywords, title, query } = req.body;
+    
+    const EBAY_APP_ID = process.env.EBAY_SANDBOX_APP_ID;
+
+    // ADD THIS TEST ACTION HERE
+    if (action === 'testConnection') {
+      await testEbayConnection();
+      return res.status(200).json({ message: 'Check server logs' });
+    }
+
+    if (action === 'getCategories') {
+      const categories = await fetchEbayCategoriesFromAPI(parentCategoryId);
+      return res.status(200).json({ categories });
+    }
+
+    // ... rest of your handler code
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
