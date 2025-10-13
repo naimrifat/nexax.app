@@ -10,7 +10,7 @@ async function testEbayConnection() {
     console.log(`\n🧪 Testing with: "${query}"`);
     
     const apiUrl = 
-      `https://svcs.sandbox.ebay.com/services/search/FindingService/v1?` +
+      `https://svcs.ebay.com/services/search/FindingService/v1?` +
       `OPERATION-NAME=findItemsByKeywords&` +
       `SERVICE-VERSION=1.0.0&` +
       `SECURITY-APPNAME=${EBAY_APP_ID}&` +
@@ -113,7 +113,7 @@ async function getSmartCategorySuggestions(title: string, keywords: string[]) {
     }
     
     const apiUrl = 
-      `https://svcs.sandbox.ebay.com/services/search/FindingService/v1?` +
+      `https://svcs.ebay.com/services/search/FindingService/v1?` +
       `OPERATION-NAME=findItemsByKeywords&` +
       `SERVICE-VERSION=1.0.0&` +
       `SECURITY-APPNAME=${EBAY_APP_ID}&` +
