@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createHash, createPublicKey, createVerify, KeyObject } from 'crypto';
 
-// Tells Vercel to give us the raw request body for verification.
 export const config = {
   api: {
     bodyParser: false,
@@ -11,11 +10,8 @@ export const config = {
 const VERIFICATION_TOKEN = 'nexax_ebay_deletion_verification_token_2024_secure';
 const ENDPOINT_URL = 'https://www.nexax.app/api/ebay-account-deletion';
 
-// Caches for tokens and keys to improve performance.
 const keyCache = new Map<string, KeyObject>();
 let appToken: { access_token: string; expires_at: number } | null = null;
-
-// --- Helper Functions ---
 
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
   const chunks = [];
@@ -67,23 +63,16 @@ async function getPublicKey(keyId: string): Promise<KeyObject> {
   
   const keyData = await response.json();
 
-  // --- THE DEFINITIVE FIX ---
-  // The key from eBay is a base64-encoded string of a key in DER format.
-  // We must decode it into a buffer and explicitly tell createPublicKey the exact format.
-  const keyBuffer = Buffer.from(keyData.key, 'base64');
-  const publicKey = createPublicKey({
-    key: keyBuffer,
-    type: 'spki',
-    format: 'der'
-  });
+  // --- FIX #1: Treat the key as a Certificate, not a Public Key ---
+  // This directly addresses the `DECODER::unsupported` error.
+  const certPem = `-----BEGIN CERTIFICATE-----\n${keyData.key}\n-----END CERTIFICATE-----`;
+  const publicKey = createPublicKey(certPem);
   
   keyCache.set(keyId, publicKey);
   return publicKey;
 }
 
-// --- Main Handler ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // GET request for initial validation challenge
   if (req.method === 'GET') {
     const challengeCode = req.query.challenge_code as string;
     if (!challengeCode) { return res.status(400).send('Missing challenge_code'); }
@@ -96,7 +85,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ challengeResponse });
   }
 
-  // POST request for actual notifications
   if (req.method === 'POST') {
     try {
       const rawBody = await getRawBody(req);
@@ -104,7 +92,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       
       const publicKey = await getPublicKey(signatureHeader.kid);
 
-      const verifier = createVerify('sha256');
+      // --- FIX #2: Use the 'sha1' algorithm specified by eBay ---
+      // The decoded signature header showed `"digest":"SHA1"`. We must use the same algorithm.
+      const verifier = createVerify('sha1');
       verifier.update(rawBody);
       const isVerified = verifier.verify(publicKey, signatureHeader.signature, 'base64');
 
