@@ -67,10 +67,11 @@ async function getPublicKey(keyId: string): Promise<KeyObject> {
   
   const keyData = await response.json();
 
-  // --- THIS IS THE FIX ---
-  // The previous code tried to run a "verify" command here, which was incorrect.
-  // The correct step is to import the public key material provided by eBay.
-  const publicKey = createPublicKey(keyData.key);
+  // --- THIS IS THE FINAL FIX ---
+  // The key from eBay is a raw base64 string. We wrap it in PEM headers
+  // to create the full format that Node.js's crypto library requires.
+  const pemKey = `-----BEGIN PUBLIC KEY-----\n${keyData.key}\n-----END PUBLIC KEY-----`;
+  const publicKey = createPublicKey(pemKey);
   
   keyCache.set(keyId, publicKey);
   return publicKey;
