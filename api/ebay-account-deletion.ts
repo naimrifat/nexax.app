@@ -1,13 +1,17 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createHash, timingSafeEqual } from 'crypto';
+import { createHash } from 'crypto';
+import * as jose from 'jose'; // Import the new library
 
 const VERIFICATION_TOKEN = 'nexax_ebay_deletion_verification_token_2024_secure';
 const ENDPOINT_URL = 'https://www.nexax.app/api/ebay-account-deletion';
 
+// Create a reusable key object for JWS verification
+const secret = new TextEncoder().encode(VERIFICATION_TOKEN);
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // --- Validation Challenge (GET request) ---
   if (req.method === 'GET') {
-    // ... (This part is working correctly, no changes needed)
+    // This part is working correctly.
     const challengeCode = req.query.challenge_code as string;
     if (!challengeCode) { return res.status(400).send('Missing challenge_code'); }
     const hash = createHash('sha256');
@@ -22,45 +26,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // --- Account Deletion Notification (POST request) ---
   if (req.method === 'POST') {
     try {
-      // 1. Get the signature from the headers
-      const receivedSignature = req.headers['x-ebay-signature'] as string;
-      if (!receivedSignature) {
+      // 1. Get the JWS signature from the header
+      const jws = req.headers['x-ebay-signature'] as string;
+      if (!jws) {
         console.error('❌ Missing x-ebay-signature header.');
-        return res.status(401).send('Missing signature');
+        return res.status(401).send('Signature is missing');
       }
 
-      // 2. Calculate the expected signature
-      const expectedHash = createHash('sha256');
-      // The body needs to be stringified exactly as received
-      expectedHash.update(JSON.stringify(req.body));
-      expectedHash.update(VERIFICATION_TOKEN);
-      expectedHash.update(ENDPOINT_URL);
-      const expectedSignature = expectedHash.digest('hex');
+      // 2. Verify the JWS signature using the 'jose' library
+      // This will automatically decode the JWS, verify its signature against the
+      // payload (req.body), and throw an error if it's invalid.
+      const { payload } = await jose.jwtVerify(jws, secret);
 
-      // 3. Securely compare the signatures
-      const isValid = timingSafeEqual(
-        Buffer.from(receivedSignature),
-        Buffer.from(expectedSignature)
-      );
+      console.log('✅ JWS Signature is valid.');
+      console.log('Received payload:', payload);
 
-      if (!isValid) {
-        console.error('❌ Invalid signature.');
-        return res.status(401).send('Invalid signature');
-      }
+      // Your logic to delete the user's data from your database goes here.
+      // Example: const userId = payload.data.userId; await deleteUser(userId);
 
-      // If the signature is valid, process the notification
-      console.log('✅ Signature valid. Processing notification:');
-      console.log(JSON.stringify(req.body, null, 2));
-
-      // TODO: Your logic to delete the user's data from your database goes here.
-      // Example: const userId = req.body.data.userId; await deleteUser(userId);
-
-      // 4. Respond with 204 No Content to acknowledge receipt
+      // 3. Respond with 204 No Content to acknowledge receipt
       return res.status(204).end();
 
     } catch (error: any) {
-      console.error('❌ Error processing POST request:', error);
-      return res.status(500).json({ error: error.message });
+      // The 'jose' library will throw an error if verification fails
+      console.error('❌ Error processing JWS:', error.message);
+      return res.status(401).json({ error: 'Signature verification failed.' });
     }
   }
 
