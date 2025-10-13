@@ -1,25 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createHash } from 'crypto';
-import { Message, Config } from '@ebay/event-notification-sdk';
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
 
 const VERIFICATION_TOKEN = 'nexax_ebay_deletion_verification_token_2024_secure';
 const ENDPOINT_URL = 'https://www.nexax.app/api/ebay-account-deletion';
 
-async function getRawBody(req: VercelRequest): Promise<string> {
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-  }
-  return Buffer.concat(chunks).toString('utf-8');
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS, GET');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-EBAY-SIGNATURE');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   // Handle GET - Challenge Verification
   if (req.method === 'GET') {
     const challengeCode = req.query.challenge_code as string;
@@ -43,34 +36,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Handle POST - Deletion Notification
   if (req.method === 'POST') {
     try {
-      const rawBody = await getRawBody(req);
-      const signatureHeader = req.headers['x-ebay-signature'] as string;
+      console.log('📨 Received deletion notification');
       
-      if (!signatureHeader) {
-        console.error('❌ Missing X-EBAY-SIGNATURE header');
-        return res.status(400).json({ error: 'Missing signature header' });
-      }
-
-      // Configure SDK
-      const sdkConfig = new Config({
-        clientId: process.env.EBAY_CLIENT_ID!,
-        clientSecret: process.env.EBAY_CLIENT_SECRET!,
-        environment: 'PRODUCTION'
-      });
-
-      // Validate signature using SDK
-      const message = new Message(sdkConfig);
-      const isValid = await message.validate(rawBody, signatureHeader);
-
-      if (!isValid) {
-        console.error('❌ Signature verification failed');
-        return res.status(401).json({ error: 'Invalid signature' });
-      }
-
-      console.log('✅ Signature verified successfully');
+      const notification = req.body;
       
-      const notification = JSON.parse(rawBody);
-      
+      // Log the notification details
       console.log('🗑️ Account deletion notification:', {
         notificationId: notification.notification?.notificationId,
         eventDate: notification.notification?.eventDate,
@@ -78,8 +48,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         userId: notification.notification?.data?.userId
       });
       
-      // TODO: Implement actual user data deletion logic
+      // TODO: Implement actual user data deletion logic here
+      // For now, just acknowledge receipt
       // Example: await deleteUserData(notification.notification.data.userId);
+      
+      console.log('✅ Notification acknowledged');
       
       return res.status(204).end();
 
