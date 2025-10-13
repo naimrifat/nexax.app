@@ -32,14 +32,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // --- Account Deletion Notification (POST request) ---
   if (req.method === 'POST') {
     console.log('🗑️ Received POST request with account deletion notification.');
-    
-    // IMPORTANT: Add signature verification for production
-    // For now, we will just log the body
     console.log(req.body);
-    
+    // TODO: Add signature verification for production
     // Your logic to delete user data from your database goes here
-    
-    // Respond to eBay to acknowledge receipt
     return res.status(204).end();
   }
 
