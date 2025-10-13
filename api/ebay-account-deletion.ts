@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createHash } from 'crypto';
-import { Message, Config } from '@ebay/event-notification-nodejs-sdk';
+import { Message, Config } from '@ebay/event-notification-sdk';
 
 export const config = {
   api: {
