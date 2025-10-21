@@ -164,18 +164,78 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       
       if (ebayResponse.ok) {
         const ebayData = await ebayResponse.json();
+        
+        // Store the raw eBay data
         parsedAnalysis.ebay_category_id = ebayData.categoryId;
         parsedAnalysis.ebay_category_name = ebayData.categoryName;
-        console.log('eBay category found:', ebayData.categoryName);
+        
+        // FORMAT FOR FRONTEND: Add category object
+        parsedAnalysis.category = {
+          id: ebayData.categoryId,
+          name: ebayData.categoryName
+        };
+        
+        // FORMAT FOR FRONTEND: Add category suggestions
+        parsedAnalysis.category_suggestions = ebayData.suggestions || [
+          { id: ebayData.categoryId, name: ebayData.categoryName }
+        ];
+        
+        console.log('✅ eBay category found:', ebayData.categoryName);
+        
+        // NEW: Get category specifics
+        try {
+          console.log('Fetching category specifics...');
+          
+          const specificsResponse = await fetch(ebayApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'getCategorySpecifics',
+              categoryId: ebayData.categoryId
+            })
+          });
+          
+          if (specificsResponse.ok) {
+            const specificsData = await specificsResponse.json();
+            parsedAnalysis.category_specifics_schema = specificsData.aspects || [];
+            console.log('✅ Got category specifics:', specificsData.aspects?.length || 0, 'fields');
+            
+            // Map AI-detected values to eBay fields
+            const mappedSpecifics = mapAIToEbayFields(parsedAnalysis.detected, specificsData.aspects || []);
+            parsedAnalysis.item_specifics = mappedSpecifics;
+            
+          } else {
+            console.error('Failed to get category specifics:', specificsResponse.status);
+          }
+        } catch (error) {
+          console.error('Error fetching category specifics:', error);
+        }
+        
       } else {
         console.error('eBay API response not ok:', ebayResponse.status);
+        // Set default fallback
+        parsedAnalysis.ebay_category_id = '11450';
+        parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
+        parsedAnalysis.category = {
+          id: '11450',
+          name: 'Clothing, Shoes & Accessories'
+        };
+        parsedAnalysis.category_suggestions = [
+          { id: '11450', name: 'Clothing, Shoes & Accessories' }
+        ];
       }
     } catch (error) {
       console.error('Failed to get eBay category:', error);
-      // Don't fail the whole request if eBay lookup fails
-      // Set default category for clothing
+      // Set default fallback
       parsedAnalysis.ebay_category_id = '11450';
       parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
+      parsedAnalysis.category = {
+        id: '11450',
+        name: 'Clothing, Shoes & Accessories'
+      };
+      parsedAnalysis.category_suggestions = [
+        { id: '11450', name: 'Clothing, Shoes & Accessories' }
+      ];
     }
 
     // Step 4: Send to Make.com webhook if configured
@@ -196,13 +256,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (!makeResponse.ok) {
           console.error('Make.com webhook failed:', makeResponse.status);
-          // Don't throw - still return results to user even if Make.com fails
         } else {
           console.log('Successfully sent to Make.com');
         }
       } catch (makeError) {
         console.error('Error sending to Make.com:', makeError);
-        // Don't throw - still return results to user
       }
     }
 
@@ -221,4 +279,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
+}
+
+// Helper function to map AI-detected data to eBay fields
+function mapAIToEbayFields(aiDetected: any, ebayAspects: any[]) {
+  const mapped: any[] = [];
+  
+  for (const aspect of ebayAspects) {
+    let value = '';
+    
+    // Smart matching logic
+    const aspectName = aspect.name.toLowerCase();
+    
+    if (aspectName.includes('brand')) {
+      value = aiDetected.brand || '';
+    } else if (aspectName.includes('size')) {
+      value = aiDetected.size || '';
+    } else if (aspectName.includes('color') || aspectName.includes('colour')) {
+      value = aiDetected.colors?.[0] || '';
+    } else if (aspectName.includes('condition')) {
+      value = aiDetected.condition || '';
+    } else if (aspectName.includes('material')) {
+      value = aiDetected.materials?.[0] || '';
+    }
+    
+    mapped.push({
+      name: aspect.name,
+      value: value,
+      required: aspect.required,
+      type: aspect.type,
+      options: aspect.values
+    });
+  }
+  
+  return mapped;
 }
