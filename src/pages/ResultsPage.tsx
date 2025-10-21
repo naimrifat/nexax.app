@@ -18,9 +18,8 @@ type AiData =
     }
   & (
     | { item_specifics?: Record<string, string> } // object form
-    | { item_specifics?: SpecificPair[] }        // array form
+    | { item_specifics?: SpecificPair[] }      // array form
   );
-
 
 function normalizeSpecifics(s: AiData['item_specifics']): SpecificPair[] {
   if (!s) return [];
@@ -71,22 +70,28 @@ export default function ResultsPage() {
         .then(data => {
           console.log('Received data from API:', data);
           
-          setTitle(data.title ?? '');
-          setDescription(data.description ?? '');
-          setPrice(
-            typeof data.price_suggestion?.optimal === 'number'
-              ? data.price_suggestion.optimal.toFixed(2)
-              : (data.price_suggestion?.optimal as string) ?? '0.00'
-          );
-          setImageUrl(data.image_url ?? '');
-          setCategory(data.category ?? null);
-          setCategorySuggestions(data.category_suggestions ?? []);
-          setSpecifics(normalizeSpecifics(data.item_specifics));
+          // --- THIS IS THE FIX ---
+          // Access all data from the nested 'analysis' object
+          const analysis = data.analysis || {}; // Use 'analysis' or an empty object
 
-          const kw = Array.isArray(data.keywords) 
-            ? data.keywords.join(', ') 
-            : (data.keywords ?? '');
+          setTitle(analysis.title ?? '');
+          setDescription(analysis.description ?? '');
+          setPrice(
+            typeof analysis.price_suggestion?.optimal === 'number'
+              ? analysis.price_suggestion.optimal.toFixed(2)
+              : (analysis.price_suggestion?.optimal as string) ?? '0.00'
+          );
+          setImageUrl(analysis.image_url ?? '');
+          setCategory(analysis.category ?? null);
+          setCategorySuggestions(analysis.category_suggestions ?? []);
+          setSpecifics(normalizeSpecifics(analysis.item_specifics));
+
+          const kw = Array.isArray(analysis.keywords) 
+            ? analysis.keywords.join(', ') 
+            : (analysis.keywords ?? '');
           setKeywords(kw);
+          // --- END OF FIX ---
+
         })
         .catch(error => {
           console.error('Error fetching listing data:', error);
@@ -106,6 +111,9 @@ export default function ResultsPage() {
         return;
       }
       try {
+        // This logic also needs to be updated if sessionStorage data
+        // has the same 'analysis' wrapper.
+        // For now, assuming it's flat as originally written.
         const data: AiData = JSON.parse(raw);
 
         setTitle(data.title ?? '');
@@ -205,7 +213,7 @@ export default function ResultsPage() {
             <input
               placeholder="nike hoodie, therma-fit, black hoodie"
               value={keywords}
-              onChange={e => setKeywords(e.target.value)}
+              onChange={e => setKeywords(e.D.target.value)}
               style={{ width: '100%', padding: 12, marginTop: 8 }}
             />
           </div>
