@@ -213,7 +213,7 @@ export default function ResultsPage() {
             <input
               placeholder="nike hoodie, therma-fit, black hoodie"
               value={keywords}
-              onChange={e => setKeywords(e.D.target.value)}
+              onChange={e => setKeywords(e.target.value)}
               style={{ width: '100%', padding: 12, marginTop: 8 }}
             />
           </div>
