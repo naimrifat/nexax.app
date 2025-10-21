@@ -21,6 +21,7 @@ type AiData =
     | { item_specifics?: SpecificPair[] }        // array form
   );
 
+
 function normalizeSpecifics(s: AiData['item_specifics']): SpecificPair[] {
   if (!s) return [];
   if (Array.isArray(s)) {
