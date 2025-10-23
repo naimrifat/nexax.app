@@ -72,7 +72,7 @@ export default function ResultsPage() {
           
           // --- THIS IS THE FIX ---
           // Access all data from the nested 'analysis' object
-          const analysis = data.analysis || {}; // Use 'analysis' or an empty object
+          const analysis = data.data || data.analysis || {}; // Try 'data' first, then 'analysis'
 
           setTitle(analysis.title ?? '');
           setDescription(analysis.description ?? '');
