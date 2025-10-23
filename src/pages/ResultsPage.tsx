@@ -24,19 +24,16 @@ type AiData =
 function normalizeSpecifics(s: AiData['item_specifics']): SpecificPair[] {
   if (!s) return [];
   if (Array.isArray(s)) {
-    // Clean array form
     return s
       .filter(x => x && typeof x.name === 'string')
       .map(x => ({ name: x.name.trim(), value: String(x.value ?? '').trim() }));
   }
   if (typeof s === 'object') {
-    // Object form -> array
     return Object.entries(s).map(([name, value]) => ({
       name: name.trim(),
       value: String(value ?? '').trim(),
     }));
   }
-  // Unexpected -> empty
   return [];
 }
 
@@ -51,28 +48,32 @@ export default function ResultsPage() {
   const [category, setCategory] = useState<Category | null>(null);
   const [categorySuggestions, setCategorySuggestions] = useState<CategorySuggestion[]>([]);
   const [specifics, setSpecifics] = useState<SpecificPair[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Read once on mount
   useEffect(() => {
-    // Check for session ID in URL first
-    const urlParams = new URLSearchParams(window.location.search);
-    const sessionId = urlParams.get('session');
-    
-    if (sessionId) {
-      // Fetch data from API
-      fetch(`/api/listing-data/${sessionId}`)
-        .then(res => {
+    const loadData = async () => {
+      // Check for session ID in URL first
+      const urlParams = new URLSearchParams(window.location.search);
+      const sessionId = urlParams.get('session');
+      
+      if (sessionId) {
+        // Fetch data from API
+        try {
+          const res = await fetch(`/api/listing-data/${sessionId}`);
+          
           if (!res.ok) {
-            throw new Error('Failed to fetch data');
+            throw new Error('Failed to fetch data from API');
           }
-          return res.json();
-        })
-        .then(data => {
+          
+          const data = await res.json();
           console.log('Received data from API:', data);
           
-          // --- THIS IS THE FIX ---
-          // Access all data from the nested 'analysis' object
-          const analysis = data.data || data.analysis || {}; // Try 'data' first, then 'analysis'
+          // FIX: Try 'data.data' first, then 'data.analysis', then the data itself
+          const analysis = data.data || data.analysis || data;
+          
+          console.log('Analysis object:', analysis);
+          console.log('Category found:', analysis.category);
 
           setTitle(analysis.title ?? '');
           setDescription(analysis.description ?? '');
@@ -90,51 +91,56 @@ export default function ResultsPage() {
             ? analysis.keywords.join(', ') 
             : (analysis.keywords ?? '');
           setKeywords(kw);
-          // --- END OF FIX ---
+          
+          setLoading(false);
+          return;
+        } catch (err) {
+          console.error('Error fetching from API:', err);
+          // Fall through to sessionStorage check
+        }
+      }
 
-        })
-        .catch(error => {
-          console.error('Error fetching listing data:', error);
-          // Fallback to sessionStorage
-          checkSessionStorage();
-        });
-      return;
-    }
-
-    // Fallback to existing sessionStorage logic
-    checkSessionStorage();
-
-    function checkSessionStorage() {
+      // Fallback to sessionStorage
       const raw = sessionStorage.getItem('aiListingData');
       if (!raw) {
+        console.warn('No data found in URL or sessionStorage, redirecting...');
         navigate('/create-listing', { replace: true });
         return;
       }
+
       try {
-        // This logic also needs to be updated if sessionStorage data
-        // has the same 'analysis' wrapper.
-        // For now, assuming it's flat as originally written.
         const data: AiData = JSON.parse(raw);
+        console.log('Loaded from sessionStorage:', data);
 
-        setTitle(data.title ?? '');
-        setDescription(data.description ?? '');
+        // Also handle potential nested structure in sessionStorage
+        const analysis = (data as any).data || (data as any).analysis || data;
+
+        setTitle(analysis.title ?? '');
+        setDescription(analysis.description ?? '');
         setPrice(
-          typeof data.price_suggestion?.optimal === 'number'
-            ? data.price_suggestion.optimal.toFixed(2)
-            : (data.price_suggestion?.optimal as string) ?? '0.00'
+          typeof analysis.price_suggestion?.optimal === 'number'
+            ? analysis.price_suggestion.optimal.toFixed(2)
+            : (analysis.price_suggestion?.optimal as string) ?? '0.00'
         );
-        setImageUrl(data.image_url ?? '');
-        setCategory(data.category ?? null);
-        setCategorySuggestions(data.category_suggestions ?? []);
-        setSpecifics(normalizeSpecifics((data as any).item_specifics));
+        setImageUrl(analysis.image_url ?? '');
+        setCategory(analysis.category ?? null);
+        setCategorySuggestions(analysis.category_suggestions ?? []);
+        setSpecifics(normalizeSpecifics(analysis.item_specifics));
 
-        const kw =
-          Array.isArray(data.keywords) ? data.keywords.join(', ') : (data.keywords ?? '');
+        const kw = Array.isArray(analysis.keywords) 
+          ? analysis.keywords.join(', ') 
+          : (analysis.keywords ?? '');
         setKeywords(kw);
+        
+        setLoading(false);
       } catch (e) {
-        console.error('Bad aiListingData:', e);
+        console.error('Failed to parse sessionStorage data:', e);
+        setError('Failed to load listing data');
+        setLoading(false);
       }
-    }
+    };
+
+    loadData();
   }, [navigate]);
 
   // Helpers for dynamic specifics
@@ -145,11 +151,13 @@ export default function ResultsPage() {
       return next;
     });
   };
+  
   const addSpecific = () => setSpecifics(prev => [...prev, { name: '', value: '' }]);
+  
   const removeSpecific = (idx: number) =>
     setSpecifics(prev => prev.filter((_, i) => i !== idx));
 
-  // If you need to send to eBay later as an object:
+  // Convert specifics array to object for API
   const specificsObject = useMemo<Record<string, string>>(() => {
     const obj: Record<string, string> = {};
     for (const s of specifics) {
@@ -158,6 +166,25 @@ export default function ResultsPage() {
     }
     return obj;
   }, [specifics]);
+
+  if (loading) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center' }}>
+        <h2>Loading listing data...</h2>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center' }}>
+        <h2 style={{ color: 'red' }}>{error}</h2>
+        <button onClick={() => navigate('/create-listing')}>
+          Go Back
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
