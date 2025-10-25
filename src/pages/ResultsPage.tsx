@@ -1,27 +1,25 @@
 // src/pages/ResultsPage.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+// ... (Your type definitions are all correct) ...
 type Category = { 
   id: string; 
   name: string;
   parentId?: string;
   level?: number;
 };
-
 type CategoryWithPath = Category & {
-  path?: string; // e.g., "Clothing > Men's > Jeans"
-  breadcrumbs?: string[]; // e.g., ["Clothing", "Men's", "Jeans"]
+  path?: string;
+  breadcrumbs?: string[];
 };
-
 type ItemSpecific = {
   name: string;
   value: string;
   required?: boolean;
-  type?: string; // 'text' | 'dropdown'
+  type?: string;
   options?: string[];
 };
-
 type AiDetected = {
   brand?: string;
   size?: string;
@@ -31,7 +29,6 @@ type AiDetected = {
   style?: string;
   [key: string]: any;
 };
-
 type AiData = {
   title?: string;
   description?: string;
@@ -43,6 +40,7 @@ type AiData = {
   keywords?: string[] | string;
   detected?: AiDetected;
 };
+
 
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
@@ -75,90 +73,43 @@ export default function ResultsPage() {
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
   const [aiDetected, setAiDetected] = useState<AiDetected>({});
 
-  // Load initial data
-  useEffect(() => {
-    const loadData = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const sessionId = urlParams.get('session');
+  // Smart mapper: Fill new category specifics with AI data
+  // Moved this up so it can be used by fetchCategorySpecifics
+  const smartFillSpecifics = (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
+    return newSpecifics.map(field => {
+      let value = '';
+      const fieldLower = field.name.toLowerCase();
+
+      // Map common fields
+      if (fieldLower.includes('brand')) {
+        value = aiData.brand || '';
+      } else if (fieldLower.includes('size')) {
+        value = aiData.size || '';
+      } else if (fieldLower.includes('color') || fieldLower.includes('colour')) {
+        value = aiData.color || '';
+      } else if (fieldLower.includes('condition')) {
+        value = aiData.condition || '';
+      } else if (fieldLower.includes('material')) {
+        value = aiData.material || '';
+      } else if (fieldLower.includes('style')) {
+        value = aiData.style || '';
+      }
       
-      if (sessionId) {
-        try {
-          const res = await fetch(`/api/listing-data/${sessionId}`);
-          if (!res.ok) throw new Error('Failed to fetch data from API');
-          
-          const data = await res.json();
-          console.log('Received data from API:', data);
-          
-          const analysis = data.data || data.analysis || data;
-          console.log('Analysis object:', analysis);
-
-          setTitle(analysis.title ?? '');
-          setDescription(analysis.description ?? '');
-          setPrice(
-            typeof analysis.price_suggestion?.optimal === 'number'
-              ? analysis.price_suggestion.optimal.toFixed(2)
-              : (analysis.price_suggestion?.optimal as string) ?? '0.00'
-          );
-          setImageUrl(analysis.image_url ?? '');
-          setCategory(analysis.category ?? null);
-          setCategorySuggestions(analysis.category_suggestions ?? []);
-          setSpecifics(normalizeSpecifics(analysis.item_specifics));
-          setAiDetected(analysis.detected || {});
-
-          const kw = Array.isArray(analysis.keywords) 
-            ? analysis.keywords.join(', ') 
-            : (analysis.keywords ?? '');
-          setKeywords(kw);
-          
-          setLoading(false);
-          return;
-        } catch (err) {
-          console.error('Error fetching from API:', err);
-        }
-      }
-
-      // Fallback to sessionStorage
-      const raw = sessionStorage.getItem('aiListingData');
-      if (!raw) {
-        navigate('/create-listing', { replace: true });
-        return;
-      }
-
-      try {
-        const data: AiData = JSON.parse(raw);
-        const analysis = (data as any).data || (data as any).analysis || data;
-
-        setTitle(analysis.title ?? '');
-        setDescription(analysis.description ?? '');
-        setPrice(
-          typeof analysis.price_suggestion?.optimal === 'number'
-            ? analysis.price_suggestion.optimal.toFixed(2)
-            : (analysis.price_suggestion?.optimal as string) ?? '0.00'
+      // If a value was detected, check if it's a valid dropdown option
+      if (value && field.type === 'dropdown' && field.options && field.options.length > 0) {
+        const matchedOption = field.options.find(opt => 
+          opt.toLowerCase() === value.toLowerCase()
         );
-        setImageUrl(analysis.image_url ?? '');
-        setCategory(analysis.category ?? null);
-        setCategorySuggestions(analysis.category_suggestions ?? []);
-        setSpecifics(normalizeSpecifics(analysis.item_specifics));
-        setAiDetected(analysis.detected || {});
-
-        const kw = Array.isArray(analysis.keywords) 
-          ? analysis.keywords.join(', ') 
-          : (analysis.keywords ?? '');
-        setKeywords(kw);
-        
-        setLoading(false);
-      } catch (e) {
-        console.error('Failed to parse data:', e);
-        setError('Failed to load listing data');
-        setLoading(false);
+        value = matchedOption || ''; // Use the matched option or reset
       }
-    };
 
-    loadData();
-  }, [navigate]);
+      return { ...field, value };
+    });
+  };
 
   // Fetch item specifics for a category
-  const fetchCategorySpecifics = async (categoryId: string) => {
+  // Use useCallback so useEffect doesn't complain
+  const fetchCategorySpecifics = useCallback(async (categoryId: string) => {
     setLoadingSpecifics(true);
     try {
       const response = await fetch('/api/ebay-categories', {
@@ -185,6 +136,7 @@ export default function ResultsPage() {
       }));
 
       // Smart fill: Map AI detected data to new category fields
+      // We pass `aiDetected` from state, which was set during initial load
       const filledSpecifics = smartFillSpecifics(newSpecifics, aiDetected);
       setSpecifics(filledSpecifics);
       setLoadingSpecifics(false);
@@ -192,40 +144,121 @@ export default function ResultsPage() {
       console.error('Error fetching specifics:', error);
       setLoadingSpecifics(false);
     }
-  };
+  }, [aiDetected]); // Depends on aiDetected state
 
-  // Smart mapper: Fill new category specifics with AI data
-  const smartFillSpecifics = (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
-    return newSpecifics.map(field => {
-      let value = '';
-      const fieldLower = field.name.toLowerCase();
+  // Load initial data
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      const urlParams = new URLSearchParams(window.location.search);
+      const sessionId = urlParams.get('session');
+      
+      if (sessionId) {
+        try {
+          const res = await fetch(`/api/listing-data/${sessionId}`);
+          if (!res.ok) throw new Error('Failed to fetch data from API');
+          
+          const data = await res.json();
+          console.log('Received data from API:', data);
+          
+          const analysis = data.data || data.analysis || data;
+          console.log('Analysis object:', analysis);
 
-      // Map common fields
-      if (fieldLower.includes('brand')) {
-        value = aiData.brand || '';
-      } else if (fieldLower.includes('size')) {
-        value = aiData.size || '';
-      } else if (fieldLower.includes('color') || fieldLower.includes('colour')) {
-        value = aiData.color || '';
-      } else if (fieldLower.includes('condition')) {
-        value = aiData.condition || '';
-      } else if (fieldLower.includes('material')) {
-        value = aiData.material || '';
-      } else if (fieldLower.includes('style')) {
-        value = aiData.style || '';
+          setTitle(analysis.title ?? '');
+          setDescription(analysis.description ?? '');
+          setPrice(
+            typeof analysis.price_suggestion?.optimal === 'number'
+              ? analysis.price_suggestion.optimal.toFixed(2)
+              : (analysis.price_suggestion?.optimal as string) ?? '0.00'
+          );
+          setImageUrl(analysis.image_url ?? '');
+          
+          // Set AI detected data FIRST, so smart-fill can use it
+          setAiDetected(analysis.detected || {});
+
+          const kw = Array.isArray(analysis.keywords) 
+            ? analysis.keywords.join(', ') 
+            : (analysis.keywords ?? '');
+          setKeywords(kw);
+          
+          setCategorySuggestions(analysis.category_suggestions ?? []);
+          
+          // --- THIS IS THE FIX ---
+          const initialCategory = analysis.category ?? null;
+          setCategory(initialCategory);
+
+          if (initialCategory && initialCategory.id) {
+            // Now, fetch the specifics for the category that was loaded
+            await fetchCategorySpecifics(initialCategory.id);
+          } else {
+            // No category was detected, just load the raw AI specifics
+            setSpecifics(normalizeSpecifics(analysis.item_specifics));
+          }
+          // --- END OF FIX ---
+          
+          setLoading(false);
+          return;
+        } catch (err: any) {
+          console.error('Error fetching from API:', err);
+          setError(err.message || 'Failed to load data');
+          setLoading(false);
+          // Don't fallback, API was the intended source
+          return;
+        }
       }
 
-      // If dropdown, validate value is in options
-      if (field.type === 'dropdown' && field.options && field.options.length > 0) {
-        const matchedOption = field.options.find(opt => 
-          opt.toLowerCase() === value.toLowerCase()
+      // Fallback to sessionStorage
+      const raw = sessionStorage.getItem('aiListingData');
+      if (!raw) {
+        navigate('/create-listing', { replace: true });
+        return;
+      }
+
+      try {
+        const data: AiData = JSON.parse(raw);
+        const analysis = (data as any).data || (data as any).analysis || data;
+
+        setTitle(analysis.title ?? '');
+        setDescription(analysis.description ?? '');
+        setPrice(
+          typeof analysis.price_suggestion?.optimal === 'number'
+            ? analysis.price_suggestion.optimal.toFixed(2)
+            : (analysis.price_suggestion?.optimal as string) ?? '0.00'
         );
-        value = matchedOption || '';
-      }
+        setImageUrl(analysis.image_url ?? '');
+        
+        // Set AI detected data FIRST, so smart-fill can use it
+        setAiDetected(analysis.detected || {});
 
-      return { ...field, value };
-    });
-  };
+        const kw = Array.isArray(analysis.keywords) 
+          ? analysis.keywords.join(', ') 
+          : (analysis.keywords ?? '');
+        setKeywords(kw);
+        
+        setCategorySuggestions(analysis.category_suggestions ?? []);
+
+        // --- APPLY FIX TO SESSIONSTORAGE ---
+        const initialCategory = analysis.category ?? null;
+        setCategory(initialCategory);
+
+        if (initialCategory && initialCategory.id) {
+          await fetchCategorySpecifics(initialCategory.id);
+        } else {
+          setSpecifics(normalizeSpecifics(analysis.item_specifics));
+        }
+        // --- END OF FIX ---
+        
+        setLoading(false);
+      } catch (e: any) {
+        console.error('Failed to parse data:', e);
+        setError('Failed to load listing data');
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [navigate, fetchCategorySpecifics]); // Add fetchCategorySpecifics as dependency
+
 
   // Handle category change
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
@@ -236,6 +269,7 @@ export default function ResultsPage() {
     await fetchCategorySpecifics(newCategory.id);
   };
 
+  // ... (rest of your helper functions: updateSpecific, addSpecific, removeSpecific, categoryBreadcrumb) ...
   // Update specific value
   const updateSpecific = (idx: number, value: string) => {
     setSpecifics(prev => {
@@ -244,7 +278,6 @@ export default function ResultsPage() {
       return next;
     });
   };
-
   const addSpecific = () => setSpecifics(prev => [...prev, { name: '', value: '' }]);
   const removeSpecific = (idx: number) => setSpecifics(prev => prev.filter((_, i) => i !== idx));
 
@@ -256,6 +289,8 @@ export default function ResultsPage() {
     return category.name;
   }, [category]);
 
+
+  // ... (rest of your JSX: loading, error, and main return) ...
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
@@ -285,8 +320,9 @@ export default function ResultsPage() {
             value={title}
             onChange={e => setTitle(e.target.value)}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
+            maxLength={80}
           />
-          <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>
             {title.length}/80 characters
           </div>
         </section>
@@ -304,9 +340,9 @@ export default function ResultsPage() {
             background: '#f9f9f9',
             marginTop: 8
           }}>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, marginRight: 12, overflow: 'hidden' }}>
               <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Selected Category:</div>
-              <div style={{ fontWeight: 500, fontSize: 14 }}>
+              <div style={{ fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {categoryBreadcrumb}
               </div>
             </div>
@@ -320,7 +356,8 @@ export default function ResultsPage() {
                 border: 'none',
                 borderRadius: 4,
                 cursor: 'pointer',
-                fontSize: 14
+                fontSize: 14,
+                flexShrink: 0
               }}
             >
               Change
@@ -447,7 +484,7 @@ export default function ResultsPage() {
             borderRadius: 4
           }}>
             {imageUrl ? (
-              <img src={imageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%' }} />
+              <img src={imageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4 }} />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
@@ -531,7 +568,7 @@ function CategorySelectorModal({
         <div style={{ marginBottom: 16, padding: 12, background: '#f0f8ff', borderRadius: 4 }}>
           <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Current Category:</div>
           <div style={{ fontWeight: 600 }}>
-            {currentCategory ? currentCategory.name : 'None'}
+            {currentCategory ? (currentCategory.path || currentCategory.name) : 'None'}
           </div>
         </div>
 
