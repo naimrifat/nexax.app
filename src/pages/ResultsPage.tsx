@@ -1,18 +1,19 @@
 // src/pages/ResultsPage.tsx
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// ... (Your type definitions are all correct) ...
-type Category = { 
-  id: string; 
+type Category = {
+  id: string;
   name: string;
   parentId?: string;
   level?: number;
 };
+
 type CategoryWithPath = Category & {
   path?: string;
   breadcrumbs?: string[];
 };
+
 type ItemSpecific = {
   name: string;
   value: string;
@@ -20,6 +21,7 @@ type ItemSpecific = {
   type?: string;
   options?: string[];
 };
+
 type AiDetected = {
   brand?: string;
   size?: string;
@@ -29,6 +31,7 @@ type AiDetected = {
   style?: string;
   [key: string]: any;
 };
+
 type AiData = {
   title?: string;
   description?: string;
@@ -40,7 +43,6 @@ type AiData = {
   keywords?: string[] | string;
   detected?: AiDetected;
 };
-
 
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
@@ -71,16 +73,16 @@ export default function ResultsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
-  const [aiDetected, setAiDetected] = useState<AiDetected>({});
+  
+  // Use ref to store aiDetected - won't cause re-renders
+  const aiDetectedRef = useRef<AiDetected>({});
 
-  // Smart mapper: Fill new category specifics with AI data
-  // Moved this up so it can be used by fetchCategorySpecifics
-  const smartFillSpecifics = (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
+  // Smart mapper - now stable, doesn't need to be recreated
+  const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
     return newSpecifics.map(field => {
       let value = '';
       const fieldLower = field.name.toLowerCase();
 
-      // Map common fields
       if (fieldLower.includes('brand')) {
         value = aiData.brand || '';
       } else if (fieldLower.includes('size')) {
@@ -94,23 +96,23 @@ export default function ResultsPage() {
       } else if (fieldLower.includes('style')) {
         value = aiData.style || '';
       }
-      
-      // If a value was detected, check if it's a valid dropdown option
+
       if (value && field.type === 'dropdown' && field.options && field.options.length > 0) {
-        const matchedOption = field.options.find(opt => 
+        const matchedOption = field.options.find(opt =>
           opt.toLowerCase() === value.toLowerCase()
         );
-        value = matchedOption || ''; // Use the matched option or reset
+        value = matchedOption || '';
       }
 
       return { ...field, value };
     });
-  };
+  }, []); // No dependencies - function is stable
 
-  // Fetch item specifics for a category
-  // Use useCallback so useEffect doesn't complain
+  // Fetch category specifics - now with proper dependency management
   const fetchCategorySpecifics = useCallback(async (categoryId: string) => {
+    console.log('🔍 Fetching specifics for category:', categoryId);
     setLoadingSpecifics(true);
+    
     try {
       const response = await fetch('/api/ebay-categories', {
         method: 'POST',
@@ -124,85 +126,94 @@ export default function ResultsPage() {
       if (!response.ok) throw new Error('Failed to fetch category specifics');
 
       const data = await response.json();
-      console.log('Category specifics:', data);
+      console.log('✅ Category specifics received:', data);
 
-      // Map eBay schema to our format
       const newSpecifics: ItemSpecific[] = (data.aspects || []).map((aspect: any) => ({
         name: aspect.name,
-        value: '', // Will be filled by smart mapper
+        value: '',
         required: aspect.required || false,
         type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
         options: aspect.values || []
       }));
 
-      // Smart fill: Map AI detected data to new category fields
-      // We pass `aiDetected` from state, which was set during initial load
-      const filledSpecifics = smartFillSpecifics(newSpecifics, aiDetected);
+      // Use ref value instead of state
+      const filledSpecifics = smartFillSpecifics(newSpecifics, aiDetectedRef.current);
       setSpecifics(filledSpecifics);
-      setLoadingSpecifics(false);
+      
     } catch (error) {
-      console.error('Error fetching specifics:', error);
+      console.error('❌ Error fetching specifics:', error);
+    } finally {
       setLoadingSpecifics(false);
     }
-  }, [aiDetected]); // Depends on aiDetected state
+  }, [smartFillSpecifics]); // Only depends on smartFillSpecifics (which is stable)
 
-  // Load initial data
+  // Load initial data - RUNS ONLY ONCE
   useEffect(() => {
+    let isMounted = true;
+
     const loadData = async () => {
+      console.log('📥 Loading initial data...');
       setLoading(true);
+      
       const urlParams = new URLSearchParams(window.location.search);
       const sessionId = urlParams.get('session');
-      
+
       if (sessionId) {
         try {
           const res = await fetch(`/api/listing-data/${sessionId}`);
           if (!res.ok) throw new Error('Failed to fetch data from API');
-          
+
           const data = await res.json();
-          console.log('Received data from API:', data);
-          
+          console.log('🔍 Received data from API:', data);
+
+          if (!isMounted) return; // Stop if component unmounted
+
           const analysis = data.data || data.analysis || data;
-          console.log('Analysis object:', analysis);
+          console.log('📦 Analysis object:', analysis);
+          console.log('📁 Category:', analysis.category);
 
           setTitle(analysis.title ?? '');
           setDescription(analysis.description ?? '');
           setPrice(
             typeof analysis.price_suggestion?.optimal === 'number'
               ? analysis.price_suggestion.optimal.toFixed(2)
-              : (analysis.price_suggestion?.optimal as string) ?? '0.00'
+              : String(analysis.price_suggestion?.optimal ?? '0.00')
           );
           setImageUrl(analysis.image_url ?? '');
-          
-          // Set AI detected data FIRST, so smart-fill can use it
-          setAiDetected(analysis.detected || {});
 
-          const kw = Array.isArray(analysis.keywords) 
-            ? analysis.keywords.join(', ') 
-            : (analysis.keywords ?? '');
+          // Store AI detected data in ref (doesn't cause re-render)
+          aiDetectedRef.current = analysis.detected || {};
+
+          const kw = Array.isArray(analysis.keywords)
+            ? analysis.keywords.join(', ')
+            : String(analysis.keywords ?? '');
           setKeywords(kw);
-          
+
           setCategorySuggestions(analysis.category_suggestions ?? []);
-          
-          // --- THIS IS THE FIX ---
+
           const initialCategory = analysis.category ?? null;
           setCategory(initialCategory);
+          console.log('🎯 Category set:', initialCategory);
 
+          // Fetch specifics for the initial category
           if (initialCategory && initialCategory.id) {
-            // Now, fetch the specifics for the category that was loaded
+            console.log('⚡ Fetching specifics for initial category:', initialCategory.id);
             await fetchCategorySpecifics(initialCategory.id);
           } else {
-            // No category was detected, just load the raw AI specifics
+            console.log('ℹ️ No category, loading raw specifics');
             setSpecifics(normalizeSpecifics(analysis.item_specifics));
           }
-          // --- END OF FIX ---
-          
+
           setLoading(false);
+          console.log('✅ Initial load complete');
           return;
+
         } catch (err: any) {
-          console.error('Error fetching from API:', err);
-          setError(err.message || 'Failed to load data');
-          setLoading(false);
-          // Don't fallback, API was the intended source
+          console.error('❌ Error fetching from API:', err);
+          if (isMounted) {
+            setError(err.message || 'Failed to load data');
+            setLoading(false);
+          }
           return;
         }
       }
@@ -218,26 +229,26 @@ export default function ResultsPage() {
         const data: AiData = JSON.parse(raw);
         const analysis = (data as any).data || (data as any).analysis || data;
 
+        if (!isMounted) return;
+
         setTitle(analysis.title ?? '');
         setDescription(analysis.description ?? '');
         setPrice(
           typeof analysis.price_suggestion?.optimal === 'number'
             ? analysis.price_suggestion.optimal.toFixed(2)
-            : (analysis.price_suggestion?.optimal as string) ?? '0.00'
+            : String(analysis.price_suggestion?.optimal ?? '0.00')
         );
         setImageUrl(analysis.image_url ?? '');
-        
-        // Set AI detected data FIRST, so smart-fill can use it
-        setAiDetected(analysis.detected || {});
 
-        const kw = Array.isArray(analysis.keywords) 
-          ? analysis.keywords.join(', ') 
-          : (analysis.keywords ?? '');
+        aiDetectedRef.current = analysis.detected || {};
+
+        const kw = Array.isArray(analysis.keywords)
+          ? analysis.keywords.join(', ')
+          : String(analysis.keywords ?? '');
         setKeywords(kw);
-        
+
         setCategorySuggestions(analysis.category_suggestions ?? []);
 
-        // --- APPLY FIX TO SESSIONSTORAGE ---
         const initialCategory = analysis.category ?? null;
         setCategory(initialCategory);
 
@@ -246,31 +257,35 @@ export default function ResultsPage() {
         } else {
           setSpecifics(normalizeSpecifics(analysis.item_specifics));
         }
-        // --- END OF FIX ---
-        
+
         setLoading(false);
+
       } catch (e: any) {
-        console.error('Failed to parse data:', e);
-        setError('Failed to load listing data');
-        setLoading(false);
+        console.error('❌ Failed to parse data:', e);
+        if (isMounted) {
+          setError('Failed to load listing data');
+          setLoading(false);
+        }
       }
     };
 
     loadData();
-  }, [navigate, fetchCategorySpecifics]); // Add fetchCategorySpecifics as dependency
 
+    // Cleanup function
+    return () => {
+      isMounted = false;
+      console.log('🧹 Component unmounting, cleanup');
+    };
+  }, [navigate, fetchCategorySpecifics]); // Safe dependencies
 
   // Handle category change
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
+    console.log('🔄 Category changed to:', newCategory);
     setCategory(newCategory);
     setShowCategoryModal(false);
-    
-    // Fetch new item specifics for this category
     await fetchCategorySpecifics(newCategory.id);
   };
 
-  // ... (rest of your helper functions: updateSpecific, addSpecific, removeSpecific, categoryBreadcrumb) ...
-  // Update specific value
   const updateSpecific = (idx: number, value: string) => {
     setSpecifics(prev => {
       const next = [...prev];
@@ -278,10 +293,10 @@ export default function ResultsPage() {
       return next;
     });
   };
+
   const addSpecific = () => setSpecifics(prev => [...prev, { name: '', value: '' }]);
   const removeSpecific = (idx: number) => setSpecifics(prev => prev.filter((_, i) => i !== idx));
 
-  // Generate category breadcrumb
   const categoryBreadcrumb = useMemo(() => {
     if (!category) return 'No category selected';
     if (category.path) return category.path;
@@ -289,8 +304,6 @@ export default function ResultsPage() {
     return category.name;
   }, [category]);
 
-
-  // ... (rest of your JSX: loading, error, and main return) ...
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
@@ -327,7 +340,6 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        {/* CATEGORY SELECTOR */}
         <section style={{ marginTop: 24 }}>
           <h3>Category</h3>
           <div style={{
@@ -365,7 +377,6 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        {/* ITEM SPECIFICS */}
         <section style={{ marginTop: 24 }}>
           <h3>Item Specifics {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading...)</span>}</h3>
           {specifics.length === 0 && !loadingSpecifics && (
@@ -399,8 +410,8 @@ export default function ResultsPage() {
               )}
             </div>
           ))}
-          <button 
-            type="button" 
+          <button
+            type="button"
             onClick={addSpecific}
             style={{ marginTop: 12, padding: '8px 16px', fontSize: 14 }}
           >
@@ -475,11 +486,11 @@ export default function ResultsPage() {
       <aside>
         <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, position: 'sticky', top: 24 }}>
           <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
-          <div style={{ 
-            height: 200, 
-            background: '#f5f5f5', 
-            display: 'grid', 
-            placeItems: 'center', 
+          <div style={{
+            height: 200,
+            background: '#f5f5f5',
+            display: 'grid',
+            placeItems: 'center',
             marginBottom: 12,
             borderRadius: 4
           }}>
@@ -501,7 +512,6 @@ export default function ResultsPage() {
         </div>
       </aside>
 
-      {/* CATEGORY SELECTION MODAL */}
       {showCategoryModal && (
         <CategorySelectorModal
           currentCategory={category}
@@ -514,7 +524,6 @@ export default function ResultsPage() {
   );
 }
 
-// Category Selector Modal Component
 function CategorySelectorModal({
   currentCategory,
   suggestions,
