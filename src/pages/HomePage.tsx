@@ -104,12 +104,10 @@ export default function HomePage() {
     const categoryId =
       raw?.category?.id || raw?.category_id || raw?.ebay_category_id || '';
     const categoryPath =
-      raw?.category?.path || raw?.category_path || raw?.categoryName || '';
-+ const categoryPath =
-+   raw?.category?.path ||
-+   raw?.category?.name ||     // <— add this line
-+   raw?.category_path ||
-+   raw?.categoryName || '';
+  raw?.category?.path ||
+  raw?.category?.name ||
+  raw?.category_path ||
+  raw?.categoryName || '';
     
     const specificsSource: any[] = Array.isArray(raw?.item_specifics)
       ? raw.item_specifics
