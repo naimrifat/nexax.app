@@ -25,33 +25,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { images, session_id } = req.body;
-    
+
     if (!images || !Array.isArray(images) || images.length === 0) {
       return res.status(400).json({ error: 'No images provided' });
     }
 
     console.log(`Processing ${images.length} images for session ${session_id}`);
-    
+
     // Step 1: Download and convert images to base64
     const base64Images = await Promise.all(
       images.slice(0, 12).map(async (url: string, index: number) => {
         try {
           // Add Cloudinary transformation for optimization
-          const optimizedUrl = url.includes('cloudinary.com') 
+          const optimizedUrl = url.includes('cloudinary.com')
             ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
             : url;
-          
+
           console.log(`Downloading image ${index + 1}/${images.length}`);
           const response = await fetch(optimizedUrl);
-          
+
           if (!response.ok) {
             throw new Error(`Failed to download image: ${response.status}`);
           }
-          
+
           const buffer = await response.arrayBuffer();
           const base64 = Buffer.from(buffer).toString('base64');
           const mimeType = response.headers.get('content-type') || 'image/jpeg';
-          
+
           return `data:${mimeType};base64,${base64}`;
         } catch (error) {
           console.error(`Error processing image ${index + 1}:`, error);
@@ -66,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -76,17 +76,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           {
             role: 'system',
             content: `You are an expert eBay product lister. Analyze ALL provided photos together to create a comprehensive listing. 
-            Return ONLY valid JSON with no markdown formatting.`
+            Return ONLY valid JSON with no markdown formatting.`,
           },
           {
             role: 'user',
             content: [
-              ...base64Images.map(img => ({
+              ...base64Images.map((img) => ({
                 type: 'image_url',
                 image_url: {
                   url: img,
-                  detail: 'low'
-                }
+                  detail: 'low',
+                },
               })),
               {
                 type: 'text',
@@ -114,14 +114,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   "keywords": ["relevant", "search", "terms", "for", "this", "item"],
   "suggested_price": "price suggestion based on item type and condition, e.g. '29.99'",
   "confidence_score": 0.95
-}`
-              }
-            ]
-          }
+}`,
+              },
+            ],
+          },
         ],
         max_tokens: 2048,
-        temperature: 0.3
-      })
+        temperature: 0.3,
+      }),
     });
 
     if (!openaiResponse.ok) {
@@ -136,7 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Parse the response
     const analysisContent = openaiResult.choices[0].message.content;
     let parsedAnalysis;
-    
+
     try {
       parsedAnalysis = JSON.parse(analysisContent);
     } catch (parseError) {
@@ -147,101 +147,110 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Step 3: Get eBay category suggestion
     try {
       console.log('Getting eBay category suggestion...');
-      
+
       // Construct the full URL for the API call
       const origin = req.headers.origin || `https://${req.headers.host}`;
       const ebayApiUrl = `${origin}/api/ebay-categories`;
-      
+
       const ebayResponse = await fetch(ebayApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'getSuggestedCategories',
           title: parsedAnalysis.title,
-          keywords: parsedAnalysis.keywords || []
-        })
+          keywords: parsedAnalysis.keywords || [],
+        }),
       });
-      
+
       if (ebayResponse.ok) {
         const ebayData = await ebayResponse.json();
-        
-        // Store the raw eBay data
+
+        // Store the raw eBay data (including a convenience "path")
         parsedAnalysis.ebay_category_id = ebayData.categoryId;
         parsedAnalysis.ebay_category_name = ebayData.categoryName;
-        
-        // FORMAT FOR FRONTEND: Add category object
+        parsedAnalysis.ebay_category_path = ebayData.categoryPath || ebayData.categoryName;
+
+        // FORMAT FOR FRONTEND: Add category object WITH PATH
         parsedAnalysis.category = {
           id: ebayData.categoryId,
-          name: ebayData.categoryName
+          name: ebayData.categoryName,
+          path: ebayData.categoryPath || ebayData.categoryName,
         };
-        
-        // FORMAT FOR FRONTEND: Add category suggestions
-        parsedAnalysis.category_suggestions = ebayData.suggestions || [
-          { id: ebayData.categoryId, name: ebayData.categoryName }
-        ];
-        
+
+        // FORMAT FOR FRONTEND: Add category suggestions WITH PATH
+        parsedAnalysis.category_suggestions = (ebayData.suggestions || []).map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          path: s.path || s.name,
+        }));
+
         console.log('✅ eBay category found:', ebayData.categoryName);
-        
+
         // NEW: Get category specifics
         try {
           console.log('Fetching category specifics...');
-          
+
           const specificsResponse = await fetch(ebayApiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'getCategorySpecifics',
-              categoryId: ebayData.categoryId
-            })
+              categoryId: ebayData.categoryId,
+            }),
           });
-          
+
           if (specificsResponse.ok) {
             const specificsData = await specificsResponse.json();
             parsedAnalysis.category_specifics_schema = specificsData.aspects || [];
             console.log('✅ Got category specifics:', specificsData.aspects?.length || 0, 'fields');
-            
+
             // Map AI-detected values to eBay fields
-            const mappedSpecifics = mapAIToEbayFields(parsedAnalysis.detected, specificsData.aspects || []);
+            const mappedSpecifics = mapAIToEbayFields(
+              parsedAnalysis.detected,
+              specificsData.aspects || []
+            );
             parsedAnalysis.item_specifics = mappedSpecifics;
-            
           } else {
             console.error('Failed to get category specifics:', specificsResponse.status);
           }
         } catch (error) {
           console.error('Error fetching category specifics:', error);
         }
-        
       } else {
         console.error('eBay API response not ok:', ebayResponse.status);
-        // Set default fallback
+        // Set default fallback (WITH PATH)
         parsedAnalysis.ebay_category_id = '11450';
         parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
+        parsedAnalysis.ebay_category_path = 'Clothing, Shoes & Accessories';
         parsedAnalysis.category = {
           id: '11450',
-          name: 'Clothing, Shoes & Accessories'
+          name: 'Clothing, Shoes & Accessories',
+          path: 'Clothing, Shoes & Accessories',
         };
         parsedAnalysis.category_suggestions = [
-          { id: '11450', name: 'Clothing, Shoes & Accessories' }
+          { id: '11450', name: 'Clothing, Shoes & Accessories', path: 'Clothing, Shoes & Accessories' },
         ];
       }
     } catch (error) {
       console.error('Failed to get eBay category:', error);
-      // Set default fallback
+      // Set default fallback (WITH PATH)
       parsedAnalysis.ebay_category_id = '11450';
       parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
+      parsedAnalysis.ebay_category_path = 'Clothing, Shoes & Accessories';
       parsedAnalysis.category = {
         id: '11450',
-        name: 'Clothing, Shoes & Accessories'
+        name: 'Clothing, Shoes & Accessories',
+        path: 'Clothing, Shoes & Accessories',
       };
       parsedAnalysis.category_suggestions = [
-        { id: '11450', name: 'Clothing, Shoes & Accessories' }
+        { id: '11450', name: 'Clothing, Shoes & Accessories', path: 'Clothing, Shoes & Accessories' },
       ];
     }
 
     // Step 4: Send to Make.com webhook if configured
     if (process.env.VITE_MAKE_WEBHOOK_URL) {
       console.log('Sending results to Make.com webhook...');
-      
+
       try {
         const makeResponse = await fetch(process.env.VITE_MAKE_WEBHOOK_URL, {
           method: 'POST',
@@ -250,8 +259,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             session_id: session_id,
             analysis: parsedAnalysis,
             image_urls: images,
-            timestamp: new Date().toISOString()
-          })
+            timestamp: new Date().toISOString(),
+          }),
         });
 
         if (!makeResponse.ok) {
@@ -269,14 +278,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       success: true,
       data: parsedAnalysis,
       images_processed: base64Images.length,
-      session_id: session_id
+      session_id: session_id,
     });
-
   } catch (error: any) {
     console.error('Handler error:', error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: error.message || 'Internal server error',
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 }
@@ -284,33 +292,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 // Helper function to map AI-detected data to eBay fields
 function mapAIToEbayFields(aiDetected: any, ebayAspects: any[]) {
   const mapped: any[] = [];
-  
+
   for (const aspect of ebayAspects) {
     let value = '';
-    
+
     // Smart matching logic
-    const aspectName = aspect.name.toLowerCase();
-    
+    const aspectName = (aspect.name || '').toLowerCase();
+
     if (aspectName.includes('brand')) {
-      value = aiDetected.brand || '';
+      value = aiDetected?.brand || '';
     } else if (aspectName.includes('size')) {
-      value = aiDetected.size || '';
+      value = aiDetected?.size || '';
     } else if (aspectName.includes('color') || aspectName.includes('colour')) {
-      value = aiDetected.colors?.[0] || '';
+      value = aiDetected?.colors?.[0] || '';
     } else if (aspectName.includes('condition')) {
-      value = aiDetected.condition || '';
+      value = aiDetected?.condition || '';
     } else if (aspectName.includes('material')) {
-      value = aiDetected.materials?.[0] || '';
+      value = aiDetected?.materials?.[0] || '';
     }
-    
+
     mapped.push({
       name: aspect.name,
       value: value,
       required: aspect.required,
       type: aspect.type,
-      options: aspect.values
+      options: aspect.values,
     });
   }
-  
+
   return mapped;
 }
