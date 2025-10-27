@@ -587,22 +587,17 @@ export default function HomePage() {
 
                   {/* Category Selector Modal or Safe Fallback */}
                   {showCategorySelector && (
-                    <ErrorBoundary
-                      onManualSelect={handleCategoryChange}
-                      onClose={() => setShowCategorySelector(false)}
-                    >
-                      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-                        <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
-                          <CategorySelector
-                            initialCategoryPath={listingData?.category?.path || ''}
-                            initialCategoryId={listingData?.category?.id || ''}
-                            onCategorySelect={handleCategoryChange}
-                            onClose={() => setShowCategorySelector(false)}
-                          />
-                        </div>
-                      </div>
-                    </ErrorBoundary>
-                  )}
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
+      <CategorySelector
+        initialCategoryPath={listingData?.category?.path || ''}
+        initialCategoryId={listingData?.category?.id || ''}
+        onCategorySelect={handleCategoryChange}
+        onClose={() => setShowCategorySelector(false)}
+      />
+    </div>
+  </div>
+)}
                 </div>
               </div>
             )}
