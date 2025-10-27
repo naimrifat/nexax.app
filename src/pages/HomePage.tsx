@@ -585,7 +585,6 @@ export default function HomePage() {
                     )}
                   </div>
 
-                  {/* Category Selector Modal or Safe Fallback */}
                   {showCategorySelector && (
   <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
     <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
