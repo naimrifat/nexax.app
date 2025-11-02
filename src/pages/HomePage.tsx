@@ -25,9 +25,8 @@ export default function HomePage() {
   const normalizeAiToListing = (raw: any) => {
     const categoryId =
       raw?.category?.id || raw?.category_id || raw?.ebay_category_id || '';
-    const categoryPath =
+  const categoryPath =
       raw?.category?.path ||
-      raw?.category?.name ||
       raw?.category_path ||
       raw?.categoryName || '';
 
