@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
 
@@ -89,33 +89,41 @@ export default function HomePage() {
       setLoadingSpecifics(false);
     }
   };
-
   // ---------- Form handlers ----------
-  const handleCategoryChange = (newCategory: { path: string; id: string }) => {
+const handleCategoryChange = (newCategory: { path: string; id: string }) => {
+  // Close the modal immediately so the UI feels instant
+  setShowCategorySelector(false);
+
+  // Defer the heavy state update to avoid blocking the main thread
+  startTransition(() => {
     setListingData((prevData: any) => ({
       ...(prevData ?? {}),
       category: { path: newCategory.path, id: newCategory.id },
     }));
-    setShowCategorySelector(false);
-    if (newCategory?.id) fetchEbaySpecifics(newCategory.id);
-  };
+  });
 
-  const handleInputChange = (field: string, value: any) => {
-    setListingData((prevData: any) => ({
-      ...(prevData ?? {}),
-      [field]: value,
-    }));
-  };
+  // Fetch specifics asynchronously (non-blocking)
+  if (newCategory?.id) {
+    fetchEbaySpecifics(newCategory.id);
+  }
+};
 
-  const handleItemSpecificsChange = (index: number, value: string) => {
-    const current = [...(listingData?.item_specifics ?? [])];
-    if (!current[index]) return;
-    current[index] = { ...current[index], value };
-    setListingData((prevData: any) => ({
-      ...(prevData ?? {}),
-      item_specifics: current,
-    }));
-  };
+const handleInputChange = (field: string, value: any) => {
+  setListingData((prevData: any) => ({
+    ...(prevData ?? {}),
+    [field]: value,
+  }));
+};
+
+const handleItemSpecificsChange = (index: number, value: string) => {
+  const current = [...(listingData?.item_specifics ?? [])];
+  if (!current[index]) return;
+  current[index] = { ...current[index], value };
+  setListingData((prevData: any) => ({
+    ...(prevData ?? {}),
+    item_specifics: current,
+  }));
+};
 
   // ---------- Photo handling ----------
   const handlePhotoUpload = (files: FileList | null) => {
