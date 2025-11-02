@@ -16,16 +16,21 @@ export default function HomePage() {
   const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
 
+  // ---- caching & request control for specifics ----
+  const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
+  const lastFetchRef = useRef<string | null>(null);
+  const inFlightControllerRef = useRef<AbortController | null>(null);
+
   // ---------- Helpers ----------
   const normalizeAiToListing = (raw: any) => {
     const categoryId =
       raw?.category?.id || raw?.category_id || raw?.ebay_category_id || '';
     const categoryPath =
-  raw?.category?.path ||
-  raw?.category?.name ||
-  raw?.category_path ||
-  raw?.categoryName || '';
-    
+      raw?.category?.path ||
+      raw?.category?.name ||
+      raw?.category_path ||
+      raw?.categoryName || '';
+
     const specificsSource: any[] = Array.isArray(raw?.item_specifics)
       ? raw.item_specifics
       : (raw?.itemSpecifics || []);
@@ -48,7 +53,25 @@ export default function HomePage() {
 
   const fetchEbaySpecifics = async (categoryId: string) => {
     if (!categoryId) return;
+
+    // Instant return if cached
+    if (specificsCacheRef.current.has(categoryId)) {
+      const cached = specificsCacheRef.current.get(categoryId)!;
+      startTransition(() => {
+        setEbaySpecifics(cached);
+        setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: cached }));
+      });
+      return;
+    }
+
+    // Abort any in-flight request
+    if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
+    const ctrl = new AbortController();
+    inFlightControllerRef.current = ctrl;
+
     setLoadingSpecifics(true);
+    lastFetchRef.current = categoryId;
+
     try {
       const response = await fetch('/api/ebay-categories', {
         method: 'POST',
@@ -57,73 +80,81 @@ export default function HomePage() {
           action: 'getCategorySpecifics',
           categoryId,
         }),
+        signal: ctrl.signal,
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        const aspects: any[] = data?.aspects ?? [];
+      if (!response.ok) throw new Error(await response.text());
+      const data = await response.json();
+      const aspects: any[] = data?.aspects ?? [];
 
-        const mergedSpecifics = aspects.map((aspect: any) => {
-          const existing = (listingData?.item_specifics ?? []).find(
-            (s: any) => (s.name ?? s.Name) === aspect.name
-          );
-          return {
-            name: aspect.name,
-            value: existing?.value ?? existing?.Value ?? '',
-            required: Boolean(aspect.required),
-            options: aspect.values ?? [],
-          };
-        });
+      // Fast merge of previous values (O(n))
+      const prevList = listingData?.item_specifics ?? [];
+      const prevMap = new Map(
+        prevList.map((s: any) => [String(s?.name ?? '').toLowerCase(), s?.value ?? ''])
+      );
 
+      const mergedSpecifics = aspects.map((aspect: any) => ({
+        name: aspect.name,
+        value: prevMap.get(String(aspect.name).toLowerCase()) || '',
+        required: Boolean(aspect.required),
+        options: aspect.values ?? [],
+      }));
+
+      // Cache
+      specificsCacheRef.current.set(categoryId, mergedSpecifics);
+
+      startTransition(() => {
         setEbaySpecifics(mergedSpecifics);
         setListingData((prev: any) => ({
           ...(prev ?? {}),
           item_specifics: mergedSpecifics,
         }));
-      } else {
-        console.error('getCategorySpecifics failed:', await response.text());
+      });
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.error('Failed to fetch eBay specifics:', err);
       }
-    } catch (err) {
-      console.error('Failed to fetch eBay specifics:', err);
     } finally {
+      if (inFlightControllerRef.current === ctrl) inFlightControllerRef.current = null;
       setLoadingSpecifics(false);
     }
   };
-  // ---------- Form handlers ----------
-const handleCategoryChange = (newCategory: { path: string; id: string }) => {
-  // Close the modal immediately so the UI feels instant
-  setShowCategorySelector(false);
 
-  // Defer the heavy state update to avoid blocking the main thread
-  startTransition(() => {
+  // ---------- Form handlers ----------
+  const handleCategoryChange = (newCategory: { path: string; id: string }) => {
+    // Close the modal immediately so the UI feels instant
+    setShowCategorySelector(false);
+
+    // Defer the heavy state update to avoid blocking the main thread
+    startTransition(() => {
+      setListingData((prevData: any) => ({
+        ...(prevData ?? {}),
+        category: { path: newCategory.path, id: newCategory.id },
+      }));
+    });
+
+    // Fetch specifics asynchronously (non-blocking)
+    if (newCategory?.id) {
+      fetchEbaySpecifics(newCategory.id);
+    }
+  };
+
+  const handleInputChange = (field: string, value: any) => {
     setListingData((prevData: any) => ({
       ...(prevData ?? {}),
-      category: { path: newCategory.path, id: newCategory.id },
+      [field]: value,
     }));
-  });
+  };
 
-  // Fetch specifics asynchronously (non-blocking)
-  if (newCategory?.id) {
-    fetchEbaySpecifics(newCategory.id);
-  }
-};
-
-const handleInputChange = (field: string, value: any) => {
-  setListingData((prevData: any) => ({
-    ...(prevData ?? {}),
-    [field]: value,
-  }));
-};
-
-const handleItemSpecificsChange = (index: number, value: string) => {
-  const current = [...(listingData?.item_specifics ?? [])];
-  if (!current[index]) return;
-  current[index] = { ...current[index], value };
-  setListingData((prevData: any) => ({
-    ...(prevData ?? {}),
-    item_specifics: current,
-  }));
-};
+  const handleItemSpecificsChange = (index: number, value: string) => {
+    const current = [...(listingData?.item_specifics ?? [])];
+    if (!current[index]) return;
+    current[index] = { ...current[index], value };
+    setListingData((prevData: any) => ({
+      ...(prevData ?? {}),
+      item_specifics: current,
+    }));
+  };
 
   // ---------- Photo handling ----------
   const handlePhotoUpload = (files: FileList | null) => {
@@ -214,8 +245,19 @@ const handleItemSpecificsChange = (index: number, value: string) => {
       setStatus('Listing generated successfully!');
       setResults(aiData);            // keep raw
       setListingData(normalized);    // drive UI from normalized
+
       if (normalized?.category?.id) {
-        fetchEbaySpecifics(normalized.category.id);
+        const catId = normalized.category.id;
+        // Prefer cache if we've already fetched this category's specifics
+        if (specificsCacheRef.current.has(catId)) {
+          const cached = specificsCacheRef.current.get(catId)!;
+          startTransition(() => {
+            setEbaySpecifics(cached);
+            setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: cached }));
+          });
+        } else {
+          fetchEbaySpecifics(catId);
+        }
       }
     } catch (error: any) {
       console.error('Error:', error);
@@ -511,17 +553,17 @@ const handleItemSpecificsChange = (index: number, value: string) => {
                   </div>
 
                   {showCategorySelector && (
-  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-    <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
-      <CategorySelector
-        initialCategoryPath={listingData?.category?.path || ''}
-        initialCategoryId={listingData?.category?.id || ''}
-        onCategorySelect={handleCategoryChange}
-        onClose={() => setShowCategorySelector(false)}
-      />
-    </div>
-  </div>
-)}
+                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                      <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
+                        <CategorySelector
+                          initialCategoryPath={listingData?.category?.path || ''}
+                          initialCategoryId={listingData?.category?.id || ''}
+                          onCategorySelect={handleCategoryChange}
+                          onClose={() => setShowCategorySelector(false)}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
