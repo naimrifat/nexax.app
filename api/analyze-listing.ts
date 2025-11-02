@@ -10,18 +10,13 @@ export const config = {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Enable CORS
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
     const { images, session_id } = req.body;
@@ -32,26 +27,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log(`Processing ${images.length} images for session ${session_id}`);
 
-    // Step 1: Download and convert images to base64
+    // ---- 1) Download and convert to base64 (up to 12 images)
     const base64Images = await Promise.all(
       images.slice(0, 12).map(async (url: string, index: number) => {
         try {
-          // Add Cloudinary transformation for optimization
           const optimizedUrl = url.includes('cloudinary.com')
             ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
             : url;
 
           console.log(`Downloading image ${index + 1}/${images.length}`);
           const response = await fetch(optimizedUrl);
-
-          if (!response.ok) {
-            throw new Error(`Failed to download image: ${response.status}`);
-          }
+          if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
 
           const buffer = await response.arrayBuffer();
           const base64 = Buffer.from(buffer).toString('base64');
           const mimeType = response.headers.get('content-type') || 'image/jpeg';
-
           return `data:${mimeType};base64,${base64}`;
         } catch (error) {
           console.error(`Error processing image ${index + 1}:`, error);
@@ -62,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log('All images converted to base64, calling OpenAI...');
 
-    // Step 2: Call OpenAI with base64 images
+    // ---- 2) Call OpenAI Vision
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -75,18 +65,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messages: [
           {
             role: 'system',
-            content: `You are an expert eBay product lister. Analyze ALL provided photos together to create a comprehensive listing. 
-            Return ONLY valid JSON with no markdown formatting.`,
+            content:
+              `You are an expert eBay product lister. Analyze ALL provided photos together to create a comprehensive listing. ` +
+              `Return ONLY valid JSON with no markdown formatting.`,
           },
           {
             role: 'user',
             content: [
               ...base64Images.map((img) => ({
                 type: 'image_url',
-                image_url: {
-                  url: img,
-                  detail: 'low',
-                },
+                image_url: { url: img, detail: 'low' },
               })),
               {
                 type: 'text',
@@ -133,22 +121,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const openaiResult = await openaiResponse.json();
     console.log('OpenAI analysis complete');
 
-    // Parse the response
+    // Parse JSON from OpenAI
     const analysisContent = openaiResult.choices[0].message.content;
-    let parsedAnalysis;
-
+    let parsedAnalysis: any;
     try {
       parsedAnalysis = JSON.parse(analysisContent);
-    } catch (parseError) {
+    } catch {
       console.error('Failed to parse OpenAI response:', analysisContent);
       throw new Error('Invalid response format from OpenAI');
     }
 
-    // Step 3: Get eBay category suggestion
+    // ---- 3) Get eBay category suggestion (and path)
     try {
       console.log('Getting eBay category suggestion...');
 
-      // Construct the full URL for the API call
       const origin = req.headers.origin || `https://${req.headers.host}`;
       const ebayApiUrl = `${origin}/api/ebay-categories`;
 
@@ -165,37 +151,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (ebayResponse.ok) {
         const ebayData = await ebayResponse.json();
 
-        // Store the raw eBay data (including a convenience "path")
-        parsedAnalysis.ebay_category_id = ebayData.categoryId;
-        parsedAnalysis.ebay_category_name = ebayData.categoryName;
-        parsedAnalysis.ebay_category_path = ebayData.categoryPath || ebayData.categoryName;
+        const catId = ebayData.categoryId;
+        // Prefer a true breadcrumb path from the taxonomy service
+        const catPath =
+          ebayData.categoryPath ||
+          // fallbacks if your /api/ebay-categories returns a different key
+          ebayData.path ||
+          // absolute last resort: use the name (may be just leaf)
+          ebayData.categoryName ||
+          '';
 
-        // FORMAT FOR FRONTEND: Add category object WITH PATH
+        // Store raw + convenience path
+        parsedAnalysis.ebay_category_id = catId;
+        parsedAnalysis.ebay_category_name = ebayData.categoryName;
+        parsedAnalysis.ebay_category_path = catPath;
+
+        // FRONTEND: category object with guaranteed path
         parsedAnalysis.category = {
-          id: ebayData.categoryId,
-          name: ebayData.categoryName,
-          path: ebayData.categoryPath || ebayData.categoryName,
+          id: String(catId),
+          name: String(ebayData.categoryName || catPath),
+          path: String(catPath),
         };
 
-        // FORMAT FOR FRONTEND: Add category suggestions WITH PATH
+        // FRONTEND: suggestion list with path
         parsedAnalysis.category_suggestions = (ebayData.suggestions || []).map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          path: s.path || s.name,
+          id: String(s.id ?? s.categoryId ?? ''),
+          name: String(s.name ?? s.categoryName ?? ''),
+          path: String(s.path ?? s.breadcrumb ?? s.name ?? ''),
         }));
 
         console.log('✅ eBay category found:', ebayData.categoryName);
 
-        // NEW: Get category specifics
+        // 3b) Category specifics
         try {
           console.log('Fetching category specifics...');
-
           const specificsResponse = await fetch(ebayApiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'getCategorySpecifics',
-              categoryId: ebayData.categoryId,
+              categoryId: catId,
             }),
           });
 
@@ -204,7 +199,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             parsedAnalysis.category_specifics_schema = specificsData.aspects || [];
             console.log('✅ Got category specifics:', specificsData.aspects?.length || 0, 'fields');
 
-            // Map AI-detected values to eBay fields
+            // Map AI-detected values onto eBay aspects
             const mappedSpecifics = mapAIToEbayFields(
               parsedAnalysis.detected,
               specificsData.aspects || []
@@ -218,7 +213,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       } else {
         console.error('eBay API response not ok:', ebayResponse.status);
-        // Set default fallback (WITH PATH)
+        // Default fallback (with path)
         parsedAnalysis.ebay_category_id = '11450';
         parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
         parsedAnalysis.ebay_category_path = 'Clothing, Shoes & Accessories';
@@ -233,7 +228,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     } catch (error) {
       console.error('Failed to get eBay category:', error);
-      // Set default fallback (WITH PATH)
+      // Default fallback (with path)
       parsedAnalysis.ebay_category_id = '11450';
       parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
       parsedAnalysis.ebay_category_path = 'Clothing, Shoes & Accessories';
@@ -247,22 +242,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ];
     }
 
-    // Step 4: Send to Make.com webhook if configured
+    // ---- 4) Optional: send to Make.com
     if (process.env.VITE_MAKE_WEBHOOK_URL) {
       console.log('Sending results to Make.com webhook...');
-
       try {
         const makeResponse = await fetch(process.env.VITE_MAKE_WEBHOOK_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            session_id: session_id,
+            session_id,
             analysis: parsedAnalysis,
             image_urls: images,
             timestamp: new Date().toISOString(),
           }),
         });
-
         if (!makeResponse.ok) {
           console.error('Make.com webhook failed:', makeResponse.status);
         } else {
@@ -273,12 +266,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Return success response
+    // ---- Return
     return res.status(200).json({
       success: true,
       data: parsedAnalysis,
       images_processed: base64Images.length,
-      session_id: session_id,
+      session_id,
     });
   } catch (error: any) {
     console.error('Handler error:', error);
@@ -289,14 +282,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-// Helper function to map AI-detected data to eBay fields
+// ---- Helper: map AI-detected to eBay aspects
 function mapAIToEbayFields(aiDetected: any, ebayAspects: any[]) {
   const mapped: any[] = [];
 
   for (const aspect of ebayAspects) {
     let value = '';
-
-    // Smart matching logic
     const aspectName = (aspect.name || '').toLowerCase();
 
     if (aspectName.includes('brand')) {
@@ -313,7 +304,7 @@ function mapAIToEbayFields(aiDetected: any, ebayAspects: any[]) {
 
     mapped.push({
       name: aspect.name,
-      value: value,
+      value,
       required: aspect.required,
       type: aspect.type,
       options: aspect.values,
