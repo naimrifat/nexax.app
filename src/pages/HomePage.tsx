@@ -510,51 +510,36 @@ export default function HomePage() {
                     </div>
 
                     {!!(listingData?.item_specifics?.length) && (
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-600 mb-2">
-                          Item Specifics
-                        </label>
+  <div>
+    <label className="block text-sm font-semibold text-gray-600 mb-2">
+      Item Specifics
+    </label>
 
-                        {listingData.item_specifics.map((spec: any, index: number) => (
-                          <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-2">
-                            <input
-                              type="text"
-                              className="px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
-                              value={spec?.name ?? ''}
-                              readOnly
-                            />
-
-                            {Array.isArray(spec?.options) && spec.options.length > 0 ? (
-                              <select
-                                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                                value={spec?.value ?? ''}
-                                onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
-                              >
-                                <option value="">Select...</option>
-                                {spec.options.map((option: any, i: number) => {
-                                  const val = option?.value ?? option; // support string or { value }
-                                  return (
-                                    <option key={`${val}-${i}`} value={val}>
-                                      {val}
-                                    </option>
-                                  );
-                                })}
-                              </select>
-                            ) : (
-                              <input
-                                type="text"
-                                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                                value={spec?.value ?? ''}
-                                onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
-                              />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {showCategorySelector && (
+    {listingData.item_specifics.map((spec: any, index: number) => (
+      <ItemSpecificRow
+        key={`${spec?.name ?? 'spec'}-${index}`}
+        spec={{
+          name: spec?.name,
+          value: spec?.value,
+          options: spec?.options ?? [],
+          required: Boolean(spec?.required),
+          multi: Boolean(spec?.multi),
+          selectionOnly: Boolean(spec?.selectionOnly),
+          freeTextAllowed: Boolean(spec?.freeTextAllowed),
+        }}
+        onChange={(newValue) => {
+          setListingData((prev: any) => {
+            const next = [...(prev?.item_specifics ?? [])];
+            if (!next[index]) return prev;
+            next[index] = { ...next[index], value: newValue };
+            return { ...(prev ?? {}), item_specifics: next };
+          });
+        }}
+      />
+    ))}
+  </div>
+)}
+                    {showCategorySelector && (
                     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
                       <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
                         <CategorySelector
