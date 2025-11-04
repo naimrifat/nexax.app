@@ -51,73 +51,76 @@ export default function HomePage() {
   };
 
   const fetchEbaySpecifics = async (categoryId: string) => {
-    if (!categoryId) return;
+  if (!categoryId) return;
 
-    // Instant return if cached
-    if (specificsCacheRef.current.has(categoryId)) {
-      const cached = specificsCacheRef.current.get(categoryId)!;
-      startTransition(() => {
-        setEbaySpecifics(cached);
-        setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: cached }));
-      });
-      return;
-    }
+  // Instant return if cached
+  if (specificsCacheRef.current.has(categoryId)) {
+    const cached = specificsCacheRef.current.get(categoryId)!;
+    startTransition(() => {
+      setEbaySpecifics(cached);
+      setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: cached }));
+    });
+    return;
+  }
 
-    // Abort any in-flight request
-    if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
-    const ctrl = new AbortController();
-    inFlightControllerRef.current = ctrl;
+  // Abort previous request if needed
+  if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
+  const ctrl = new AbortController();
+  inFlightControllerRef.current = ctrl;
 
-    setLoadingSpecifics(true);
-    lastFetchRef.current = categoryId;
+  setLoadingSpecifics(true);
+  lastFetchRef.current = categoryId;
 
-    try {
-      const response = await fetch('/api/ebay-categories', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'getCategorySpecifics',
-          categoryId,
-        }),
-        signal: ctrl.signal,
-      });
+  try {
+    const response = await fetch('/api/ebay-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'getCategorySpecifics',
+        categoryId,
+      }),
+      signal: ctrl.signal,
+    });
 
-      if (!response.ok) throw new Error(await response.text());
-      const data = await response.json();
-      const aspects: any[] = data?.aspects ?? [];
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    const aspects: any[] = data?.aspects ?? [];
 
-      // Fast merge of previous values (O(n))
-      const prevList = listingData?.item_specifics ?? [];
-      const prevMap = new Map(
-        prevList.map((s: any) => [String(s?.name ?? '').toLowerCase(), s?.value ?? ''])
-      );
+    // Fast lookup map for previous values
+    const prevList = listingData?.item_specifics ?? [];
+    const prevMap = new Map(
+      prevList.map((s: any) => [String(s?.name ?? '').toLowerCase(), s?.value ?? ''])
+    );
 
-      const mergedSpecifics = aspects.map((aspect: any) => ({
-        name: aspect.name,
-        value: prevMap.get(String(aspect.name).toLowerCase()) || '',
-        required: Boolean(aspect.required),
-        options: aspect.values ?? [],
+    const mergedSpecifics = aspects.map((aspect: any) => ({
+      name: aspect.name,
+      required: Boolean(aspect.required),
+      multi: Boolean(aspect.multi),
+      selectionOnly: Boolean(aspect.selectionOnly),
+      freeTextAllowed: Boolean(aspect.freeTextAllowed),
+      options: aspect.values ?? [],
+      value: prevMap.get(String(aspect.name).toLowerCase()) || '',
+    }));
+
+    // Cache for reselects
+    specificsCacheRef.current.set(categoryId, mergedSpecifics);
+
+    startTransition(() => {
+      setEbaySpecifics(mergedSpecifics);
+      setListingData((prev: any) => ({
+        ...(prev ?? {}),
+        item_specifics: mergedSpecifics,
       }));
-
-      // Cache
-      specificsCacheRef.current.set(categoryId, mergedSpecifics);
-
-      startTransition(() => {
-        setEbaySpecifics(mergedSpecifics);
-        setListingData((prev: any) => ({
-          ...(prev ?? {}),
-          item_specifics: mergedSpecifics,
-        }));
-      });
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        console.error('Failed to fetch eBay specifics:', err);
-      }
-    } finally {
-      if (inFlightControllerRef.current === ctrl) inFlightControllerRef.current = null;
-      setLoadingSpecifics(false);
+    });
+  } catch (err: any) {
+    if (err?.name !== 'AbortError') {
+      console.error('Failed to fetch eBay specifics:', err);
     }
-  };
+  } finally {
+    if (inFlightControllerRef.current === ctrl) inFlightControllerRef.current = null;
+    setLoadingSpecifics(false);
+  }
+};
 
   // ---------- Form handlers ----------
   const handleCategoryChange = (newCategory: { path: string; id: string }) => {
