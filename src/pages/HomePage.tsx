@@ -522,10 +522,10 @@ export default function HomePage() {
           name: spec?.name,
           value: spec?.value,
           options: spec?.options ?? [],
-          required: Boolean(spec?.required),
-          multi: Boolean(spec?.multi),
-          selectionOnly: Boolean(spec?.selectionOnly),
-          freeTextAllowed: Boolean(spec?.freeTextAllowed),
+          required: !!spec?.required,
+          multi: !!spec?.multi,
+          selectionOnly: !!spec?.selectionOnly,
+          freeTextAllowed: !!spec?.freeTextAllowed,
         }}
         onChange={(newValue) => {
           setListingData((prev: any) => {
@@ -537,6 +537,19 @@ export default function HomePage() {
         }}
       />
     ))}
+  </div>
+)}
+
+{showCategorySelector && (
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
+      <CategorySelector
+        initialCategoryPath={listingData?.category?.path || ''}
+        initialCategoryId={listingData?.category?.id || ''}
+        onCategorySelect={handleCategoryChange}
+        onClose={() => setShowCategorySelector(false)}
+      />
+    </div>
   </div>
 )}
                     {showCategorySelector && (
