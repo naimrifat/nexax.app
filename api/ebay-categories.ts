@@ -55,13 +55,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
     const { action, parentCategoryId, categoryId, title, query } = req.body || {};
@@ -236,12 +231,20 @@ async function getCategorySpecificsFromAPI(categoryId: string) {
 
   const data = await resp.json();
   const aspects =
-    (data.aspects || []).map((aspect: any) => ({
-      name: aspect.localizedAspectName,
-      required: Boolean(aspect?.aspectConstraint?.aspectRequired),
-      type: aspect?.aspectConstraint?.aspectMode,
-      values: (aspect.aspectValues || []).map((v: any) => v.localizedValue),
-    })) || [];
+    (data.aspects || []).map((aspect: any) => {
+      const constraint = aspect.aspectConstraint || {};
+      const mode = constraint.aspectValueSelectionMode || aspect.aspectValueSelectionMode;
+
+      return {
+        name: aspect.localizedAspectName,
+        required: Boolean(constraint.aspectRequired),
+        type: aspect.aspectDataType || 'STRING',
+        values: (aspect.aspectValues || []).map((v: any) => v.localizedValue).filter(Boolean),
+        multi: constraint.itemToAspectCardinality === 'MULTI',
+        selectionOnly: mode === 'SELECTION_ONLY',
+        freeTextAllowed: mode !== 'SELECTION_ONLY',
+      };
+    }) || [];
 
   return { categoryId, aspects };
 }
