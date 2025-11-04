@@ -1,6 +1,7 @@
 import React, { useState, useRef, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
+import ItemSpecificRow from '../components/ItemSpecificRow';
 
 // ---------------- Home Page ----------------
 export default function HomePage() {
@@ -8,7 +9,7 @@ export default function HomePage() {
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState('');
-  const [results, setResults] = useState<any>(null);        // raw AI result (kept for reference)
+  const [results, setResults] = useState<any>(null);         // raw AI result (kept for reference)
   const [listingData, setListingData] = useState<any>(null); // normalized + editable for UI
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -25,10 +26,11 @@ export default function HomePage() {
   const normalizeAiToListing = (raw: any) => {
     const categoryId =
       raw?.category?.id || raw?.category_id || raw?.ebay_category_id || '';
-  const categoryPath =
+    const categoryPath =
       raw?.category?.path ||
       raw?.category_path ||
-      raw?.categoryName || '';
+      raw?.categoryName ||
+      '';
 
     const specificsSource: any[] = Array.isArray(raw?.item_specifics)
       ? raw.item_specifics
@@ -39,6 +41,9 @@ export default function HomePage() {
       value: s?.value ?? s?.Value ?? '',
       options: s?.options ?? s?.Values ?? [],
       required: s?.required ?? false,
+      multi: s?.multi ?? false,
+      selectionOnly: s?.selectionOnly ?? false,
+      freeTextAllowed: s?.freeTextAllowed ?? false,
     }));
 
     return {
@@ -51,76 +56,76 @@ export default function HomePage() {
   };
 
   const fetchEbaySpecifics = async (categoryId: string) => {
-  if (!categoryId) return;
+    if (!categoryId) return;
 
-  // Instant return if cached
-  if (specificsCacheRef.current.has(categoryId)) {
-    const cached = specificsCacheRef.current.get(categoryId)!;
-    startTransition(() => {
-      setEbaySpecifics(cached);
-      setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: cached }));
-    });
-    return;
-  }
-
-  // Abort previous request if needed
-  if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
-  const ctrl = new AbortController();
-  inFlightControllerRef.current = ctrl;
-
-  setLoadingSpecifics(true);
-  lastFetchRef.current = categoryId;
-
-  try {
-    const response = await fetch('/api/ebay-categories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'getCategorySpecifics',
-        categoryId,
-      }),
-      signal: ctrl.signal,
-    });
-
-    if (!response.ok) throw new Error(await response.text());
-    const data = await response.json();
-    const aspects: any[] = data?.aspects ?? [];
-
-    // Fast lookup map for previous values
-    const prevList = listingData?.item_specifics ?? [];
-    const prevMap = new Map(
-      prevList.map((s: any) => [String(s?.name ?? '').toLowerCase(), s?.value ?? ''])
-    );
-
-    const mergedSpecifics = aspects.map((aspect: any) => ({
-      name: aspect.name,
-      required: Boolean(aspect.required),
-      multi: Boolean(aspect.multi),
-      selectionOnly: Boolean(aspect.selectionOnly),
-      freeTextAllowed: Boolean(aspect.freeTextAllowed),
-      options: aspect.values ?? [],
-      value: prevMap.get(String(aspect.name).toLowerCase()) || '',
-    }));
-
-    // Cache for reselects
-    specificsCacheRef.current.set(categoryId, mergedSpecifics);
-
-    startTransition(() => {
-      setEbaySpecifics(mergedSpecifics);
-      setListingData((prev: any) => ({
-        ...(prev ?? {}),
-        item_specifics: mergedSpecifics,
-      }));
-    });
-  } catch (err: any) {
-    if (err?.name !== 'AbortError') {
-      console.error('Failed to fetch eBay specifics:', err);
+    // Instant return if cached
+    if (specificsCacheRef.current.has(categoryId)) {
+      const cached = specificsCacheRef.current.get(categoryId)!;
+      startTransition(() => {
+        setEbaySpecifics(cached);
+        setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: cached }));
+      });
+      return;
     }
-  } finally {
-    if (inFlightControllerRef.current === ctrl) inFlightControllerRef.current = null;
-    setLoadingSpecifics(false);
-  }
-};
+
+    // Abort previous request if needed
+    if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
+    const ctrl = new AbortController();
+    inFlightControllerRef.current = ctrl;
+
+    setLoadingSpecifics(true);
+    lastFetchRef.current = categoryId;
+
+    try {
+      const response = await fetch('/api/ebay-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'getCategorySpecifics',
+          categoryId,
+        }),
+        signal: ctrl.signal,
+      });
+
+      if (!response.ok) throw new Error(await response.text());
+      const data = await response.json();
+      const aspects: any[] = data?.aspects ?? [];
+
+      // Fast lookup map for previous values
+      const prevList = listingData?.item_specifics ?? [];
+      const prevMap = new Map(
+        prevList.map((s: any) => [String(s?.name ?? '').toLowerCase(), s?.value ?? ''])
+      );
+
+      const mergedSpecifics = aspects.map((aspect: any) => ({
+        name: aspect.name,
+        required: Boolean(aspect.required),
+        multi: Boolean(aspect.multi),
+        selectionOnly: Boolean(aspect.selectionOnly),
+        freeTextAllowed: Boolean(aspect.freeTextAllowed),
+        options: aspect.values ?? [],
+        value: prevMap.get(String(aspect.name).toLowerCase()) || '',
+      }));
+
+      // Cache for reselects
+      specificsCacheRef.current.set(categoryId, mergedSpecifics);
+
+      startTransition(() => {
+        setEbaySpecifics(mergedSpecifics);
+        setListingData((prev: any) => ({
+          ...(prev ?? {}),
+          item_specifics: mergedSpecifics,
+        }));
+      });
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.error('Failed to fetch eBay specifics:', err);
+      }
+    } finally {
+      if (inFlightControllerRef.current === ctrl) inFlightControllerRef.current = null;
+      setLoadingSpecifics(false);
+    }
+  };
 
   // ---------- Form handlers ----------
   const handleCategoryChange = (newCategory: { path: string; id: string }) => {
@@ -148,7 +153,7 @@ export default function HomePage() {
     }));
   };
 
-  const handleItemSpecificsChange = (index: number, value: string) => {
+  const handleItemSpecificsChange = (index: number, value: string | string[]) => {
     const current = [...(listingData?.item_specifics ?? [])];
     if (!current[index]) return;
     current[index] = { ...current[index], value };
@@ -245,8 +250,8 @@ export default function HomePage() {
       const normalized = normalizeAiToListing(aiData);
 
       setStatus('Listing generated successfully!');
-      setResults(aiData);            // keep raw
-      setListingData(normalized);    // drive UI from normalized
+      setResults(aiData);           // keep raw
+      setListingData(normalized);   // drive UI from normalized
 
       if (normalized?.category?.id) {
         const catId = normalized.category.id;
@@ -510,66 +515,48 @@ export default function HomePage() {
                     </div>
 
                     {!!(listingData?.item_specifics?.length) && (
-  <div>
-    <label className="block text-sm font-semibold text-gray-600 mb-2">
-      Item Specifics
-    </label>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-600 mb-2">
+                          Item Specifics
+                        </label>
 
-    {listingData.item_specifics.map((spec: any, index: number) => (
-      <ItemSpecificRow
-        key={`${spec?.name ?? 'spec'}-${index}`}
-        spec={{
-          name: spec?.name,
-          value: spec?.value,
-          options: spec?.options ?? [],
-          required: !!spec?.required,
-          multi: !!spec?.multi,
-          selectionOnly: !!spec?.selectionOnly,
-          freeTextAllowed: !!spec?.freeTextAllowed,
-        }}
-        onChange={(newValue) => {
-          setListingData((prev: any) => {
-            const next = [...(prev?.item_specifics ?? [])];
-            if (!next[index]) return prev;
-            next[index] = { ...next[index], value: newValue };
-            return { ...(prev ?? {}), item_specifics: next };
-          });
-        }}
-      />
-    ))}
-  </div>
-)}
-
-{showCategorySelector && (
-  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-    <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
-      <CategorySelector
-        initialCategoryPath={listingData?.category?.path || ''}
-        initialCategoryId={listingData?.category?.id || ''}
-        onCategorySelect={handleCategoryChange}
-        onClose={() => setShowCategorySelector(false)}
-      />
-    </div>
-  </div>
-)}
-                    {showCategorySelector && (
-                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-                      <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
-                        <CategorySelector
-                          initialCategoryPath={listingData?.category?.path || ''}
-                          initialCategoryId={listingData?.category?.id || ''}
-                          onCategorySelect={handleCategoryChange}
-                          onClose={() => setShowCategorySelector(false)}
-                        />
+                        {listingData.item_specifics.map((spec: any, index: number) => (
+                          <ItemSpecificRow
+                            key={`${spec?.name ?? 'spec'}-${index}`}
+                            spec={{
+                              name: spec?.name,
+                              value: spec?.value,
+                              options: spec?.options ?? [],
+                              required: !!spec?.required,
+                              multi: !!spec?.multi,
+                              selectionOnly: !!spec?.selectionOnly,
+                              freeTextAllowed: !!spec?.freeTextAllowed,
+                            }}
+                            onChange={(newValue) => handleItemSpecificsChange(index, newValue)}
+                          />
+                        ))}
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
             )}
           </div>
         </div>
       </section>
+
+      {showCategorySelector && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
+            <CategorySelector
+              initialCategoryPath={listingData?.category?.path || ''}
+              initialCategoryId={listingData?.category?.id || ''}
+              onCategorySelect={handleCategoryChange}
+              onClose={() => setShowCategorySelector(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
