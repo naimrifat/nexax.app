@@ -294,7 +294,7 @@ export default function HomePage() {
       }
 
       const analysisResult = await analysisResponse.json();
-      **const aiData = analysisResult?.data
+      const aiData = analysisResult?.data || analysisResult?.analysis || analysisResult || {};
       const normalized = normalizeAiToListing(aiData);
 
       setStatus('Listing generated successfully!');
