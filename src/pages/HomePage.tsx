@@ -1,9 +1,38 @@
 import React, { useState, useRef, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
-import ItemSpecificRow from '../components/ItemSpecificRow';
 
-// ---------------- Home Page ----------------
+/* -------------------------------------------------------
+   Helper: snap an AI/free-text value to an allowed option
+   ------------------------------------------------------- */
+function chooseOptionValue(
+  aiValue: string | string[] | undefined,
+  options: string[] = [],
+  selectionOnly = false
+): string {
+  if (!aiValue) return '';
+  const raw = Array.isArray(aiValue) ? (aiValue[0] ?? '') : aiValue;
+  const norm = (s: string) => s.trim().toLowerCase().replace(/’/g, "'");
+
+  // 1) exact (case-insensitive) match
+  const exactIdx = options.findIndex((o) => norm(o) === norm(raw));
+  if (exactIdx >= 0) return options[exactIdx];
+
+  // 2) soft starts-with either way (handles “Light Gray” vs “Gray”)
+  const startsIdx = options.findIndex((o) => norm(o).startsWith(norm(raw)) || norm(raw).startsWith(norm(o)));
+  if (startsIdx >= 0) return options[startsIdx];
+
+  // 3) soft contains either way
+  const containsIdx = options.findIndex((o) => norm(o).includes(norm(raw)) || norm(raw).includes(norm(o)));
+  if (containsIdx >= 0) return options[containsIdx];
+
+  // 4) if selectionOnly, must return a valid option or blank
+  return selectionOnly ? '' : raw;
+}
+
+/* -------------------------------------------------------
+   Page
+   ------------------------------------------------------- */
 export default function HomePage() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
@@ -19,18 +48,19 @@ export default function HomePage() {
 
   // ---- caching & request control for specifics ----
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
-  const lastFetchRef = useRef<string | null>(null);
   const inFlightControllerRef = useRef<AbortController | null>(null);
 
-  // ---------- Helpers ----------
+  /* -------------------------------------------------------
+     Normalize AI output -> UI listing model
+     ------------------------------------------------------- */
   const normalizeAiToListing = (raw: any) => {
     const categoryId =
       raw?.category?.id || raw?.category_id || raw?.ebay_category_id || '';
     const categoryPath =
       raw?.category?.path ||
+      raw?.category?.name ||
       raw?.category_path ||
-      raw?.categoryName ||
-      '';
+      raw?.categoryName || '';
 
     const specificsSource: any[] = Array.isArray(raw?.item_specifics)
       ? raw.item_specifics
@@ -43,7 +73,7 @@ export default function HomePage() {
       required: s?.required ?? false,
       multi: s?.multi ?? false,
       selectionOnly: s?.selectionOnly ?? false,
-      freeTextAllowed: s?.freeTextAllowed ?? false,
+      freeTextAllowed: s?.freeTextAllowed ?? true,
     }));
 
     return {
@@ -55,10 +85,14 @@ export default function HomePage() {
     };
   };
 
-  const fetchEbaySpecifics = async (categoryId: string) => {
+  /* -------------------------------------------------------
+     Fetch category specifics and merge with existing values
+     existingSpecifics = preferred source (e.g., AI output)
+     ------------------------------------------------------- */
+  const fetchEbaySpecifics = async (categoryId: string, existingSpecifics?: any[]) => {
     if (!categoryId) return;
 
-    // Instant return if cached
+    // Use cache if available
     if (specificsCacheRef.current.has(categoryId)) {
       const cached = specificsCacheRef.current.get(categoryId)!;
       startTransition(() => {
@@ -68,13 +102,12 @@ export default function HomePage() {
       return;
     }
 
-    // Abort previous request if needed
+    // Abort any in-flight request
     if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
     const ctrl = new AbortController();
     inFlightControllerRef.current = ctrl;
 
     setLoadingSpecifics(true);
-    lastFetchRef.current = categoryId;
 
     try {
       const response = await fetch('/api/ebay-categories', {
@@ -91,23 +124,34 @@ export default function HomePage() {
       const data = await response.json();
       const aspects: any[] = data?.aspects ?? [];
 
-      // Fast lookup map for previous values
-      const prevList = listingData?.item_specifics ?? [];
+      // Build map from the best known source of truth:
+      // prefer specifics passed in (AI), else what’s in state
+      const prevList = existingSpecifics ?? listingData?.item_specifics ?? [];
       const prevMap = new Map(
         prevList.map((s: any) => [String(s?.name ?? '').toLowerCase(), s?.value ?? ''])
       );
 
-      const mergedSpecifics = aspects.map((aspect: any) => ({
-        name: aspect.name,
-        required: Boolean(aspect.required),
-        multi: Boolean(aspect.multi),
-        selectionOnly: Boolean(aspect.selectionOnly),
-        freeTextAllowed: Boolean(aspect.freeTextAllowed),
-        options: aspect.values ?? [],
-        value: prevMap.get(String(aspect.name).toLowerCase()) || '',
-      }));
+      const mergedSpecifics = aspects.map((aspect: any) => {
+        const key = String(aspect.name ?? '').toLowerCase();
+        const previous = prevMap.get(key);
 
-      // Cache for reselects
+        const value = chooseOptionValue(
+          previous,
+          aspect.values ?? [],
+          Boolean(aspect.selectionOnly)
+        );
+
+        return {
+          name: aspect.name,
+          required: Boolean(aspect.required),
+          multi: Boolean(aspect.multi),
+          selectionOnly: Boolean(aspect.selectionOnly),
+          freeTextAllowed: Boolean(aspect.freeTextAllowed),
+          options: aspect.values ?? [],
+          value,
+        };
+      });
+
       specificsCacheRef.current.set(categoryId, mergedSpecifics);
 
       startTransition(() => {
@@ -127,12 +171,12 @@ export default function HomePage() {
     }
   };
 
-  // ---------- Form handlers ----------
+  /* -------------------------------------------------------
+     Form handlers
+     ------------------------------------------------------- */
   const handleCategoryChange = (newCategory: { path: string; id: string }) => {
-    // Close the modal immediately so the UI feels instant
     setShowCategorySelector(false);
 
-    // Defer the heavy state update to avoid blocking the main thread
     startTransition(() => {
       setListingData((prevData: any) => ({
         ...(prevData ?? {}),
@@ -140,9 +184,9 @@ export default function HomePage() {
       }));
     });
 
-    // Fetch specifics asynchronously (non-blocking)
     if (newCategory?.id) {
-      fetchEbaySpecifics(newCategory.id);
+      // pass currently visible specifics so merge doesn't start empty
+      fetchEbaySpecifics(newCategory.id, listingData?.item_specifics ?? []);
     }
   };
 
@@ -153,7 +197,7 @@ export default function HomePage() {
     }));
   };
 
-  const handleItemSpecificsChange = (index: number, value: string | string[]) => {
+  const handleItemSpecificsChange = (index: number, value: string) => {
     const current = [...(listingData?.item_specifics ?? [])];
     if (!current[index]) return;
     current[index] = { ...current[index], value };
@@ -163,7 +207,9 @@ export default function HomePage() {
     }));
   };
 
-  // ---------- Photo handling ----------
+  /* -------------------------------------------------------
+     Photo handling
+     ------------------------------------------------------- */
   const handlePhotoUpload = (files: FileList | null) => {
     if (!files) return;
     const newFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
@@ -199,7 +245,9 @@ export default function HomePage() {
     handlePhotoUpload(e.dataTransfer.files);
   };
 
-  // ---------- Submit & AI analysis ----------
+  /* -------------------------------------------------------
+     Submit & AI analysis
+     ------------------------------------------------------- */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (photos.length === 0) {
@@ -218,10 +266,10 @@ export default function HomePage() {
           formData.append('file', file);
           formData.append('upload_preset', 'ebay_listings');
 
-          const res = await fetch(
-            'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
-            { method: 'POST', body: formData }
-          );
+          const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
+            method: 'POST',
+            body: formData,
+          });
 
           const data = await res.json();
           if (!res.ok) throw new Error(data?.error?.message ?? 'Image upload failed');
@@ -250,12 +298,13 @@ export default function HomePage() {
       const normalized = normalizeAiToListing(aiData);
 
       setStatus('Listing generated successfully!');
-      setResults(aiData);           // keep raw
-      setListingData(normalized);   // drive UI from normalized
+      setResults(aiData);         // keep raw
+      setListingData(normalized); // drive UI
 
+      // IMPORTANT: pass AI specifics so the merge is instant & correct
       if (normalized?.category?.id) {
         const catId = normalized.category.id;
-        // Prefer cache if we've already fetched this category's specifics
+
         if (specificsCacheRef.current.has(catId)) {
           const cached = specificsCacheRef.current.get(catId)!;
           startTransition(() => {
@@ -263,7 +312,7 @@ export default function HomePage() {
             setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: cached }));
           });
         } else {
-          fetchEbaySpecifics(catId);
+          fetchEbaySpecifics(catId, normalized.item_specifics);
         }
       }
     } catch (error: any) {
@@ -274,7 +323,9 @@ export default function HomePage() {
     }
   };
 
-  // ---------- Publish to eBay ----------
+  /* -------------------------------------------------------
+     Publish to eBay
+     ------------------------------------------------------- */
   const handlePublishToEbay = async () => {
     if (!listingData) return;
     setStatus('Publishing to eBay...');
@@ -302,7 +353,9 @@ export default function HomePage() {
     }
   };
 
-  // ---------- UI ----------
+  /* -------------------------------------------------------
+     UI
+     ------------------------------------------------------- */
   return (
     <div className="flex flex-col">
       <section className="py-16 md:py-24 bg-white">
@@ -521,42 +574,64 @@ export default function HomePage() {
                         </label>
 
                         {listingData.item_specifics.map((spec: any, index: number) => (
-                          <ItemSpecificRow
-                            key={`${spec?.name ?? 'spec'}-${index}`}
-                            spec={{
-                              name: spec?.name,
-                              value: spec?.value,
-                              options: spec?.options ?? [],
-                              required: !!spec?.required,
-                              multi: !!spec?.multi,
-                              selectionOnly: !!spec?.selectionOnly,
-                              freeTextAllowed: !!spec?.freeTextAllowed,
-                            }}
-                            onChange={(newValue) => handleItemSpecificsChange(index, newValue)}
-                          />
+                          <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-2">
+                            <div className="flex items-center">
+                              <span className="text-sm text-gray-700">
+                                {spec?.name || 'Specific'}
+                              </span>
+                              {spec?.required ? <span className="ml-1 text-red-500">*</span> : null}
+                            </div>
+
+                            {Array.isArray(spec?.options) && spec.options.length > 0 ? (
+                              <select
+                                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                                value={spec?.value ?? ''}
+                                onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
+                              >
+                                <option value="">Select...</option>
+                                {spec.options.map((option: any, i: number) => {
+                                  const val = option?.value ?? option; // handles { value } or string
+                                  return (
+                                    <option key={`${val}-${i}`} value={val}>
+                                      {val}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                                value={spec?.value ?? ''}
+                                onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
+                                placeholder={spec?.freeTextAllowed === false ? 'Select from options' : ''}
+                                disabled={spec?.freeTextAllowed === false}
+                              />
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}
                   </div>
+
+                  {showCategorySelector && (
+                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                      <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
+                        <CategorySelector
+                          initialCategoryPath={listingData?.category?.path || ''}
+                          initialCategoryId={listingData?.category?.id || ''}
+                          onCategorySelect={handleCategoryChange}
+                          onClose={() => setShowCategorySelector(false)}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </div>
         </div>
       </section>
-
-      {showCategorySelector && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
-            <CategorySelector
-              initialCategoryPath={listingData?.category?.path || ''}
-              initialCategoryId={listingData?.category?.id || ''}
-              onCategorySelect={handleCategoryChange}
-              onClose={() => setShowCategorySelector(false)}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
