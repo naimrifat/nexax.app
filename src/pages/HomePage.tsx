@@ -92,15 +92,37 @@ export default function HomePage() {
   const fetchEbaySpecifics = async (categoryId: string, existingSpecifics?: any[]) => {
     if (!categoryId) return;
 
-    // Use cache if available
+    // --- FIX 1: Correctly retrieve and merge AI values when using cache ---
     if (specificsCacheRef.current.has(categoryId)) {
-      const cached = specificsCacheRef.current.get(categoryId)!;
+      const cachedAspects = specificsCacheRef.current.get(categoryId)!;
+      
+      // Map AI's simple name/value pairs to a Map for fast lookup
+      const aiSpecificsMap = new Map(
+          (existingSpecifics ?? listingData?.item_specifics ?? []).map((s: any) => [String(s?.name ?? '').toLowerCase(), s?.value ?? ''])
+      );
+
+      const mergedSpecificsFromCache = cachedAspects.map(aspect => {
+          const key = String(aspect.name ?? '').toLowerCase();
+          const previousValue = aiSpecificsMap.get(key);
+
+          // Rerun the value validation/snapping using the helper, which was the missing bug
+          const value = chooseOptionValue(
+              previousValue,
+              aspect.options ?? [], 
+              Boolean(aspect.selectionOnly)
+          );
+
+          return { ...aspect, value };
+      });
+
       startTransition(() => {
-        setEbaySpecifics(cached);
-        setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: cached }));
+        setEbaySpecifics(mergedSpecificsFromCache);
+        setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: mergedSpecificsFromCache }));
       });
       return;
     }
+    // --- End Cache Fix ---
+
 
     // Abort any in-flight request
     if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
@@ -135,22 +157,22 @@ export default function HomePage() {
         const key = String(aspect.name ?? '').toLowerCase();
         const previous = prevMap.get(key);
 
-        // FIX: Derive selection rules from the 'type' field sent by the API
+        // FIX 2: Correctly derive selection rules from the 'type' field sent by the API
         const isSelectionOnly = aspect.type === 'SelectionOnly';
         const allowsFreeText = aspect.type !== 'SelectionOnly'; 
 
         const value = chooseOptionValue(
           previous,
           aspect.values ?? [],
-          isSelectionOnly // Use the derived boolean value
+          isSelectionOnly
         );
 
         return {
           name: aspect.name,
           required: Boolean(aspect.required),
           multi: Boolean(aspect.multi),
-          selectionOnly: isSelectionOnly, // FIXED
-          freeTextAllowed: allowsFreeText, // FIXED
+          selectionOnly: isSelectionOnly, 
+          freeTextAllowed: allowsFreeText, 
           options: aspect.values ?? [],
           value,
         };
@@ -297,7 +319,7 @@ export default function HomePage() {
         throw new Error(errorData?.error ?? 'Failed to analyze images');
       }
 
-      // FIX 1: Robust data extraction (fixes blank listing issue)
+      // FIX 3: Robust data extraction (fixes blank listing issue)
       const analysisResult = await analysisResponse.json();
       const aiData = analysisResult?.data || analysisResult?.analysis || analysisResult || {};
       const normalized = normalizeAiToListing(aiData);
@@ -307,7 +329,7 @@ export default function HomePage() {
       
       let finalListingData = normalized;
 
-      // FIX 2: Strict Constraint - Clear specifics if category is missing
+      // FIX 4: Strict Constraint - Clear specifics if category is missing
       if (!normalized?.category?.id) {
           finalListingData = {
               ...normalized,
