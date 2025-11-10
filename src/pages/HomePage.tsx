@@ -552,33 +552,105 @@ export default function HomePage() {
     }
   };
 
-  const handlePublishToEbay = async () => {
-    if (!listingData) return;
-    setStatus('Publishing to eBay...');
-    try {
-      const response = await fetch('/api/publish-listing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listing_data: listingData,
-          images: photoPreviewUrls,
-        }),
-      });
+/**
+ * Validates the listing data before publishing
+ * Returns validation result with any error messages
+ */
+const validateListing = (): { valid: boolean; errors: string[] } => {
+  const errors: string[] = [];
 
-      if (!response.ok) {
-        const msg = await response.text();
-        throw new Error(msg || 'Failed to start the publishing process.');
+  // 1. Check basic required fields
+  if (!listingData?.title?.trim()) {
+    errors.push('Title is required');
+  }
+  
+  if (!listingData?.description?.trim()) {
+    errors.push('Description is required');
+  }
+  
+  if (!listingData?.category?.id) {
+    errors.push('Category must be selected');
+  }
+
+  // 2. Check title length (eBay limit is 80 characters)
+  if (listingData?.title && listingData.title.length > 80) {
+    errors.push('Title must be 80 characters or less');
+  }
+
+  // 3. Check required item specifics
+  const specifics = listingData?.item_specifics ?? [];
+  
+  for (const spec of specifics) {
+    if (!spec.required) continue; // Skip optional fields
+
+    const value = spec.value;
+    
+    // Handle both single values and multi-select arrays
+    if (Array.isArray(value)) {
+      // Multi-select field
+      if (value.length === 0) {
+        errors.push(`${spec.name} is required (select at least one option)`);
       }
-
-      setStatus('Listing sent to eBay for publishing!');
-      alert('Your listing has been sent to eBay! It may take a minute to appear.');
-    } catch (error: any) {
-      console.error('Error publishing listing:', error);
-      setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-      alert(`An error occurred: ${error?.message ?? 'Unknown error'}`);
+    } else {
+      // Single value field
+      const trimmedValue = String(value ?? '').trim();
+      if (!trimmedValue) {
+        errors.push(`${spec.name} is required`);
+      }
     }
-  };
+  }
 
+  // 4. Check if at least one photo exists
+  if (photos.length === 0) {
+    errors.push('At least one photo is required');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+};
+  const handlePublishToEbay = async () => {
+  if (!listingData) return;
+
+  // Run validation FIRST
+  const validation = validateListing();
+  setValidationErrors(validation.errors);
+
+  if (!validation.valid) {
+    // Scroll to top so user sees errors
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return; // Stop here, don't proceed with publish
+  }
+
+  // Validation passed, proceed with publishing
+  setStatus('Publishing to eBay...');
+  
+  try {
+    const response = await fetch('/api/publish-listing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        listing_data: listingData,
+        images: photoPreviewUrls,
+      }),
+    });
+
+    if (!response.ok) {
+      const msg = await response.text();
+      throw new Error(msg || 'Failed to start the publishing process.');
+    }
+
+    setStatus('Listing sent to eBay for publishing!');
+    setValidationErrors([]); // Clear any old errors
+    alert('Your listing has been sent to eBay! It may take a minute to appear.');
+    
+  } catch (error: any) {
+    console.error('Error publishing listing:', error);
+    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+    alert(`An error occurred: ${error?.message ?? 'Unknown error'}`);
+  }
+};
   return (
     <div className="flex flex-col">
       <section className="py-16 md:py-24 bg-white">
