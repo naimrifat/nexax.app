@@ -208,7 +208,6 @@ async function getSmartCategorySuggestions(title: string) {
     suggestions: sugs.slice(0, 5),
   };
 }
-
 /* =========================
    Category specifics (aspects)
    ========================= */
@@ -230,21 +229,26 @@ async function getCategorySpecificsFromAPI(categoryId: string) {
   }
 
   const data = await resp.json();
-  const aspects =
-    (data.aspects || []).map((aspect: any) => {
-      const constraint = aspect.aspectConstraint || {};
-      const mode = constraint.aspectValueSelectionMode || aspect.aspectValueSelectionMode;
 
-      return {
-        name: aspect.localizedAspectName,
-        required: Boolean(constraint.aspectRequired),
-        type: aspect.aspectDataType || 'STRING',
-        values: (aspect.aspectValues || []).map((v: any) => v.localizedValue).filter(Boolean),
-        multi: constraint.itemToAspectCardinality === 'MULTI',
-        selectionOnly: mode === 'SELECTION_ONLY',
-        freeTextAllowed: mode !== 'SELECTION_ONLY',
-      };
-    }) || [];
+  // Normalize every aspect with the flags the frontend needs
+  const aspects = (data.aspects || []).map((aspect: any) => {
+    const constraint = aspect.aspectConstraint ?? {};
+    const multi =
+      (constraint.itemToAspectCardinality || '').toUpperCase() === 'MULTI';
+    const mode = (constraint.aspectMode || '').toUpperCase(); // 'SELECTION_ONLY' | 'FREE_TEXT' | etc.
+    const selectionOnly = mode === 'SELECTION_ONLY';
+    const freeTextAllowed = !selectionOnly;
+
+    return {
+      name: aspect.localizedAspectName,
+      required: Boolean(constraint.aspectRequired),
+      multi,
+      selectionOnly,
+      freeTextAllowed,
+      // provide options as simple strings
+      values: (aspect.aspectValues || []).map((v: any) => v.localizedValue),
+    };
+  });
 
   return { categoryId, aspects };
 }
