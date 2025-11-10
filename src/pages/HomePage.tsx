@@ -262,6 +262,7 @@ export default function HomePage() {
   const [showCategorySelector, setShowCategorySelector] = useState(false);
   const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
