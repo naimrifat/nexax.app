@@ -3,106 +3,6 @@ import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-rea
 import CategorySelector from '../components/CategorySelector';
 
 /* -------------------------------------------------------
-   ChipMultiSelect: for multi-value eBay aspects (e.g., Features)
-   Respects selectionOnly and freeTextAllowed
-   ------------------------------------------------------- */
-function ChipMultiSelect({
-  options = [],
-  value,
-  selectionOnly = false,
-  freeTextAllowed = true,
-  onChange,
-}: {
-  options?: string[];
-  value?: string | string[];
-  selectionOnly?: boolean;
-  freeTextAllowed?: boolean;
-  onChange: (next: string[]) => void;
-}) {
-  const selected: string[] = Array.isArray(value)
-    ? value
-    : (value ? String(value).split(',').map(s => s.trim()).filter(Boolean) : []);
-
-  const isSelected = (opt: string) =>
-    selected.some(s => s.toLowerCase() === String(opt).toLowerCase());
-
-  const toggle = (opt: string) => {
-    const norm = String(opt).trim();
-    if (!norm) return;
-    const exists = isSelected(norm);
-    const next = exists
-      ? selected.filter(s => s.toLowerCase() !== norm.toLowerCase())
-      : [...selected, norm];
-    onChange(next);
-  };
-
-  const addCustom = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter') return;
-    const target = e.target as HTMLInputElement;
-    const raw = target.value.trim();
-    if (!raw) return;
-    toggle(raw);
-    target.value = '';
-  };
-
-  return (
-    <div className="space-y-2">
-      {/* option chips */}
-      <div className="flex flex-wrap gap-2">
-        {options.map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => toggle(opt)}
-            className={
-              isSelected(opt)
-                ? 'px-2 py-1 rounded-full bg-teal-600 text-white text-sm'
-                : 'px-2 py-1 rounded-full bg-gray-100 text-gray-800 text-sm hover:bg-gray-200'
-            }
-            title={opt}
-          >
-            {opt}
-          </button>
-        ))}
-      </div>
-
-      {/* free-text add */}
-      {!selectionOnly && freeTextAllowed && (
-        <input
-          type="text"
-          placeholder="Add custom value and press Enter"
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-          onKeyDown={addCustom}
-        />
-      )}
-
-      {/* selected chips (removable) */}
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {selected.map((v) => (
-            <span
-              key={v}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-teal-50 text-teal-700 border border-teal-200 text-xs"
-            >
-              {v}
-              <button
-                type="button"
-                onClick={() => toggle(v)}
-                className="rounded-full w-4 h-4 flex items-center justify-center hover:bg-teal-100"
-                aria-label={`Remove ${v}`}
-                title="Remove"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* -------------------------------------------------------
    Helper: snap an AI/free-text value to an allowed option
    ------------------------------------------------------- */
 function chooseOptionValue(
@@ -114,11 +14,11 @@ function chooseOptionValue(
   const raw = Array.isArray(aiValue) ? (aiValue[0] ?? '') : aiValue;
   const norm = (s: string) => s.trim().toLowerCase().replace(/’/g, "'");
 
-  // 1) exact (case-insensitive) match
+  // 1) exact (case-insensitive)
   const exactIdx = options.findIndex((o) => norm(o) === norm(raw));
   if (exactIdx >= 0) return options[exactIdx];
 
-  // 2) soft starts-with either way (handles “Light Gray” vs “Gray”)
+  // 2) soft starts-with either way
   const startsIdx = options.findIndex(
     (o) => norm(o).startsWith(norm(raw)) || norm(raw).startsWith(norm(o))
   );
@@ -130,8 +30,88 @@ function chooseOptionValue(
   );
   if (containsIdx >= 0) return options[containsIdx];
 
-  // 4) if selectionOnly, must return a valid option or blank
+  // 4) selection-only must return a valid option
   return selectionOnly ? '' : raw;
+}
+
+/* -------------------------------------------------------
+   Reusable control for item-specifics
+   - multi + options => scrollable <select multiple>
+   - single + options => normal <select>
+   - no options => text input (disabled if not allowed)
+   ------------------------------------------------------- */
+function ItemSpecificControl({
+  spec,
+  onChange,
+}: {
+  spec: {
+    name: string;
+    value: string | string[];
+    options?: string[];
+    required?: boolean;
+    multi?: boolean;
+    selectionOnly?: boolean;
+    freeTextAllowed?: boolean;
+  };
+  onChange: (val: string | string[]) => void;
+}) {
+  const opts = Array.isArray(spec.options) ? spec.options : [];
+
+  if (spec.multi && opts.length > 0) {
+    const selected = Array.isArray(spec.value) ? spec.value : (spec.value ? [spec.value] : []);
+    return (
+      <select
+        multiple
+        size={Math.min(8, Math.max(4, opts.length))}
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+        value={selected}
+        onChange={(e) => {
+          const vals = Array.from(e.target.selectedOptions).map((o) => o.value);
+          onChange(vals);
+        }}
+      >
+        {opts.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (opts.length > 0) {
+    return (
+      <select
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+        value={typeof spec.value === 'string' ? spec.value : ''}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Select...</option>
+        {opts.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <input
+      type="text"
+      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+      placeholder={spec.freeTextAllowed === false ? 'Select from options' : ''}
+      disabled={spec.freeTextAllowed === false}
+      value={
+        typeof spec.value === 'string'
+          ? spec.value
+          : Array.isArray(spec.value)
+          ? spec.value.join(', ')
+          : ''
+      }
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
 }
 
 /* -------------------------------------------------------
@@ -142,15 +122,15 @@ export default function HomePage() {
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState('');
-  const [results, setResults] = useState<any>(null);         // raw AI result (kept for reference)
-  const [listingData, setListingData] = useState<any>(null); // normalized + editable for UI
+  const [results, setResults] = useState<any>(null); // raw AI result
+  const [listingData, setListingData] = useState<any>(null); // normalized for UI
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showCategorySelector, setShowCategorySelector] = useState(false);
   const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
 
-  // ---- caching & request control for specifics ----
+  // caching & request control
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
 
@@ -164,11 +144,12 @@ export default function HomePage() {
       raw?.category?.path ||
       raw?.category?.name ||
       raw?.category_path ||
-      raw?.categoryName || '';
+      raw?.categoryName ||
+      '';
 
     const specificsSource: any[] = Array.isArray(raw?.item_specifics)
       ? raw.item_specifics
-      : (raw?.itemSpecifics || []);
+      : raw?.itemSpecifics || [];
 
     const normalizedSpecifics = specificsSource.map((s: any) => ({
       name: s?.name ?? s?.Name ?? '',
@@ -190,16 +171,14 @@ export default function HomePage() {
   };
 
   /* -------------------------------------------------------
-     Fetch category specifics and merge with existing values
-     existingSpecifics = preferred source (e.g., AI output)
+     Fetch category specifics + merge with existing values
      ------------------------------------------------------- */
   const fetchEbaySpecifics = async (categoryId: string, existingSpecifics?: any[]) => {
     if (!categoryId) return;
 
-    // Cached?
+    // Use cache
     if (specificsCacheRef.current.has(categoryId)) {
       const cachedAspects = specificsCacheRef.current.get(categoryId)!;
-
       const aiSpecificsMap = new Map(
         (existingSpecifics ?? listingData?.item_specifics ?? []).map((s: any) => [
           String(s?.name ?? '').toLowerCase(),
@@ -207,27 +186,28 @@ export default function HomePage() {
         ])
       );
 
-      const mergedSpecificsFromCache = cachedAspects.map(aspect => {
+      const mergedSpecificsFromCache = cachedAspects.map((aspect) => {
         const key = String(aspect.name ?? '').toLowerCase();
         const previousValue = aiSpecificsMap.get(key);
-
         const value = chooseOptionValue(
           previousValue,
           aspect.options ?? [],
           Boolean(aspect.selectionOnly)
         );
-
         return { ...aspect, value };
       });
 
       startTransition(() => {
         setEbaySpecifics(mergedSpecificsFromCache);
-        setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: mergedSpecificsFromCache }));
+        setListingData((prev: any) => ({
+          ...(prev ?? {}),
+          item_specifics: mergedSpecificsFromCache,
+        }));
       });
       return;
     }
 
-    // Abort any in-flight request
+    // Abort in-flight
     if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
     const ctrl = new AbortController();
     inFlightControllerRef.current = ctrl;
@@ -238,10 +218,7 @@ export default function HomePage() {
       const response = await fetch('/api/ebay-categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'getCategorySpecifics',
-          categoryId,
-        }),
+        body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
         signal: ctrl.signal,
       });
 
@@ -261,11 +238,7 @@ export default function HomePage() {
         const isSelectionOnly = aspect.type === 'SelectionOnly';
         const allowsFreeText = aspect.type !== 'SelectionOnly';
 
-        const value = chooseOptionValue(
-          previous,
-          aspect.values ?? [],
-          isSelectionOnly
-        );
+        const value = chooseOptionValue(previous, aspect.values ?? [], isSelectionOnly);
 
         return {
           name: aspect.name,
@@ -288,9 +261,7 @@ export default function HomePage() {
         }));
       });
     } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        console.error('Failed to fetch eBay specifics:', err);
-      }
+      if (err?.name !== 'AbortError') console.error('Failed to fetch eBay specifics:', err);
     } finally {
       if (inFlightControllerRef.current === ctrl) inFlightControllerRef.current = null;
       setLoadingSpecifics(false);
@@ -322,15 +293,20 @@ export default function HomePage() {
     }));
   };
 
-  // updated: supports string OR string[] (for multi aspects)
   const handleItemSpecificsChange = (index: number, value: string | string[]) => {
-    const current = [...(listingData?.item_specifics ?? [])];
-    if (!current[index]) return;
-    current[index] = { ...current[index], value };
-    setListingData((prevData: any) => ({
-      ...(prevData ?? {}),
-      item_specifics: current,
-    }));
+    setListingData((prev: any) => {
+      const next = [...(prev?.item_specifics ?? [])];
+      if (!next[index]) return prev;
+
+      if (next[index]?.multi) {
+        const arr = Array.isArray(value) ? value : value ? [String(value)] : [];
+        next[index] = { ...next[index], value: arr };
+      } else {
+        next[index] = { ...next[index], value: String(Array.isArray(value) ? value[0] ?? '' : value) };
+      }
+
+      return { ...(prev ?? {}), item_specifics: next };
+    });
   };
 
   /* -------------------------------------------------------
@@ -428,28 +404,29 @@ export default function HomePage() {
 
       let finalListingData = normalized;
 
+      // If category missing, clear specifics (avoid stale)
       if (!normalized?.category?.id) {
-        finalListingData = {
-          ...normalized,
-          item_specifics: [],
-        };
+        finalListingData = { ...normalized, item_specifics: [] };
         setEbaySpecifics([]);
       }
 
       setListingData(finalListingData);
 
+      // Fetch specifics when category present
       if (finalListingData?.category?.id) {
         const catId = finalListingData.category.id;
 
         if (specificsCacheRef.current.has(catId)) {
           const cached = specificsCacheRef.current.get(catId)!;
 
+          // Merge AI values into cached specifics
+          const updatedSpecifics = cached.map((spec: any) => {
+            const aiSpec = normalized.item_specifics.find((s: any) => s.name === spec.name);
+            return aiSpec ? { ...spec, value: aiSpec.value } : spec;
+          });
+
           startTransition(() => {
-            setEbaySpecifics(cached);
-            const updatedSpecifics = cached.map((spec: any) => {
-              const aiSpec = normalized.item_specifics.find((s: any) => s.name === spec.name);
-              return aiSpec ? { ...spec, value: aiSpec.value } : spec;
-            });
+            setEbaySpecifics(updatedSpecifics);
             setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: updatedSpecifics }));
           });
         } else {
@@ -475,8 +452,8 @@ export default function HomePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          listing_data: listingData,     // final, edited data
-          images: photoPreviewUrls,      // the images you uploaded
+          listing_data: listingData,
+          images: photoPreviewUrls,
         }),
       });
 
@@ -503,9 +480,7 @@ export default function HomePage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-                Try It Now - Free Demo
-              </h2>
+              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Try It Now - Free Demo</h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
                 Upload up to 12 photos and see how our AI creates professional listings instantly
               </p>
@@ -618,11 +593,7 @@ export default function HomePage() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1">
                   <div className="card overflow-hidden">
-                    <img
-                      src={photoPreviewUrls[0]}
-                      alt="Main product"
-                      className="w-full h-auto object-cover"
-                    />
+                    <img src={photoPreviewUrls[0]} alt="Main product" className="w-full h-auto object-cover" />
                   </div>
                 </div>
 
@@ -678,9 +649,7 @@ export default function HomePage() {
                         onClick={() => setShowCategorySelector(true)}
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
                       >
-                        <span>
-                          {listingData?.category?.path || 'Click to select a category...'}
-                        </span>
+                        <span>{listingData?.category?.path || 'Click to select a category...'}</span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
                           width="20"
@@ -715,54 +684,16 @@ export default function HomePage() {
                         </label>
 
                         {listingData.item_specifics.map((spec: any, index: number) => (
-                          <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-2">
-                            {/* label + required asterisk */}
+                          <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
                             <div className="flex items-center">
-                              <span className="text-sm text-gray-700">
-                                {spec?.name || 'Specific'}
-                              </span>
+                              <span className="text-sm text-gray-700">{spec?.name || 'Specific'}</span>
                               {spec?.required ? <span className="ml-1 text-red-500">*</span> : null}
                             </div>
 
-                            {/* control */}
-                            {spec?.multi ? (
-                              <ChipMultiSelect
-                                options={Array.isArray(spec?.options) ? spec.options : []}
-                                value={spec?.value}
-                                selectionOnly={!!spec?.selectionOnly}
-                                freeTextAllowed={spec?.freeTextAllowed !== false}
-                                onChange={(arr) => handleItemSpecificsChange(index, arr)}
-                              />
-                            ) : Array.isArray(spec?.options) && spec.options.length > 0 ? (
-                              <select
-                                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                                value={Array.isArray(spec?.value) ? (spec?.value[0] ?? '') : (spec?.value ?? '')}
-                                onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
-                              >
-                                <option value="">Select...</option>
-                                {spec.options.map((option: any, i: number) => {
-                                  const val = option?.value ?? option; // supports { value } or string
-                                  return (
-                                    <option key={`${val}-${i}`} value={val}>
-                                      {val}
-                                    </option>
-                                  );
-                                })}
-                              </select>
-                            ) : (
-                              <input
-                                type="text"
-                                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                                value={
-                                  Array.isArray(spec?.value)
-                                    ? (spec?.value.join(', ') || '')
-                                    : (spec?.value ?? '')
-                                }
-                                onChange={(e) => handleItemSpecificsChange(index, e.target.value)}
-                                placeholder={spec?.freeTextAllowed === false ? 'Select from options' : ''}
-                                disabled={spec?.freeTextAllowed === false}
-                              />
-                            )}
+                            <ItemSpecificControl
+                              spec={spec}
+                              onChange={(newValue) => handleItemSpecificsChange(index, newValue)}
+                            />
                           </div>
                         ))}
                       </div>
