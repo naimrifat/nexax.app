@@ -1,14 +1,113 @@
+// api/analyze-listing.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export const config = {
   api: {
-    bodyParser: {
-      sizeLimit: '50mb',
-    },
+    bodyParser: { sizeLimit: '50mb' },
   },
   maxDuration: 60,
 };
 
+// -----------------------------
+// Helpers (generic)
+// -----------------------------
+function norm(s: string) {
+  return (s || '').toLowerCase().trim();
+}
+
+function includesAny(hay: string, needles: string[]) {
+  const h = norm(hay);
+  return needles.some((n) => h.includes(norm(n)));
+}
+
+function tokens(s: string) {
+  return norm(s).split(/[\s\/,&-]+/).filter(Boolean);
+}
+
+// choose closest option for selection-only aspects
+function pickBestOption(target: string, options: string[] = []) {
+  if (!target) return '';
+  if (!options?.length) return target;
+
+  const t = norm(target);
+
+  // 1) exact
+  const exact = options.find((o) => norm(o) === t);
+  if (exact) return exact;
+
+  // 2) synonyms (common clothing fields)
+  const synonyms: Record<string, string[]> = {
+    regular: ['regular', 'standard'],
+    petite: ['petite'],
+    tall: ['tall', 'long'],
+    plus: ['plus', 'plus size', 'extended'],
+    men: ['men', "men's", 'male'],
+    women: ['women', "women's", 'female'],
+    unisex: ['unisex'],
+    boys: ['boys', "boy's"],
+    girls: ['girls', "girl's"],
+    polyester: ['poly', 'polyester'],
+    cotton: ['cotton'],
+    leather: ['leather'],
+    wool: ['wool'],
+    silk: ['silk'],
+    linen: ['linen'],
+    nylon: ['nylon'],
+    spandex: ['spandex', 'elastane', 'lycra'],
+  };
+  for (const opt of options) {
+    const o = norm(opt);
+    for (const [canon, alts] of Object.entries(synonyms)) {
+      if (alts.includes(t) && o.includes(canon)) return opt;
+      if (alts.some((a) => o.includes(a)) && t.includes(canon)) return opt;
+    }
+  }
+
+  // 3) token-overlap score
+  const tTokens = tokens(t);
+  let best = '';
+  let bestScore = -1;
+  for (const opt of options) {
+    const score = tTokens.filter((x) => tokens(opt).includes(x)).length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = opt;
+    }
+  }
+  return best || options[0] || target;
+}
+
+// infer department from breadcrumb
+function inferDepartmentFromPath(path: string) {
+  const p = norm(path);
+  if (p.includes('men')) return 'Men';
+  if (p.includes('women')) return 'Women';
+  if (p.includes('boys')) return 'Boys';
+  if (p.includes('girls')) return 'Girls';
+  if (p.includes('unisex')) return 'Unisex Adult';
+  return '';
+}
+
+// infer size type from hints
+function inferSizeType({
+  size,
+  title,
+  categoryPath,
+}: {
+  size?: string;
+  title?: string;
+  categoryPath?: string;
+}) {
+  const hay = [size, title, categoryPath].filter(Boolean).join(' ').toLowerCase();
+  if (includesAny(hay, ['petite'])) return 'Petite';
+  if (includesAny(hay, ['tall', 'long'])) return 'Tall';
+  if (includesAny(hay, ['plus', 'extended'])) return 'Plus';
+  return 'Regular';
+}
+
+// -----------------------------
+// Main handler
+// -----------------------------
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -25,34 +124,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'No images provided' });
     }
 
-    console.log(`Processing ${images.length} images for session ${session_id}`);
-
-    // ---- 1) Download and convert to base64 (up to 12 images)
+    // 1) Download/convert to base64 (12 max)
     const base64Images = await Promise.all(
       images.slice(0, 12).map(async (url: string, index: number) => {
-        try {
-          const optimizedUrl = url.includes('cloudinary.com')
-            ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
-            : url;
+        // Cloudinary optimization passthrough
+        const optimizedUrl = url.includes('cloudinary.com')
+          ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
+          : url;
 
-          console.log(`Downloading image ${index + 1}/${images.length}`);
-          const response = await fetch(optimizedUrl);
-          if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
-
-          const buffer = await response.arrayBuffer();
-          const base64 = Buffer.from(buffer).toString('base64');
-          const mimeType = response.headers.get('content-type') || 'image/jpeg';
-          return `data:${mimeType};base64,${base64}`;
-        } catch (error) {
-          console.error(`Error processing image ${index + 1}:`, error);
-          throw error;
-        }
+        const response = await fetch(optimizedUrl);
+        if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        const mimeType = response.headers.get('content-type') || 'image/jpeg';
+        return `data:${mimeType};base64,${base64}`;
       })
     );
 
-    console.log('All images converted to base64, calling OpenAI...');
-
-    // ---- 2) Call OpenAI Vision
+    // 2) OpenAI Vision
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -66,19 +155,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           {
             role: 'system',
             content:
-              `You are an expert eBay product lister. Analyze ALL provided photos together to create a comprehensive listing. ` +
-              `Return ONLY valid JSON with no markdown formatting.`,
+              'You are an expert eBay product lister. Analyze ALL provided photos together to create a comprehensive listing. Return ONLY valid JSON with no markdown.',
           },
           {
             role: 'user',
             content: [
               ...base64Images.map((img) => ({
-                type: 'image_url',
-                image_url: { url: img, detail: 'low' },
+                type: 'image_url' as const,
+                image_url: { url: img, detail: 'low' as const },
               })),
               {
-                type: 'text',
-                text: `Analyze ALL ${base64Images.length} photos of this item together and return this exact JSON structure:
+                type: 'text' as const,
+                text: `Analyze ALL ${base64Images.length} photos and return this JSON:
+
 {
   "title": "SEO-optimized eBay title, maximum 80 characters",
   "description": "Detailed product description with key features, condition, and materials",
@@ -87,9 +176,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     {"name": "Brand", "value": "exact brand or 'Unbranded'"},
     {"name": "Size", "value": "exact size or 'See photos'"},
     {"name": "Color", "value": "primary color"},
-    {"name": "Condition", "value": "New with tags | New without tags | Pre-owned | For parts"},
     {"name": "Material", "value": "material or 'See description'"},
-    {"name": "Style", "value": "style if applicable"}
+    {"name": "Style", "value": "style if applicable"},
+    {"name": "Type", "value": "type if applicable"},
+    {"name": "Product Line", "value": ""},
+    {"name": "Features", "value": "", "values": ["array of feature words if helpful"]}
   ],
   "detected": {
     "brand": "visible brand name or null",
@@ -97,10 +188,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     "colors": ["primary color", "secondary color if any"],
     "condition": "New with tags | New without tags | Pre-owned | Good | Fair",
     "materials": ["visible materials"],
-    "flaws": ["list any visible defects, stains, holes"] 
+    "style": "style guess",
+    "type": "type guess",
+    "productLine": "product line guess or null",
+    "features": ["list of features words"] 
   },
-  "keywords": ["relevant", "search", "terms", "for", "this", "item"],
-  "suggested_price": "price suggestion based on item type and condition, e.g. '29.99'",
+  "keywords": ["relevant", "search", "terms"],
+  "suggested_price": "29.99",
   "confidence_score": 0.95
 }`,
               },
@@ -114,30 +208,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!openaiResponse.ok) {
       const errorData = await openaiResponse.text();
-      console.error('OpenAI API error:', errorData);
-      throw new Error(`OpenAI API error: ${openaiResponse.status}`);
+      throw new Error(`OpenAI API error: ${openaiResponse.status} ${errorData}`);
     }
 
     const openaiResult = await openaiResponse.json();
-    console.log('OpenAI analysis complete');
-
-    // Parse JSON from OpenAI
     const analysisContent = openaiResult.choices[0].message.content;
     let parsedAnalysis: any;
     try {
       parsedAnalysis = JSON.parse(analysisContent);
     } catch {
-      console.error('Failed to parse OpenAI response:', analysisContent);
       throw new Error('Invalid response format from OpenAI');
     }
 
-    // ---- 3) Get eBay category suggestion (and path)
+    // 3) eBay category suggestion + specifics
     try {
-      console.log('Getting eBay category suggestion...');
-
       const origin = req.headers.origin || `https://${req.headers.host}`;
       const ebayApiUrl = `${origin}/api/ebay-categories`;
 
+      // suggested category
       const ebayResponse = await fetch(ebayApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -151,69 +239,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (ebayResponse.ok) {
         const ebayData = await ebayResponse.json();
 
-        const catId = ebayData.categoryId;
-        // Prefer a true breadcrumb path from the taxonomy service
-        const catPath =
-          ebayData.categoryPath ||
-          // fallbacks if your /api/ebay-categories returns a different key
-          ebayData.path ||
-          // absolute last resort: use the name (may be just leaf)
-          ebayData.categoryName ||
-          '';
-
-        // Store raw + convenience path
-        parsedAnalysis.ebay_category_id = catId;
+        parsedAnalysis.ebay_category_id = ebayData.categoryId;
         parsedAnalysis.ebay_category_name = ebayData.categoryName;
-        parsedAnalysis.ebay_category_path = catPath;
+        parsedAnalysis.ebay_category_path = ebayData.categoryPath || ebayData.categoryName;
 
-        // FRONTEND: category object with guaranteed path
         parsedAnalysis.category = {
-          id: String(catId),
-          name: String(ebayData.categoryName || catPath),
-          path: String(catPath),
+          id: ebayData.categoryId,
+          name: ebayData.categoryName,
+          path: ebayData.categoryPath || ebayData.categoryName,
         };
 
-        // FRONTEND: suggestion list with path
         parsedAnalysis.category_suggestions = (ebayData.suggestions || []).map((s: any) => ({
-          id: String(s.id ?? s.categoryId ?? ''),
-          name: String(s.name ?? s.categoryName ?? ''),
-          path: String(s.path ?? s.breadcrumb ?? s.name ?? ''),
+          id: s.id,
+          name: s.name,
+          path: s.path || s.name,
         }));
 
-        console.log('✅ eBay category found:', ebayData.categoryName);
+        // fetch specifics for chosen category
+        const specificsResponse = await fetch(ebayApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'getCategorySpecifics',
+            categoryId: ebayData.categoryId,
+          }),
+        });
 
-        // 3b) Category specifics
-        try {
-          console.log('Fetching category specifics...');
-          const specificsResponse = await fetch(ebayApiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'getCategorySpecifics',
-              categoryId: catId,
-            }),
-          });
+        if (specificsResponse.ok) {
+          const specificsData = await specificsResponse.json();
+          parsedAnalysis.category_specifics_schema = specificsData.aspects || [];
 
-          if (specificsResponse.ok) {
-            const specificsData = await specificsResponse.json();
-            parsedAnalysis.category_specifics_schema = specificsData.aspects || [];
-            console.log('✅ Got category specifics:', specificsData.aspects?.length || 0, 'fields');
-
-            // Map AI-detected values onto eBay aspects
-            const mappedSpecifics = mapAIToEbayFields(
-              parsedAnalysis.detected,
-              specificsData.aspects || []
-            );
-            parsedAnalysis.item_specifics = mappedSpecifics;
-          } else {
-            console.error('Failed to get category specifics:', specificsResponse.status);
-          }
-        } catch (error) {
-          console.error('Error fetching category specifics:', error);
+          // map AI → eBay aspects (ALL common fields)
+          parsedAnalysis.item_specifics = mapAIToEbayFields(
+            parsedAnalysis.detected,
+            specificsData.aspects || [],
+            parsedAnalysis.category?.path || parsedAnalysis.ebay_category_path || '',
+            parsedAnalysis.title || ''
+          );
+        } else {
+          // still return something
+          parsedAnalysis.category_specifics_schema = [];
         }
       } else {
-        console.error('eBay API response not ok:', ebayResponse.status);
-        // Default fallback (with path)
+        // default fallback
         parsedAnalysis.ebay_category_id = '11450';
         parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
         parsedAnalysis.ebay_category_path = 'Clothing, Shoes & Accessories';
@@ -226,9 +294,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           { id: '11450', name: 'Clothing, Shoes & Accessories', path: 'Clothing, Shoes & Accessories' },
         ];
       }
-    } catch (error) {
-      console.error('Failed to get eBay category:', error);
-      // Default fallback (with path)
+    } catch (err) {
+      // safest default on taxonomy failure
       parsedAnalysis.ebay_category_id = '11450';
       parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
       parsedAnalysis.ebay_category_path = 'Clothing, Shoes & Accessories';
@@ -242,11 +309,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ];
     }
 
-    // ---- 4) Optional: send to Make.com
+    // 4) Optional Make.com webhook
     if (process.env.VITE_MAKE_WEBHOOK_URL) {
-      console.log('Sending results to Make.com webhook...');
       try {
-        const makeResponse = await fetch(process.env.VITE_MAKE_WEBHOOK_URL, {
+        await fetch(process.env.VITE_MAKE_WEBHOOK_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -256,17 +322,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             timestamp: new Date().toISOString(),
           }),
         });
-        if (!makeResponse.ok) {
-          console.error('Make.com webhook failed:', makeResponse.status);
-        } else {
-          console.log('Successfully sent to Make.com');
-        }
-      } catch (makeError) {
-        console.error('Error sending to Make.com:', makeError);
+      } catch {
+        // non-fatal
       }
     }
 
-    // ---- Return
     return res.status(200).json({
       success: true,
       data: parsedAnalysis,
@@ -274,7 +334,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       session_id,
     });
   } catch (error: any) {
-    console.error('Handler error:', error);
     return res.status(500).json({
       error: error.message || 'Internal server error',
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
@@ -282,32 +341,103 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-// ---- Helper: map AI-detected to eBay aspects
-function mapAIToEbayFields(aiDetected: any, ebayAspects: any[]) {
+// -------------------------------------------
+// Rich mapper: fills ALL common clothing aspects
+// -------------------------------------------
+function mapAIToEbayFields(
+  aiDetected: any,
+  ebayAspects: any[],
+  categoryPath?: string,
+  title?: string
+) {
+  const det = aiDetected || {};
+
+  const brand = det.brand || '';
+  const size = det.size || '';
+  const color = Array.isArray(det.colors) ? det.colors[0] : det.colors || '';
+  const material = Array.isArray(det.materials) ? det.materials[0] : det.materials || '';
+  const style = det.style || '';
+  const typeGuess = det.type || '';
+  const productLine = det.productLine || '';
+  const featuresArr: string[] = det.features || [];
+
+  const dept = inferDepartmentFromPath(categoryPath || '');
+  const sizeType = inferSizeType({ size, title, categoryPath });
+
+  const leafType = (() => {
+    const leaf = (categoryPath || '').split('>').pop()?.trim() || '';
+    // Sometimes leaf contains "Men's Clothing" etc. Prefer last non-generic token when possible.
+    const segments = (leaf || '').split('/').map((s) => s.trim()).filter(Boolean);
+    return segments.length ? segments[segments.length - 1] : leaf;
+  })();
+
   const mapped: any[] = [];
 
   for (const aspect of ebayAspects) {
-    let value = '';
-    const aspectName = (aspect.name || '').toLowerCase();
+    const name = aspect.name || '';
+    const n = norm(name);
+    const opts: string[] = aspect.values || [];
+    const selectionOnly = !!aspect.selectionOnly;
+    const multi = !!aspect.multi;
 
-    if (aspectName.includes('brand')) {
-      value = aiDetected?.brand || '';
-    } else if (aspectName.includes('size')) {
-      value = aiDetected?.size || '';
-    } else if (aspectName.includes('color') || aspectName.includes('colour')) {
-      value = aiDetected?.colors?.[0] || '';
-    } else if (aspectName.includes('condition')) {
-      value = aiDetected?.condition || '';
-    } else if (aspectName.includes('material')) {
-      value = aiDetected?.materials?.[0] || '';
+    let value = '';
+
+    if (n.includes('brand')) {
+      value = selectionOnly ? pickBestOption(brand, opts) : brand;
+
+    } else if (n === 'department') {
+      value = selectionOnly ? pickBestOption(dept, opts) : dept;
+
+    } else if (n.includes('size type')) {
+      value = selectionOnly ? pickBestOption(sizeType, opts) : sizeType;
+
+    } else if (n === 'size' || n.includes('waist size') || n.includes('inseam')) {
+      value = selectionOnly ? pickBestOption(size, opts) : size;
+
+    } else if (n.includes('color') || n.includes('colour')) {
+      value = selectionOnly ? pickBestOption(color, opts) : color;
+
+    } else if (n.includes('material') || n.includes('fabric')) {
+      value = selectionOnly ? pickBestOption(material, opts) : material;
+
+    } else if (n === 'style') {
+      const guess = style;
+      value = selectionOnly ? pickBestOption(guess, opts) : guess;
+
+    } else if (n === 'type') {
+      // Prefer AI guess, fallback to category leaf
+      const guess = typeGuess || leafType;
+      value = selectionOnly ? pickBestOption(guess, opts) : guess;
+
+    } else if (n.includes('product line')) {
+      value = selectionOnly ? pickBestOption(productLine, opts) : productLine;
+
+    } else if (n.includes('features')) {
+      if (featuresArr?.length) {
+        if (selectionOnly || multi) {
+          const chosen = featuresArr.map((f) => pickBestOption(f, opts)).filter(Boolean);
+          value = chosen.join(', '); // keep UI simple (single string)
+        } else {
+          value = featuresArr[0];
+        }
+      } else {
+        value = '';
+      }
+
+    } else {
+      // unknown / less common aspects -> leave blank
+      value = '';
     }
 
     mapped.push({
       name: aspect.name,
       value,
-      required: aspect.required,
+      required: !!aspect.required,
       type: aspect.type,
-      options: aspect.values,
+      options: opts,
+      selectionOnly,
+      multi,
+      freeTextAllowed: !!aspect.freeTextAllowed,
     });
   }
 
