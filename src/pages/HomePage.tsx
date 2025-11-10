@@ -1,4 +1,4 @@
-import React, { useState, useRef, startTransition } from 'react';
+import React, { useState, useRef, useEffect, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
 
@@ -14,31 +14,189 @@ function chooseOptionValue(
   const raw = Array.isArray(aiValue) ? (aiValue[0] ?? '') : aiValue;
   const norm = (s: string) => s.trim().toLowerCase().replace(/’/g, "'");
 
-  // 1) exact (case-insensitive)
   const exactIdx = options.findIndex((o) => norm(o) === norm(raw));
   if (exactIdx >= 0) return options[exactIdx];
 
-  // 2) soft starts-with either way
   const startsIdx = options.findIndex(
     (o) => norm(o).startsWith(norm(raw)) || norm(raw).startsWith(norm(o))
   );
   if (startsIdx >= 0) return options[startsIdx];
 
-  // 3) soft contains either way
   const containsIdx = options.findIndex(
     (o) => norm(o).includes(norm(raw)) || norm(raw).includes(norm(o))
   );
   if (containsIdx >= 0) return options[containsIdx];
 
-  // 4) selection-only must return a valid option
   return selectionOnly ? '' : raw;
 }
 
 /* -------------------------------------------------------
-   Reusable control for item-specifics
-   - multi + options => scrollable <select multiple>
-   - single + options => normal <select>
-   - no options => text input (disabled if not allowed)
+   Compact, searchable token selector for item specifics
+   ------------------------------------------------------- */
+function TokenSelect({
+  value,
+  options,
+  placeholder,
+  multi = false,
+  disabled = false,
+  onChange,
+}: {
+  value: string | string[];
+  options: string[];
+  placeholder?: string;
+  multi?: boolean;
+  disabled?: boolean;
+  onChange: (v: string | string[]) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const selected = Array.isArray(value) ? value : (value ? [value] : []);
+  const lowerQuery = query.trim().toLowerCase();
+  const filtered = options
+    .filter((o) => (multi ? !selected.includes(o) : true))
+    .filter((o) => (lowerQuery ? o.toLowerCase().includes(lowerQuery) : true))
+    .slice(0, 50); // keep it snappy
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery('');
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const addOption = (opt: string) => {
+    if (multi) {
+      const next = Array.from(new Set([...selected, opt]));
+      onChange(next);
+    } else {
+      onChange(opt);
+      setOpen(false);
+    }
+    setQuery('');
+    inputRef.current?.focus();
+  };
+
+  const removeOption = (opt: string) => {
+    if (!multi) {
+      onChange('');
+      return;
+    }
+    onChange(selected.filter((s) => s !== opt));
+  };
+
+  const clearAll = () => {
+    onChange(multi ? [] : '');
+    setQuery('');
+    inputRef.current?.focus();
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div
+        className={`min-h-[38px] w-full flex flex-wrap items-center gap-1 rounded-md border bg-white px-2 py-1 transition focus-within:ring-2 focus-within:ring-teal-500 ${
+          disabled ? 'opacity-60 cursor-not-allowed' : 'border-gray-300'
+        }`}
+        onClick={() => {
+          if (disabled) return;
+          setOpen(true);
+          inputRef.current?.focus();
+        }}
+      >
+        {/* Chips */}
+        {multi &&
+          selected.map((s) => (
+            <span
+              key={s}
+              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
+            >
+              {s}
+              <button
+                type="button"
+                className="text-teal-700/70 hover:text-teal-900"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeOption(s);
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+
+        {/* For single select show the current value as a small pill */}
+        {!multi && selected[0] && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
+            {selected[0]}
+            <button
+              type="button"
+              className="text-teal-700/70 hover:text-teal-900"
+              onClick={(e) => {
+                e.stopPropagation();
+                removeOption(selected[0]);
+              }}
+            >
+              ×
+            </button>
+          </span>
+        )}
+
+        {/* Input */}
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => !disabled && setOpen(true)}
+          disabled={disabled}
+          placeholder={selected.length ? '' : placeholder || 'Search & select...'}
+          className="flex-1 min-w-[120px] border-0 outline-none text-sm py-1 placeholder-gray-400"
+        />
+
+        {/* Clear button (if there is a value and no query) */}
+        {(multi ? selected.length > 0 : !!selected[0]) && !query && !disabled && (
+          <button
+            type="button"
+            className="ml-auto text-gray-400 hover:text-gray-600"
+            onClick={(e) => {
+              e.stopPropagation();
+              clearAll();
+            }}
+            aria-label="Clear"
+          >
+            ×
+          </button>
+        )}
+      </div>
+
+      {/* Dropdown */}
+      {open && !disabled && filtered.length > 0 && (
+        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-gray-200 bg-white shadow">
+          {filtered.map((o) => (
+            <button
+              type="button"
+              key={o}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-teal-50"
+              onMouseDown={(e) => e.preventDefault()} // keep focus
+              onClick={() => addOption(o)}
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------
+   Wrapper control deciding between token select / text
    ------------------------------------------------------- */
 function ItemSpecificControl({
   spec,
@@ -57,45 +215,20 @@ function ItemSpecificControl({
 }) {
   const opts = Array.isArray(spec.options) ? spec.options : [];
 
-  if (spec.multi && opts.length > 0) {
-    const selected = Array.isArray(spec.value) ? spec.value : (spec.value ? [spec.value] : []);
-    return (
-      <select
-        multiple
-        size={Math.min(8, Math.max(4, opts.length))}
-        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-        value={selected}
-        onChange={(e) => {
-          const vals = Array.from(e.target.selectedOptions).map((o) => o.value);
-          onChange(vals);
-        }}
-      >
-        {opts.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-    );
-  }
-
   if (opts.length > 0) {
     return (
-      <select
-        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-        value={typeof spec.value === 'string' ? spec.value : ''}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        <option value="">Select...</option>
-        {opts.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
+      <TokenSelect
+        multi={!!spec.multi}
+        value={spec.value ?? (spec.multi ? [] : '')}
+        options={opts}
+        disabled={spec.freeTextAllowed === false && opts.length === 0}
+        placeholder="Search & select..."
+        onChange={(val) => onChange(val)}
+      />
     );
   }
 
+  // Free text fallback
   return (
     <input
       type="text"
@@ -122,21 +255,17 @@ export default function HomePage() {
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState('');
-  const [results, setResults] = useState<any>(null); // raw AI result
-  const [listingData, setListingData] = useState<any>(null); // normalized for UI
+  const [results, setResults] = useState<any>(null);
+  const [listingData, setListingData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showCategorySelector, setShowCategorySelector] = useState(false);
   const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
 
-  // caching & request control
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
 
-  /* -------------------------------------------------------
-     Normalize AI output -> UI listing model
-     ------------------------------------------------------- */
   const normalizeAiToListing = (raw: any) => {
     const categoryId =
       raw?.category?.id || raw?.category_id || raw?.ebay_category_id || '';
@@ -170,13 +299,9 @@ export default function HomePage() {
     };
   };
 
-  /* -------------------------------------------------------
-     Fetch category specifics + merge with existing values
-     ------------------------------------------------------- */
   const fetchEbaySpecifics = async (categoryId: string, existingSpecifics?: any[]) => {
     if (!categoryId) return;
 
-    // Use cache
     if (specificsCacheRef.current.has(categoryId)) {
       const cachedAspects = specificsCacheRef.current.get(categoryId)!;
       const aiSpecificsMap = new Map(
@@ -207,7 +332,6 @@ export default function HomePage() {
       return;
     }
 
-    // Abort in-flight
     if (inFlightControllerRef.current) inFlightControllerRef.current.abort();
     const ctrl = new AbortController();
     inFlightControllerRef.current = ctrl;
@@ -240,6 +364,7 @@ export default function HomePage() {
 
         const value = chooseOptionValue(previous, aspect.values ?? [], isSelectionOnly);
 
+        // if multi comes from eBay, carry it forward (server may include it)
         return {
           name: aspect.name,
           required: Boolean(aspect.required),
@@ -268,9 +393,6 @@ export default function HomePage() {
     }
   };
 
-  /* -------------------------------------------------------
-     Form handlers
-     ------------------------------------------------------- */
   const handleCategoryChange = (newCategory: { path: string; id: string }) => {
     setShowCategorySelector(false);
 
@@ -309,9 +431,6 @@ export default function HomePage() {
     });
   };
 
-  /* -------------------------------------------------------
-     Photo handling
-     ------------------------------------------------------- */
   const handlePhotoUpload = (files: FileList | null) => {
     if (!files) return;
     const newFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
@@ -347,9 +466,6 @@ export default function HomePage() {
     handlePhotoUpload(e.dataTransfer.files);
   };
 
-  /* -------------------------------------------------------
-     Submit & AI analysis
-     ------------------------------------------------------- */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (photos.length === 0) {
@@ -403,23 +519,17 @@ export default function HomePage() {
       setResults(aiData);
 
       let finalListingData = normalized;
-
-      // If category missing, clear specifics (avoid stale)
       if (!normalized?.category?.id) {
         finalListingData = { ...normalized, item_specifics: [] };
         setEbaySpecifics([]);
       }
-
       setListingData(finalListingData);
 
-      // Fetch specifics when category present
       if (finalListingData?.category?.id) {
         const catId = finalListingData.category.id;
 
         if (specificsCacheRef.current.has(catId)) {
           const cached = specificsCacheRef.current.get(catId)!;
-
-          // Merge AI values into cached specifics
           const updatedSpecifics = cached.map((spec: any) => {
             const aiSpec = normalized.item_specifics.find((s: any) => s.name === spec.name);
             return aiSpec ? { ...spec, value: aiSpec.value } : spec;
@@ -441,9 +551,6 @@ export default function HomePage() {
     }
   };
 
-  /* -------------------------------------------------------
-     Publish to eBay
-     ------------------------------------------------------- */
   const handlePublishToEbay = async () => {
     if (!listingData) return;
     setStatus('Publishing to eBay...');
@@ -471,9 +578,6 @@ export default function HomePage() {
     }
   };
 
-  /* -------------------------------------------------------
-     UI
-     ------------------------------------------------------- */
   return (
     <div className="flex flex-col">
       <section className="py-16 md:py-24 bg-white">
