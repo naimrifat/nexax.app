@@ -1,4 +1,5 @@
-import { createClient } from 'redis';
+// api/listing-data/[sessionId].js (The Getter)
+import redisClient from '../../../lib/redis-client';
 
 export default async function handler(req, res) {
   const { sessionId } = req.query;
@@ -8,20 +9,15 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Invalid session ID" });
     }
     
-    // 1. Create the client
-    const client = createClient({
-      url: process.env.REDIS_URL // Uses the secret URL from Vercel
-    });
-
-    // Add error handling
-    client.on('error', (err) => console.error('Redis Client Error', err));
+    // 1. Ensure client is ready
+    if (!redisClient.isReady) {
+        // This awaits the initial connection if it hasn't completed yet
+        await redisClient.connect();
+    }
 
     try {
-      // 2. Connect to the database
-      await client.connect();
-
-      // 3. Get the data from Redis using the session ID
-      const dataString = await client.get(sessionId);
+      // 2. Get the data from Redis using the shared client (NO .connect() or .quit() needed)
+      const dataString = await redisClient.get(sessionId);
 
       if (dataString) {
         // Data was found, send it back to the ResultsPage
@@ -34,9 +30,6 @@ export default async function handler(req, res) {
     } catch (error) {
       console.error("Error fetching from Redis:", error);
       return res.status(500).json({ error: "Failed to retrieve data" });
-    } finally {
-      // 4. Always close the connection
-      await client.quit();
     }
   }
 
