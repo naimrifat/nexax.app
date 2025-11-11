@@ -6,158 +6,175 @@ export const config = {
   maxDuration: 60,
 };
 
-/* -----------------------------------------
-   Small utilities
------------------------------------------ */
-const norm = (s: string) => (s || '').toLowerCase().trim();
-const toks = (s: string) => norm(s).split(/[^a-z0-9%]+/).filter(Boolean);
-const uniq = <T,>(a: T[]) => Array.from(new Set(a));
-const take = <T,>(a: T[] | undefined, n = 1) => (Array.isArray(a) ? a.slice(0, n) : []);
+/* -------------------------------------------------------
+   Generic helpers
+------------------------------------------------------- */
+function norm(s: string) {
+  return (s || '').toLowerCase().trim();
+}
+function tokenize(s: string) {
+  return norm(s).split(/[^a-z0-9%]+/).filter(Boolean);
+}
+function jaccard(a: string[], b: string[]) {
+  if (!a.length || !b.length) return 0;
+  const A = new Set(a);
+  const B = new Set(b);
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+function startsOrContainsScore(a: string, b: string) {
+  const A = norm(a), B = norm(b);
+  if (!A || !B) return 0;
+  if (A === B) return 1;
+  if (A.startsWith(B) || B.startsWith(A)) return 0.85;
+  if (A.includes(B) || B.includes(A)) return 0.6;
+  return 0;
+}
+function lastLeafFromPath(path: string) {
+  if (!path) return '';
+  const segs = path.split('>').map(s => s.trim()).filter(Boolean);
+  const leaf = segs[segs.length - 1] || '';
+  const parts = leaf.split('/').map(s => s.trim()).filter(Boolean);
+  return parts[parts.length - 1] || leaf;
+}
 
-const softEq = (a: string, b: string) => norm(a) === norm(b);
-const softStart = (a: string, b: string) =>
-  norm(a).startsWith(norm(b)) || norm(b).startsWith(norm(a));
-const softIncl = (a: string, b: string) =>
-  norm(a).includes(norm(b)) || norm(b).includes(norm(a));
-
-const tokenOverlap = (a: string, b: string) => {
-  const A = new Set(toks(a));
-  const B = new Set(toks(b));
-  let score = 0;
-  A.forEach((x) => {
-    if (B.has(x)) score++;
-  });
-  return score;
+/* -------------------------------------------------------
+   Light-weight normalization (domain-safe, not hard-coded to a category)
+------------------------------------------------------- */
+const CANON_MAP: Record<string, string> = {
+  "floor length": "maxi",
+  "ankle length": "maxi",
+  "tea length": "midi",
+  "knee-length": "knee length",
+  "short sleeve": "short sleeves",
+  "long sleeve": "long sleeves",
+  "3/4 sleeve": "three quarter sleeves",
+  "three-quarter sleeve": "three quarter sleeves",
+  "crewneck": "crew neck",
+  "vneck": "v-neck",
+  "v neck": "v-neck",
+  "button down": "button-down",
+  "zip up": "zip",
+  "zip-up": "zip",
+  "solid color": "solid",
+  "polka dot": "polka dots",
+  "leopard print": "animal print",
+  "cheetah print": "animal print",
+  "snake print": "animal print",
+  "floral print": "floral",
+  "striped": "stripes",
+  "stripe": "stripes",
 };
+function canon(s: string) {
+  const n = norm(s);
+  return CANON_MAP[n] || n;
+}
 
-const joinVals = (vals: string[]) => uniq(vals.filter(Boolean)).join(', ');
+/* -------------------------------------------------------
+   Candidate builder (dynamic): use AI detected + title + path
+------------------------------------------------------- */
+function buildCandidates(aiDetected: any, title: string, description: string, categoryPath: string) {
+  const cands = new Set<string>();
 
-/* -----------------------------------------
-   Synonyms / normalizers for common fields
------------------------------------------ */
-const VALUE_SYNONYMS: Record<string, string[]> = {
-  // size type
-  Regular: ['regular', 'standard'],
-  Petite: ['petite'],
-  Tall: ['tall', 'long'],
-  Plus: ['plus', 'plus-size', 'extended'],
+  const add = (v?: string | string[]) => {
+    if (!v) return;
+    if (Array.isArray(v)) v.forEach(x => x && cands.add(canon(x)));
+    else cands.add(canon(v));
+  };
 
-  // departments
-  Men: ["men", "men's", 'male'],
-  Women: ["women", "women's", 'female'],
-  Boys: ["boys", "boy's"],
-  Girls: ["girls", "girl's"],
-  'Unisex Adult': ['unisex', 'adult-unisex'],
+  // AI detected
+  add(aiDetected?.brand);
+  add(aiDetected?.size);
+  add(aiDetected?.colors);
+  add(aiDetected?.materials);
+  add(aiDetected?.style);
+  add(aiDetected?.type);
+  add(aiDetected?.productLine);
+  add(aiDetected?.features);
 
-  // fabrics / materials
-  Cotton: ['cotton', '100% cotton', 'cotton 100%'],
-  'Cotton Blend': ['cotton/poly', 'cotton blend'],
-  Polyester: ['polyester', 'poly'],
-  'Polyester Blend': ['polyester blend', 'poly blend'],
-  Spandex: ['spandex', 'elastane', 'lycra'],
-  Nylon: ['nylon'],
-  Wool: ['wool'],
-  Linen: ['linen'],
-  Silk: ['silk'],
-  Leather: ['leather'],
+  // Text cues
+  tokenize(title).forEach(t => cands.add(canon(t)));
+  tokenize(description).forEach(t => cands.add(canon(t)));
 
-  // patterns
-  Solid: ['solid', 'plain'],
-  Striped: ['stripe', 'striped', 'pinstripe'],
-  Plaid: ['plaid', 'checkered', 'tartan', 'gingham'],
-  Floral: ['floral', 'flower'],
-  Graphic: ['graphic', 'logo', 'print'],
+  // Category leaf terms help (e.g., "Polos", "Blazer", "Dress")
+  const leaf = lastLeafFromPath(categoryPath);
+  tokenize(leaf).forEach(t => cands.add(canon(t)));
 
-  // features / closures (examples)
-  'Button-Down Collar': ['button down collar', 'button-down collar'],
-  Zipper: ['zip', 'zipper'],
-  Buttons: ['button', 'buttons'], // generic
-};
-
-/* -----------------------------------------
-   Guards for sensitive aspects (compliance)
------------------------------------------ */
-const SENSITIVE_EXACT_ONLY = new Set(['brand']); // never guess brand
-
-/* -----------------------------------------
-   Option matching
------------------------------------------ */
-function pickBestOption(target: string, options: string[] = []): { value: string; score: number } {
-  const t = target || '';
-  if (!t) return { value: '', score: 0 };
-  if (!options?.length) return { value: t, score: 0 };
-
-  // 1) exact
-  for (const o of options) if (softEq(o, t)) return { value: o, score: 100 };
-
-  // 2) synonyms
-  for (const [canon, alts] of Object.entries(VALUE_SYNONYMS)) {
-    if (alts.some((a) => softEq(a, t) || softIncl(a, t))) {
-      const hit = options.find((o) => softEq(o, canon) || softIncl(o, canon));
-      if (hit) return { value: hit, score: 90 };
-    }
+  // Join some common two-grams from title for better phrase matching
+  const tks = tokenize(title);
+  for (let i = 0; i < tks.length - 1; i++) {
+    cands.add(canon(`${tks[i]} ${tks[i + 1]}`));
   }
 
-  // 3) starts-with/contains
-  for (const o of options) if (softStart(o, t)) return { value: o, score: 75 };
-  for (const o of options) if (softIncl(o, t)) return { value: o, score: 65 };
+  return Array.from(cands).filter(Boolean);
+}
 
-  // 4) token overlap
-  let best = '';
-  let bestScore = -1;
-  for (const o of options) {
-    const sc = tokenOverlap(o, t);
+/* -------------------------------------------------------
+   Scoring options against candidates
+------------------------------------------------------- */
+function scoreOption(option: string, candidates: string[], contextLeaf: string) {
+  const oCanon = canon(option);
+  const oTokens = tokenize(oCanon);
+  let best = 0;
+
+  for (const cand of candidates) {
+    const cCanon = canon(cand);
+    const cTokens = tokenize(cCanon);
+    const j = jaccard(oTokens, cTokens);
+    const s = startsOrContainsScore(oCanon, cCanon);
+    // blended score
+    const local = Math.max(j, s, 0);
+    if (local > best) best = local;
+  }
+
+  // Small bump if option overlaps with leaf (category context)
+  const leafTok = tokenize(contextLeaf);
+  const leafBoost = jaccard(oTokens, leafTok);
+  return best + 0.15 * leafBoost; // bounded around ~1.15
+}
+
+/* -------------------------------------------------------
+   Decide a single value for selectionOnly aspects
+------------------------------------------------------- */
+function chooseSingleOption(candidates: string[], options: string[], contextLeaf: string) {
+  if (!options?.length) return '';
+  // Stage A: quick exact/contains checks
+  for (const cand of candidates) {
+    const exact = options.find(o => canon(o) === canon(cand));
+    if (exact) return exact;
+  }
+  for (const cand of candidates) {
+    const soft = options.find(o => startsOrContainsScore(canon(o), canon(cand)) >= 0.85);
+    if (soft) return soft;
+  }
+
+  // Stage B: score all options against candidates, pick best
+  let bestOpt = options[0], bestScore = -1;
+  for (const opt of options) {
+    const sc = scoreOption(opt, candidates, contextLeaf);
     if (sc > bestScore) {
       bestScore = sc;
-      best = o;
+      bestOpt = opt;
     }
   }
-  return { value: best || '', score: best ? 50 : 0 };
+  return bestOpt;
 }
 
-function mapValuesToOptions(
-  candidates: string[] | string,
-  options: string[],
-  multi: boolean,
-  selectionOnly: boolean,
-  sensitiveExactOnly = false
-): { value: string; raw: string[] } {
-  const list = (Array.isArray(candidates) ? candidates : [candidates]).filter(Boolean);
-
-  if (!list.length) return { value: '', raw: [] };
-
-  // Sensitive fields (brand): only accept exact or OCR-confirmed matches
-  if (sensitiveExactOnly) {
-    const exact = list.find((c) => options.some((o) => softEq(o, c)));
-    return { value: exact || '', raw: exact ? [exact] : [] };
-  }
-
-  // SelectionOnly: must pick from options
-  if (selectionOnly) {
-    if (multi) {
-      const ranked = list
-        .map((c) => pickBestOption(c, options))
-        .filter((x) => x.value)
-        .sort((a, b) => b.score - a.score)
-        .map((x) => x.value);
-      return { value: joinVals(ranked), raw: ranked };
-    } else {
-      const best = list
-        .map((c) => pickBestOption(c, options))
-        .sort((a, b) => b.score - a.score)[0];
-      return { value: best?.value || '', raw: best?.value ? [best.value] : [] };
-    }
-  }
-
-  // Free text allowed
-  if (multi) return { value: joinVals(list), raw: uniq(list) };
-  return { value: list[0], raw: [list[0]] };
+/* -------------------------------------------------------
+   Multi-select: pick top N distinct options
+------------------------------------------------------- */
+function chooseMultiOptions(candidates: string[], options: string[], contextLeaf: string, maxN = 5) {
+  if (!options?.length) return [];
+  const scored = options.map(o => ({ o, s: scoreOption(o, candidates, contextLeaf) }));
+  scored.sort((a, b) => b.s - a.s);
+  return scored.slice(0, Math.min(maxN, scored.length)).map(x => x.o);
 }
 
-/* -----------------------------------------
-   Department/size-type inference helpers
------------------------------------------ */
-function inferDepartment(path: string) {
+/* -------------------------------------------------------
+   Inference helpers
+------------------------------------------------------- */
+function inferDepartmentFromPath(path: string) {
   const p = norm(path);
   if (p.includes('men')) return 'Men';
   if (p.includes('women')) return 'Women';
@@ -166,23 +183,23 @@ function inferDepartment(path: string) {
   if (p.includes('unisex')) return 'Unisex Adult';
   return '';
 }
-
-function inferSizeType(hay: string) {
-  const h = norm(hay);
-  if (h.includes('petite')) return 'Petite';
-  if (h.includes('tall') || h.includes('long')) return 'Tall';
-  if (h.includes('plus') || h.includes('extended')) return 'Plus';
+function inferSizeType({ size, title, categoryPath }: { size?: string; title?: string; categoryPath?: string; }) {
+  const hay = [size, title, categoryPath].filter(Boolean).join(' ').toLowerCase();
+  if (hay.includes('petite')) return 'Petite';
+  if (hay.includes('tall') || hay.includes('long')) return 'Tall';
+  if (hay.includes('plus') || hay.includes('extended')) return 'Plus';
   return 'Regular';
 }
 
-/* -----------------------------------------
-   MAIN HANDLER
------------------------------------------ */
+/* -------------------------------------------------------
+   Main handler
+------------------------------------------------------- */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -192,22 +209,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'No images provided' });
     }
 
-    // 1) Download -> base64 (max 12)
+    // 1) Download → base64 (max 12)
     const base64Images = await Promise.all(
       images.slice(0, 12).map(async (url: string) => {
         const optimizedUrl = url.includes('cloudinary.com')
-          ? url.replace('/upload/', '/upload/w_1280,h_1280,c_limit,q_auto,f_jpg/')
+          ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
           : url;
-        const r = await fetch(optimizedUrl);
-        if (!r.ok) throw new Error(`Failed to download image: ${r.status}`);
-        const buf = await r.arrayBuffer();
-        const b64 = Buffer.from(buf).toString('base64');
-        const mime = r.headers.get('content-type') || 'image/jpeg';
-        return `data:${mime};base64,${b64}`;
+        const response = await fetch(optimizedUrl);
+        if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        const mimeType = response.headers.get('content-type') || 'image/jpeg';
+        return `data:${mimeType};base64,${base64}`;
       })
     );
 
-    // 2) OpenAI – ask for a *fact graph* + normalized signals
+    // 2) OpenAI Vision
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -217,18 +234,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body: JSON.stringify({
         model: 'gpt-4o',
         response_format: { type: 'json_object' },
-        temperature: 0.2,
-        max_tokens: 2500,
         messages: [
           {
             role: 'system',
-            content: [
-              'You are an expert eBay lister.',
-              'Return ONLY strict JSON (no markdown).',
-              'Extract a *fact graph* from all photos: OCR brand/size/material/labels, visible features (collar, cuff, neckline, sleeve length, pattern, closures, fabric content with percentages), measurements if printed (inseam, chest, neck, sleeve).',
-              'Normalize obvious synonyms (e.g., “poly”→“polyester”, “solid” pattern).',
-              'Also output a curated list of canonical tokens that can help match against eBay aspect options.',
-            ].join(' '),
+            content:
+              'You are an expert eBay product lister. Analyze ALL provided photos together to create a comprehensive listing. Return ONLY valid JSON with no markdown.',
           },
           {
             role: 'user',
@@ -239,272 +249,154 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               })),
               {
                 type: 'text' as const,
-                text: `Return JSON like:
+                text: `Analyze ALL ${base64Images.length} photos and return this JSON:
+
 {
-  "title": "...(≤80 chars)",
-  "description": "...",
-  "category": "breadcrumb like 'Clothing, Shoes & Accessories > Men > Men's Clothing > Shirts > Dress Shirts'",
-  "facts": {
-    "brand": "literal brand text if visible, else null",
-    "size": "single size if shown (e.g., 16, XL, 32x30), else null",
-    "colors": ["primary", "secondary"],
-    "materials": [
-      {"name":"Cotton","percent":60},
-      {"name":"Polyester","percent":40}
-    ],
-    "pattern": "solid/striped/plaid/graphic/... if visually clear",
-    "collarStyle": "e.g., Button-Down, Spread",
-    "neckSize": "if printed",
-    "sleeveLength": "Short/Long/Three-Quarter, or numeric if shown",
-    "cuffStyle": "e.g., French, Barrel",
-    "closure": "e.g., Buttons, Zipper, Pullover",
-    "fit": "e.g., Slim/Regular/Relaxed",
-    "features": ["keywords like 'Moisture Wicking','Stretch','Adjustable Waist' etc],
-    "measurements": {"inseam":"", "chest":"", "waist":"", "neck":"", "sleeve":""}
+  "title": "SEO-optimized eBay title, maximum 80 characters",
+  "description": "Detailed product description with key features, condition, and materials",
+  "category": "Most specific eBay category path like 'Clothing, Shoes & Accessories > Women > Dresses'",
+  "item_specifics": [
+    {"name": "Brand", "value": "exact brand or 'Unbranded'"},
+    {"name": "Size", "value": "exact size or 'See photos'"},
+    {"name": "Color", "value": "primary color"},
+    {"name": "Material", "value": "material or 'See description'"},
+    {"name": "Style", "value": "style if applicable"},
+    {"name": "Type", "value": "type if applicable"},
+    {"name": "Features", "value": "", "values": ["array of feature words if helpful"]}
+  ],
+  "detected": {
+    "brand": "visible brand name or null",
+    "size": "visible size or null",
+    "colors": ["primary color", "secondary color if any"],
+    "condition": "New with tags | New without tags | Pre-owned | Good | Fair",
+    "materials": ["visible materials"],
+    "style": "style guess",
+    "type": "type guess",
+    "productLine": "product line guess or null",
+    "features": ["list of features words"]
   },
-  "tokens": ["short helpful tokens derived from text & visuals"],
-  "keywords": ["search terms"]
-}
-Keep fields null/empty when uncertain—do NOT hallucinate brands.`,
+  "keywords": ["relevant", "search", "terms"],
+  "suggested_price": "29.99",
+  "confidence_score": 0.95
+}`,
               },
             ],
           },
         ],
+        max_tokens: 2048,
+        temperature: 0.3,
       }),
     });
 
     if (!openaiResponse.ok) {
-      const text = await openaiResponse.text();
-      throw new Error(`OpenAI error: ${openaiResponse.status}: ${text}`);
+      const errorData = await openaiResponse.text();
+      throw new Error(`OpenAI API error: ${openaiResponse.status} ${errorData}`);
     }
-    const openaiJson = await openaiResponse.json();
-    const content = openaiJson?.choices?.[0]?.message?.content || '{}';
-    const analysis = JSON.parse(content || '{}');
 
-    // Normalize the "facts" block
-    const facts = analysis?.facts || {};
-    const title = analysis?.title || '';
-    const description = analysis?.description || '';
-    const categoryPathText =
-      analysis?.category ||
-      analysis?.category_path ||
-      analysis?.categoryName ||
-      analysis?.detected?.category ||
-      '';
-
-    // 3) Taxonomy: suggest category + fetch aspects
-    const origin = req.headers.origin || `https://${req.headers.host}`;
-    const taxonomyUrl = `${origin}/api/ebay-categories`;
-
-    // Suggested category (based on title+keywords)
-    let chosenCategoryId = '';
-    let chosenCategoryPath = categoryPathText;
-
+    const openaiResult = await openaiResponse.json();
+    const analysisContent = openaiResult.choices[0].message.content;
+    let parsedAnalysis: any;
     try {
-      const sugRes = await fetch(taxonomyUrl, {
+      parsedAnalysis = JSON.parse(analysisContent);
+    } catch {
+      throw new Error('Invalid response format from OpenAI');
+    }
+
+    // 3) eBay taxonomy & specifics
+    try {
+      const origin = req.headers.origin || `https://${req.headers.host}`;
+      const ebayApiUrl = `${origin}/api/ebay-categories`;
+
+      // suggested category
+      const ebayResponse = await fetch(ebayApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'getSuggestedCategories',
-          title,
-          keywords: analysis?.keywords || [],
+          title: parsedAnalysis.title,
+          keywords: parsedAnalysis.keywords || [],
         }),
       });
-      if (sugRes.ok) {
-        const sug = await sugRes.json();
-        chosenCategoryId = sug.categoryId;
-        chosenCategoryPath = sug.categoryPath || sug.categoryName || chosenCategoryPath;
-        analysis.category_suggestions = sug.suggestions || [];
-      }
-    } catch {
-      // ignore; fallback below
-    }
 
-    if (!chosenCategoryId) {
-      // conservative fallback
-      chosenCategoryId = '11450';
-      if (!chosenCategoryPath) chosenCategoryPath = 'Clothing, Shoes & Accessories';
-    }
+      if (ebayResponse.ok) {
+        const ebayData = await ebayResponse.json();
 
-    // Fetch aspects for that category
-    let aspects: any[] = [];
-    try {
-      const aspRes = await fetch(taxonomyUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'getCategorySpecifics',
-          categoryId: chosenCategoryId,
-        }),
-      });
-      if (aspRes.ok) {
-        const aspData = await aspRes.json();
-        aspects = aspData?.aspects || [];
-      }
-    } catch {
-      aspects = [];
-    }
+        parsedAnalysis.ebay_category_id = ebayData.categoryId;
+        parsedAnalysis.ebay_category_name = ebayData.categoryName;
+        parsedAnalysis.ebay_category_path = ebayData.categoryPath || ebayData.categoryName;
 
-    // 4) Build a robust candidate dictionary
-    const candidates: Record<string, string[] | string> = {};
-    const add = (key: string, val?: string | string[]) => {
-      if (!val || (Array.isArray(val) && !val.length)) return;
-      if (Array.isArray(val)) {
-        candidates[key] = uniq([...(Array.isArray(candidates[key]) ? (candidates[key] as string[]) : []), ...val]);
-      } else {
-        candidates[key] = uniq([...(Array.isArray(candidates[key]) ? (candidates[key] as string[]) : []), val]);
-      }
-    };
+        parsedAnalysis.category = {
+          id: ebayData.categoryId,
+          name: ebayData.categoryName,
+          path: ebayData.categoryPath || ebayData.categoryName,
+        };
+        parsedAnalysis.category_suggestions = (ebayData.suggestions || []).map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          path: s.path || s.name,
+        }));
 
-    const tokensBag = uniq([...(analysis?.tokens || []), ...toks(title), ...toks(description)]);
+        // specifics
+        const specificsResponse = await fetch(ebayApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'getCategorySpecifics',
+            categoryId: ebayData.categoryId,
+          }),
+        });
 
-    // Department / size type hints
-    const depGuess = inferDepartment(chosenCategoryPath);
-    const sizeTypeGuess = inferSizeType([title, description, chosenCategoryPath, facts?.size].filter(Boolean).join(' '));
+        if (specificsResponse.ok) {
+          const specificsData = await specificsResponse.json();
+          const aspects = specificsData.aspects || [];
 
-    // Materials -> also derive blends
-    const materialNames = (Array.isArray(facts?.materials) ? facts.materials : [])
-      .map((m: any) => String(m?.name || ''))
-      .filter(Boolean);
-    const materialTokens: string[] = [];
-    if (materialNames.length) {
-      const lower = materialNames.map(norm);
-      if (lower.includes('cotton') && lower.includes('polyester')) materialTokens.push('Cotton Blend', 'Polyester Blend');
-    }
-    add('Material', uniq([...materialNames, ...materialTokens]));
+          const mapped = mapAIToEbayFields(
+            parsedAnalysis.detected,
+            aspects,
+            parsedAnalysis.category?.path || parsedAnalysis.ebay_category_path || '',
+            parsedAnalysis.title || '',
+            parsedAnalysis.description || ''
+          );
 
-    add('Brand', facts?.brand || '');
-    add('Size', facts?.size || '');
-    add('Color', Array.isArray(facts?.colors) ? facts.colors : facts?.colors || '');
-    add('Pattern', facts?.pattern || '');
-    add('Collar Style', facts?.collarStyle || '');
-    add('Neck Size', facts?.neckSize || facts?.measurements?.neck || '');
-    add('Sleeve Length', facts?.sleeveLength || facts?.measurements?.sleeve || '');
-    add('Cuff Style', facts?.cuffStyle || '');
-    add('Closure', facts?.closure || '');
-    add('Fit', facts?.fit || '');
-    add('Features', Array.isArray(facts?.features) ? facts.features : facts?.features || '');
-    add('Inseam', facts?.measurements?.inseam || '');
-    add('Chest Size', facts?.measurements?.chest || '');
-    add('Waist Size', facts?.measurements?.waist || '');
-
-    // Category-derived hints
-    const leaf = (chosenCategoryPath.split('>')[chosenCategoryPath.split('>').length - 1] || '').trim();
-    add('Type', leaf);
-
-    // Department / Size Type candidates
-    add('Department', depGuess);
-    add('Size Type', sizeTypeGuess);
-
-    // 5) Map to aspects dynamically
-    const mapped: any[] = [];
-    const unmappedDebug: any[] = [];
-    const evidence: Record<string, any> = {};
-
-    for (const a of aspects) {
-      const name: string = a?.name || '';
-      const options: string[] = a?.values || [];
-      const selectionOnly = !!a?.selectionOnly;
-      const multi = !!a?.multi;
-      const required = !!a?.required;
-
-      const n = norm(name);
-
-      // primary key lookup
-      let sourceCandidates: string[] | string = candidates[name];
-
-      // heuristic fallbacks by normalized name
-      if (!sourceCandidates) {
-        if (n === 'department') sourceCandidates = candidates['Department'];
-        else if (n.includes('size type')) sourceCandidates = candidates['Size Type'];
-        else if (n === 'size' || n.includes('waist size') || n.includes('inseam')) sourceCandidates = candidates['Size'] || candidates['Inseam'] || candidates['Waist Size'];
-        else if (n.includes('color') || n.includes('colour')) sourceCandidates = candidates['Color'];
-        else if (n.includes('material') || n.includes('fabric')) sourceCandidates = candidates['Material'];
-        else if (n.includes('pattern')) sourceCandidates = candidates['Pattern'];
-        else if (n.includes('collar')) sourceCandidates = candidates['Collar Style'];
-        else if (n.includes('neck') && n.includes('size')) sourceCandidates = candidates['Neck Size'];
-        else if (n.includes('sleeve')) sourceCandidates = candidates['Sleeve Length'];
-        else if (n.includes('cuff')) sourceCandidates = candidates['Cuff Style'];
-        else if (n.includes('closure')) sourceCandidates = candidates['Closure'];
-        else if (n === 'fit') sourceCandidates = candidates['Fit'];
-        else if (n.includes('feature')) sourceCandidates = candidates['Features'];
-        else if (n === 'type') sourceCandidates = candidates['Type'];
-        else if (n.includes('chest')) sourceCandidates = candidates['Chest Size'];
-      }
-
-      // if still nothing, try to synthesize from tokens for selectionOnly fields
-      if (!sourceCandidates && selectionOnly) {
-        // try to pick from options based on title/description tokens
-        const ranked = options
-          .map((o) => ({ o, sc: tokenOverlap(o, `${title} ${description} ${leaf}`) }))
-          .sort((x, y) => y.sc - x.sc);
-        if (ranked[0]?.sc > 0) sourceCandidates = ranked[0].o;
-      }
-
-      // map to allowed options (or keep free text)
-      const sensitive = SENSITIVE_EXACT_ONLY.has(n);
-      const mappedVal = mapValuesToOptions(sourceCandidates || '', options, multi, selectionOnly, sensitive);
-
-      // Coverage pass for required selectionOnly fields still blank:
-      if (required && selectionOnly && !mappedVal.value) {
-        // conservative choice: pick option most related to title/leaf/tokens
-        const best = options
-          .map((o) => ({
-            o,
-            sc: Math.max(
-              tokenOverlap(o, title),
-              tokenOverlap(o, leaf),
-              tokensBag.includes(norm(o)) ? 1 : 0
-            ),
-          }))
-          .sort((a, b) => b.sc - a.sc)[0];
-        if (best && best.sc > 0) {
-          mappedVal.value = best.o;
-          mappedVal.raw = [best.o];
+          parsedAnalysis.category_specifics_schema = aspects;
+          parsedAnalysis.item_specifics = mapped.item_specifics;
+          parsedAnalysis.needs_review = mapped.needs_review;
+          parsedAnalysis.debug = mapped.debug;
+        } else {
+          parsedAnalysis.category_specifics_schema = [];
+          parsedAnalysis.item_specifics = [];
+          parsedAnalysis.needs_review = { message: 'Failed to fetch category specifics' };
         }
+      } else {
+        // default fallback
+        parsedAnalysis.ebay_category_id = '11450';
+        parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
+        parsedAnalysis.ebay_category_path = 'Clothing, Shoes & Accessories';
+        parsedAnalysis.category = {
+          id: '11450',
+          name: 'Clothing, Shoes & Accessories',
+          path: 'Clothing, Shoes & Accessories',
+        };
+        parsedAnalysis.category_suggestions = [
+          { id: '11450', name: 'Clothing, Shoes & Accessories', path: 'Clothing, Shoes & Accessories' },
+        ];
       }
-
-      // Assemble
-      mapped.push({
-        name,
-        value: mappedVal.value,
-        required,
-        type: a?.type,
-        options,
-        selectionOnly,
-        multi,
-        freeTextAllowed: !!a?.freeTextAllowed,
-      });
-
-      evidence[name] = {
-        candidates: sourceCandidates || null,
-        chosen: mappedVal.raw,
-        selectionOnly,
-        multi,
+    } catch {
+      // safe fallback
+      parsedAnalysis.ebay_category_id = '11450';
+      parsedAnalysis.ebay_category_name = 'Clothing, Shoes & Accessories';
+      parsedAnalysis.ebay_category_path = 'Clothing, Shoes & Accessories';
+      parsedAnalysis.category = {
+        id: '11450',
+        name: 'Clothing, Shoes & Accessories',
+        path: 'Clothing, Shoes & Accessories',
       };
-
-      if (!mappedVal.value && required) {
-        unmappedDebug.push({ name, optionsCount: options.length });
-      }
+      parsedAnalysis.category_suggestions = [
+        { id: '11450', name: 'Clothing, Shoes & Accessories', path: 'Clothing, Shoes & Accessories' },
+      ];
     }
 
-    // 6) Build final response object
-    const responsePayload = {
-      title,
-      description,
-      category: { id: chosenCategoryId, path: chosenCategoryPath },
-      item_specifics: mapped,
-      ebay_category_id: chosenCategoryId,
-      ebay_category_path: chosenCategoryPath,
-      category_specifics_schema: aspects,
-      debug: {
-        evidence,
-        unmappedRequired: unmappedDebug,
-        tokensUsed: tokensBag.slice(0, 60),
-      },
-    };
-
-    // Optional webhook for Make.com
+    // 4) Optional webhook
     if (process.env.VITE_MAKE_WEBHOOK_URL) {
       try {
         await fetch(process.env.VITE_MAKE_WEBHOOK_URL, {
@@ -512,24 +404,177 @@ Keep fields null/empty when uncertain—do NOT hallucinate brands.`,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             session_id,
-            analysis: responsePayload,
+            analysis: parsedAnalysis,
             image_urls: images,
             timestamp: new Date().toISOString(),
           }),
         });
-      } catch { /* ignore */ }
+      } catch {
+        // non-fatal
+      }
     }
 
     return res.status(200).json({
       success: true,
-      data: responsePayload,
+      data: parsedAnalysis,
       images_processed: base64Images.length,
       session_id,
     });
-  } catch (err: any) {
+  } catch (error: any) {
     return res.status(500).json({
-      error: err?.message || 'Internal server error',
-      details: process.env.NODE_ENV === 'development' ? err?.stack : undefined,
+      error: error.message || 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
+}
+
+/* -------------------------------------------------------
+   Dynamic, policy-safe mapper
+------------------------------------------------------- */
+function mapAIToEbayFields(
+  aiDetected: any,
+  ebayAspects: any[],
+  categoryPath: string,
+  title: string,
+  description: string
+) {
+  const det = aiDetected || {};
+  const dept = inferDepartmentFromPath(categoryPath || '');
+  const sizeType = inferSizeType({ size: det.size, title, categoryPath });
+  const leaf = lastLeafFromPath(categoryPath || '');
+
+  const needs_review: Record<string, any> = {};
+  const debug: Record<string, any> = { decisions: {} };
+
+  // Build broad candidate set once
+  const globalCandidates = buildCandidates(det, title || '', description || '', categoryPath || '');
+
+  const out: any[] = [];
+
+  for (const aspect of ebayAspects) {
+    const name: string = aspect?.name || '';
+    const n = norm(name);
+    const options: string[] = aspect?.values || [];
+    const required = !!aspect?.required;
+    const selectionOnly = !!aspect?.selectionOnly || aspect?.type === 'SelectionOnly';
+    const multi = !!aspect?.multi;
+    const freeTextAllowed = aspect?.freeTextAllowed !== false && !selectionOnly;
+
+    // Prepare specific candidates by aspect name
+    const specificCandidates: string[] = [];
+
+    // pre-seed with known fields when names match
+    if (n.includes('brand') && det.brand) specificCandidates.push(det.brand);
+    if ((n === 'size' || n.includes('waist') || n.includes('length')) && det.size) specificCandidates.push(det.size);
+    if ((n.includes('color') || n.includes('colour')) && det.colors?.length) specificCandidates.push(...det.colors);
+    if ((n.includes('material') || n.includes('fabric')) && det.materials?.length) specificCandidates.push(...det.materials);
+    if (n.includes('department') && dept) specificCandidates.push(dept);
+    if (n.includes('size type') && sizeType) specificCandidates.push(sizeType);
+    if (n === 'style' && det.style) specificCandidates.push(det.style);
+    if (n === 'type' && det.type) specificCandidates.push(det.type);
+    if (n.includes('product line') && det.productLine) specificCandidates.push(det.productLine);
+    if (n.includes('feature') && Array.isArray(det.features)) specificCandidates.push(...det.features);
+
+    // Combine with global candidates for robustness
+    const candidates = Array.from(new Set([...specificCandidates, ...globalCandidates]));
+
+    let value = '';
+    let reason = 'unset';
+
+    // Handle multi-select (e.g., Features)
+    if (multi) {
+      if (selectionOnly) {
+        const picks = chooseMultiOptions(candidates, options, leaf, 5);
+        value = picks.join(', ');
+        reason = 'multi/selectionOnly: top-scoring options';
+      } else {
+        // Prefer options but can also free-text; keep options for consistency
+        const picks = chooseMultiOptions(candidates, options, leaf, 5);
+        value = picks.join(', ');
+        reason = 'multi/freeTextAllowed: preferred options';
+      }
+    } else {
+      // Single-value
+      if (selectionOnly) {
+        // Policy-safe: choose closest option (never type free text)
+        value = chooseSingleOption(candidates, options, leaf);
+        reason = 'single/selectionOnly: best-scoring option';
+      } else {
+        // Free text allowed: if we have a strong literal (e.g., brand "Quince"), prefer it
+        // else also allow closest option when it clearly matches
+        // Heuristic: if a direct literal exists in specificCandidates, use it
+        const literal = specificCandidates.find(s => !!s);
+        if (literal) {
+          // If literal also matches an option closely, we can still snap to option
+          const bestOpt = chooseSingleOption([literal], options, leaf);
+          const bestScore = scoreOption(bestOpt, [literal], leaf);
+          if (bestScore >= 0.85) {
+            value = bestOpt;
+            reason = 'single/freeTextAllowed: snapped literal to option';
+          } else {
+            value = literal;
+            reason = 'single/freeTextAllowed: literal value';
+          }
+        } else if (options?.length) {
+          value = chooseSingleOption(candidates, options, leaf);
+          reason = 'single/freeTextAllowed: best-scoring option (no literal)';
+        } else {
+          value = '';
+          reason = 'single/freeTextAllowed: no options and no literal';
+        }
+      }
+    }
+
+    // Backfill for required aspects if still blank
+    if (required && !value) {
+      if (selectionOnly && options?.length) {
+        value = chooseSingleOption(candidates, options, leaf);
+        reason += ' | required backfill: selectionOnly best option';
+      } else {
+        // free text: only set if we have some reasonable candidate
+        const cand = specificCandidates[0] || candidates[0] || '';
+        if (cand) {
+          value = cand;
+          reason += ' | required backfill: freeText literal';
+        } else {
+          // leave blank but flag
+          needs_review[n] = 'required but unmatched';
+          reason += ' | required still empty (flagged)';
+        }
+      }
+    }
+
+    // Brand policy: if selection-only and brand literal not in options → leave blank + flag
+    if (n.includes('brand') && selectionOnly) {
+      const literalBrand = det.brand || '';
+      if (literalBrand && !options.some(o => norm(o) === norm(literalBrand))) {
+        // Only override if we accidentally set a wrong option by scoring
+        if (!options.some(o => norm(o) === norm(value))) {
+          value = ''; // do not guess brands
+          needs_review['brand'] = `Detected brand "${literalBrand}" not in allowed list`;
+          reason += ' | brand policy: cleared & flagged';
+        }
+      }
+    }
+
+    debug.decisions[name] = {
+      selectionOnly, multi, required, freeTextAllowed,
+      chosen: value, reason,
+      sampleCandidates: candidates.slice(0, 10),
+      optionsPreview: options.slice(0, 10)
+    };
+
+    out.push({
+      name: aspect.name,
+      value,
+      required,
+      type: aspect.type,
+      options,
+      selectionOnly,
+      multi,
+      freeTextAllowed,
+    });
+  }
+
+  return { item_specifics: out, needs_review, debug };
 }
