@@ -6,125 +6,329 @@ export const config = {
   maxDuration: 60,
 };
 
-/* =========================
+/* ──────────────────────────────────────────────────────────────
    Small utilities
-   ========================= */
+   ────────────────────────────────────────────────────────────── */
 const norm = (s: string) => (s || '').toLowerCase().trim();
-const toks = (s: string) => norm(s).split(/[\s\/,&\-]+/).filter(Boolean);
-const includesAny = (hay: string, needles: string[]) => {
-  const h = norm(hay);
-  return needles.some((n) => h.includes(norm(n)));
-};
+const tokenize = (s: string) =>
+  norm(s).replace(/[%/(),.&\-–—_+]/g, ' ').split(/\s+/).filter(Boolean);
+const uniq = <T,>(arr: T[]) => Array.from(new Set(arr));
 
-/** token overlap score (0..n) */
-function overlapScore(a: string, b: string) {
-  const ta = new Set(toks(a));
-  const tb = new Set(toks(b));
-  let score = 0;
-  for (const t of ta) if (tb.has(t)) score++;
-  return score;
-}
-
-/** Confidence-scored snap to one option (0..1) */
-function snapToOption(target: string, options: string[], aliases?: Record<string, string[]>) {
-  if (!target || !options?.length) return { value: '', score: 0 };
+/* ──────────────────────────────────────────────────────────────
+   Generic option snapping with scoring
+   - selectionOnly: must return a valid option (or '')
+   - returns best option by (exact > synonym > token overlap)
+   ────────────────────────────────────────────────────────────── */
+function snapToOption(
+  target: string,
+  options: string[] = [],
+  selectionOnly = false,
+  synonyms: Record<string, string[]> = {},
+): string {
   const t = norm(target);
+  if (!t) return selectionOnly ? '' : '';
 
-  // 1) exact (case insensitive)
-  for (const opt of options) if (norm(opt) === t) return { value: opt, score: 1 };
+  // exact
+  const exact = options.find(o => norm(o) === t);
+  if (exact) return exact;
 
-  // 2) aliases (category-specific vocab)
-  if (aliases) {
-    for (const [canon, alts] of Object.entries(aliases)) {
-      if (alts.some((a) => norm(a) === t)) {
-        const hit = options.find((o) => norm(o) === norm(canon)) || options.find((o) => norm(o).includes(norm(canon)));
-        if (hit) return { value: hit, score: 0.95 };
-      }
-    }
-  }
-
-  // 3) symmetric contains/starts with
+  // synonym tables: if target matches a synonym key or any of its alias, pick the option
   for (const opt of options) {
     const o = norm(opt);
-    if (o.startsWith(t) || t.startsWith(o) || o.includes(t) || t.includes(o)) {
-      return { value: opt, score: 0.85 };
-    }
+    if (synonyms[o]?.includes(t)) return opt;      // alias equals target
+    // also allow reverse: if target is a canonical and option text contains alias/canonical
+    const aliases = synonyms[o] || [];
+    if (aliases.some(a => o.includes(norm(a))) && (o.includes(t) || t.includes(o))) return opt;
   }
 
-  // 4) token overlap
+  // token overlap score
+  const tks = tokenize(t);
   let best = '';
-  let bestScore = 0;
+  let bestScore = -1;
   for (const opt of options) {
-    const s = overlapScore(opt, target);
-    if (s > bestScore) {
-      bestScore = s;
+    const oks = tokenize(opt);
+    const score = tks.reduce((acc, tk) => acc + (oks.includes(tk) ? 1 : 0), 0);
+    if (score > bestScore) {
       best = opt;
+      bestScore = score;
     }
   }
-  if (best) return { value: best, score: Math.min(0.75, bestScore / Math.max(1, toks(target).length)) };
-
-  return { value: '', score: 0 };
+  return selectionOnly ? (best || '') : (best || target);
 }
 
-/** Multi snap (returns array of allowed options) */
-function snapMany(targets: string[] | string, options: string[], aliases?: Record<string, string[]>) {
-  const arr = Array.isArray(targets) ? targets : (targets ? [targets] : []);
-  const picked: string[] = [];
-  for (const t of arr) {
-    const { value, score } = snapToOption(t, options, aliases);
-    if (value && score >= 0.6 && !picked.includes(value)) picked.push(value);
+/* ──────────────────────────────────────────────────────────────
+   Normalizers (category-agnostic)
+   ────────────────────────────────────────────────────────────── */
+const COUNTRY_NORMALIZE: Record<string, string> = {
+  'usa': 'United States', 'u.s.a': 'United States', 'united states': 'United States', 'america': 'United States',
+  'uk': 'United Kingdom', 'u.k': 'United Kingdom', 'england': 'United Kingdom',
+  'korea': 'Korea, Republic of', 'south korea': 'Korea, Republic of',
+  'china': 'China', 'japan': 'Japan', 'italy': 'Italy', 'france': 'France',
+  'viet nam': 'Vietnam', 'vietnam': 'Vietnam', 'mexico': 'Mexico', 'canada': 'Canada',
+  'portugal': 'Portugal', 'spain': 'Spain', 'turkiye': 'Turkey', 'turkey': 'Turkey',
+};
+
+function normalizeCountry(raw: string): string {
+  const t = norm(raw).replace(/made in|product of|assembled in|usa|u\.s\.a/gi, (m) => m);
+  for (const [k, v] of Object.entries(COUNTRY_NORMALIZE)) {
+    if (t.includes(k)) return v;
   }
-  return picked;
+  return raw;
 }
 
-/* =========================
-   Light inference helpers
-   ========================= */
-function inferDepartment(path: string, title: string) {
-  const hay = `${path} ${title}`.toLowerCase();
-  if (hay.includes("women")) return "Women";
-  if (hay.includes("men")) return "Men";
-  if (hay.includes("girls")) return "Girls";
-  if (hay.includes("boys")) return "Boys";
-  if (hay.includes("unisex")) return "Unisex Adult";
-  return "";
+function normalizeColor(raw: string): string {
+  const t = norm(raw);
+  if (!t) return raw;
+  // families
+  if (/(teal|aqua|turquoise|cyan)/.test(t)) return 'Blue';
+  if (/(burgundy|maroon|wine)/.test(t)) return 'Red';
+  if (/(beige|tan|khaki|taupe|ivory|cream)/.test(t)) return 'Beige';
+  if (/(off\s*white|bone)/.test(t)) return 'White';
+  return raw;
 }
 
-function inferSizeType({ size, title, categoryPath }: { size?: string; title?: string; categoryPath?: string }) {
-  const hay = [size, title, categoryPath].filter(Boolean).join(" ").toLowerCase();
-  if (includesAny(hay, ["maternity"])) return "Maternity";
-  if (includesAny(hay, ["petite"])) return "Petite";
-  if (includesAny(hay, ["tall", "long"])) return "Tall";
-  if (includesAny(hay, ["plus", "extended"])) return "Plus";
-  if (includesAny(hay, ["juniors"])) return "Juniors";
-  if (includesAny(hay, ["misses"])) return "Misses";
-  if (includesAny(hay, ["big & tall", "big and tall"])) return "Big & Tall";
-  return "Regular";
+/* ──────────────────────────────────────────────────────────────
+   Reasoner: equivalences + implications
+   NOTE: This is schema-aware: it only tries to fill an aspect
+   when that aspect exists in the live Taxonomy response, and
+   it always snaps to *that* aspect’s options.
+   ────────────────────────────────────────────────────────────── */
+
+// Canonical synonyms keyed by the canonical option we expect to see
+const GLOBAL_SYNONYMS: Record<string, string[]> = {
+  // lengths
+  'short': ['mini', 'short'],
+  'midi': ['midi', 'tea length', 'knee length', 'knee-length'],
+  'long': ['maxi', 'floor', 'ankle', 'long', 'full length'],
+  // closures
+  'zip': ['zip', 'zipper', 'zipped'],
+  'button': ['button', 'buttoned', 'buttons', 'button-down', 'button front'],
+  'hook & eye': ['hook', 'hook-and-eye', 'hook & eye'],
+  'snap': ['snap', 'snaps'],
+  // necklines
+  'crew neck': ['crew', 'crewneck'],
+  'v-neck': ['v', 'v neck', 'v-neck'],
+  'scoop neck': ['scoop'],
+  'boat neck': ['boatneck', 'bateau', 'boat'],
+  'cowl neck': ['cowl'],
+  'square neck': ['square'],
+  'halter': ['halter'],
+  'turtleneck': ['turtle', 'roll neck'],
+  // themes
+  'flowers': ['floral', 'flower', 'botanical', 'blossom', 'hibiscus'],
+  'animals': ['animal', 'leopard', 'cheetah', 'zebra', 'tiger', 'giraffe'],
+  'hawaiian': ['hawaiian', 'aloha'],
+  // fabrics/material
+  'cotton': ['cotton'],
+  'polyester': ['polyester', 'poly'],
+  'linen': ['linen'],
+  'silk': ['silk'],
+  'wool': ['wool'],
+  'leather': ['leather'],
+  'spandex': ['spandex', 'elastane', 'lycra'],
+  'rayon': ['rayon', 'viscose'],
+  'nylon': ['nylon'],
+  'acrylic': ['acrylic'],
+  'cashmere': ['cashmere'],
+};
+
+// When AI/description gives blends like "65% polyester / 35% cotton", infer material set
+function inferMaterialsFromText(text: string): string[] {
+  const t = norm(text);
+  const found: string[] = [];
+  for (const canon of Object.keys(GLOBAL_SYNONYMS)) {
+    if (GLOBAL_SYNONYMS[canon]?.some(a => t.includes(a))) found.push(canon);
+  }
+  return uniq(found);
 }
 
-/** category-aware alias vocab for Size Type */
-function sizeTypeAliasesForOptions(opts: string[]) {
-  // Build aliases only for values present in this category’s options.
-  const has = (name: string) => opts.some((o) => norm(o) === norm(name));
-  const map: Record<string, string[]> = {};
-  if (has("Regular")) map["Regular"] = ["regular", "standard", "classic"];
-  if (has("Misses")) map["Misses"] = ["misses", "regular women", "womens regular"];
-  if (has("Juniors")) map["Juniors"] = ["juniors", "jr", "teen"];
-  if (has("Petite")) map["Petite"] = ["petite"];
-  if (has("Tall")) map["Tall"] = ["tall", "long"];
-  if (has("Plus")) map["Plus"] = ["plus", "extended"];
-  if (has("Big & Tall")) map["Big & Tall"] = ["big & tall", "big and tall"];
-  if (has("Maternity")) map["Maternity"] = ["maternity"];
-  if (has("Infant & Toddler")) map["Infant & Toddler"] = ["infant", "toddler", "baby"];
-  if (has("Boys")) map["Boys"] = ["boys", "boy's"];
-  if (has("Girls")) map["Girls"] = ["girls", "girl's"];
-  return map;
+// Implication rules (category-agnostic). They produce candidate values for certain aspect names.
+function reasonCandidatesFromTokens(tokens: string[]) {
+  const t = tokens.map(norm);
+  const has = (...words: string[]) => words.some(w => t.includes(norm(w)));
+
+  const cands: Record<string, string[] | string> = {};
+
+  // Dress length / Length in general
+  if (has('maxi', 'floor', 'ankle')) cands['dress length'] = ['long'];
+  else if (has('mini', 'short')) cands['dress length'] = ['short'];
+  else if (has('midi', 'knee')) cands['dress length'] = ['midi'];
+
+  // Closure
+  if (has('zip', 'zipper')) cands['closure'] = ['zip'];
+  if (has('button', 'buttons', 'button-down')) cands['closure'] = uniq([...(cands['closure'] as string[] || []), 'button']);
+
+  // Neckline
+  if (has('v-neck', 'vneck', 'v')) cands['neckline'] = ['v-neck'];
+  if (has('crew', 'crewneck')) cands['neckline'] = ['crew neck'];
+  if (has('scoop')) cands['neckline'] = ['scoop neck'];
+  if (has('boat', 'bateau')) cands['neckline'] = ['boat neck'];
+  if (has('cowl')) cands['neckline'] = ['cowl neck'];
+  if (has('square')) cands['neckline'] = ['square neck'];
+  if (has('halter')) cands['neckline'] = ['halter'];
+  if (has('turtle', 'turtleneck', 'roll')) cands['neckline'] = ['turtleneck'];
+
+  // Pattern -> Theme implications
+  if (has('floral', 'flower', 'hibiscus')) cands['theme'] = ['flowers', 'hawaiian'];
+  if (has('animal', 'leopard', 'zebra', 'tiger', 'cheetah')) cands['theme'] = uniq([...(cands['theme'] as string[] || []), 'animals']);
+
+  // Season (rough heuristic)
+  if (has('fleece', 'sherpa', 'wool', 'down')) cands['season'] = ['winter'];
+  if (has('linen', 'shortsleeve', 'short-sleeve', 'shorts')) cands['season'] = ['summer'];
+
+  // Features (multi)
+  const feat: string[] = [];
+  if (has('pockets')) feat.push('pockets');
+  if (has('adjustable waist', 'drawstring')) feat.push('adjustable waist');
+  if (has('elastic')) feat.push('elastic waist');
+  if (has('lined')) feat.push('lined');
+  if (feat.length) cands['features'] = feat;
+
+  return cands;
 }
 
-/* =========================
-   CORS + handler shell
-   ========================= */
+// Given live aspect schema + raw detections, produce final specifics
+function buildReasonedSpecifics(args: {
+  aspects: any[];
+  detected: any;
+  title?: string;
+  description?: string;
+}) {
+  const { aspects, detected, title, description } = args;
+
+  const tokensFromAI = [
+    title || '',
+    description || '',
+    detected?.brand || '',
+    detected?.size || '',
+    ...(Array.isArray(detected?.colors) ? detected.colors : [detected?.colors || '']),
+    ...(Array.isArray(detected?.materials) ? detected.materials : [detected?.materials || '']),
+    detected?.style || '',
+    detected?.type || '',
+    detected?.productLine || '',
+    ...(detected?.features || []),
+  ].join(' ');
+
+  const allTokens = uniq(tokenize(tokensFromAI));
+  const infer = reasonCandidatesFromTokens(allTokens);
+  const inferredMaterials = inferMaterialsFromText(tokensFromAI);
+
+  // Special SizeType before Size (dependency)
+  let chosenSizeType = '';
+  {
+    const sizeTypeAspect = aspects.find(a => norm(a.name).includes('size type'));
+    if (sizeTypeAspect) {
+      const opts = sizeTypeAspect.values || [];
+      // heuristic from tokens
+      const stGuess =
+        (allTokens.find(t => ['petite', 'tall', 'plus', 'regular', 'big', 'big & tall'].includes(t))) ||
+        detected?.sizeType ||
+        '';
+      chosenSizeType = snapToOption(stGuess || 'regular', opts, !!sizeTypeAspect.selectionOnly, GLOBAL_SYNONYMS);
+    }
+  }
+
+  function resolveValueForAspect(aspect: any): string | string[] {
+    const aName = norm(aspect.name);
+    const opts: string[] = aspect.values || [];
+    const selectionOnly = !!aspect.selectionOnly;
+    const multi = !!aspect.multi;
+
+    const trySnap = (v: string) =>
+      snapToOption(v, opts, selectionOnly, GLOBAL_SYNONYMS);
+
+    // pre-seeded guesses (AI detections and reasoned candidates)
+    const guesses: (string | string[])[] = [];
+
+    if (aName === 'brand') guesses.push(detected?.brand || '');
+    else if (aName === 'department') guesses.push(detected?.department || '');
+    else if (aName.includes('size type')) guesses.push(chosenSizeType || 'regular');
+    else if (aName === 'size' || aName.includes('waist') || aName.includes('inseam')) {
+      // Prefer numeric/label size tokens; if Size Type chosen, still snap to options
+      guesses.push(String(detected?.size || ''));
+    } else if (aName.includes('color') || aName.includes('colour')) {
+      const primary = Array.isArray(detected?.colors) ? detected.colors[0] : detected?.colors || '';
+      guesses.push(normalizeColor(primary));
+    } else if (aName.includes('material') || aName.includes('fabric')) {
+      // Combine AI material + inferred blends
+      const fromAI = Array.isArray(detected?.materials) ? detected.materials : [detected?.materials || ''];
+      const mats = uniq([...fromAI, ...inferredMaterials]);
+      if (multi) guesses.push(mats);
+      else guesses.push(mats[0] || '');
+    } else if (aName === 'style') {
+      guesses.push(detected?.style || '');
+    } else if (aName === 'type') {
+      guesses.push(detected?.type || '');
+    } else if (aName.includes('product line')) {
+      guesses.push(detected?.productLine || '');
+    } else if (aName.includes('theme') && infer['theme']) {
+      guesses.push(infer['theme']);
+    } else if (aName.includes('neck') && infer['neckline']) {
+      guesses.push(infer['neckline']);
+    } else if ((aName.includes('closure') || aName.includes('fastening')) && infer['closure']) {
+      guesses.push(infer['closure']);
+    } else if (aName.includes('dress length') && infer['dress length']) {
+      guesses.push(infer['dress length']);
+    } else if (aName.includes('season') && infer['season']) {
+      guesses.push(infer['season']);
+    } else if (aName.includes('country') && aName.includes('origin')) {
+      guesses.push(normalizeCountry(tokensFromAI));
+    } else if (aName.includes('features') && infer['features']) {
+      guesses.push(infer['features']);
+    } else {
+      // generic guess: try AI detected map if same key exists
+      const key = aName.replace(/\s+/g, '_');
+      if (detected && typeof detected[key] === 'string') guesses.push(detected[key]);
+    }
+
+    // Multi-select aspects
+    if (multi) {
+      const allVals = uniq(
+        guesses
+          .flatMap(g => (Array.isArray(g) ? g : [g]))
+          .map(v => String(v).trim())
+          .filter(Boolean),
+      );
+      const snapped = allVals
+        .map(v => trySnap(v))
+        .filter(Boolean);
+      return uniq(snapped);
+    }
+
+    // Single-select / free text
+    for (const g of guesses.flatMap(g => (Array.isArray(g) ? g : [g]))) {
+      const v = String(g || '').trim();
+      if (!v) continue;
+      const snapped = trySnap(v);
+      if (snapped) return snapped;
+    }
+
+    // If nothing guessed and free text allowed, return blank
+    return selectionOnly ? '' : '';
+  }
+
+  const specifics = aspects.map(aspect => {
+    const value = resolveValueForAspect(aspect);
+    return {
+      name: aspect.name,
+      value,
+      required: !!aspect.required,
+      type: aspect.type,
+      options: aspect.values || [],
+      selectionOnly: !!aspect.selectionOnly,
+      multi: !!aspect.multi,
+      freeTextAllowed: !!aspect.freeTextAllowed,
+    };
+  });
+
+  return specifics;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Main handler
+   ────────────────────────────────────────────────────────────── */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -137,22 +341,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'No images provided' });
     }
 
-    // ---- 1) Download + base64 (cap 12)
+    // 1) Download & convert to base64 (max 12)
     const base64Images = await Promise.all(
       images.slice(0, 12).map(async (url: string) => {
-        const optimized = url.includes('cloudinary.com')
+        const optimizedUrl = url.includes('cloudinary.com')
           ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
           : url;
-        const r = await fetch(optimized);
-        if (!r.ok) throw new Error(`Failed to download image: ${r.status}`);
-        const buf = await r.arrayBuffer();
-        const mime = r.headers.get('content-type') || 'image/jpeg';
-        return `data:${mime};base64,${Buffer.from(buf).toString('base64')}`;
-      })
+        const response = await fetch(optimizedUrl);
+        if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        const mimeType = response.headers.get('content-type') || 'image/jpeg';
+        return `data:${mimeType};base64,${base64}`;
+      }),
     );
 
-    // ---- 2) OpenAI Vision (ask for richer "detected")
-    const oa = await fetch('https://api.openai.com/v1/chat/completions', {
+    // 2) OpenAI Vision — return structured detection block
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -166,316 +371,136 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           {
             role: 'system',
             content:
-              "You are an expert eBay product lister. Analyze ALL photos together. Return ONLY valid JSON (no markdown). Be conservative—do not invent facts. If unsure, leave empty.",
+              'You are an expert eBay product lister. Analyze ALL provided photos together. Return ONLY valid JSON with no markdown.',
           },
           {
             role: 'user',
             content: [
-              ...base64Images.map((img) => ({
-                type: 'image_url' as const,
-                image_url: { url: img, detail: 'low' as const },
-              })),
+              ...base64Images.map(img => ({ type: 'image_url' as const, image_url: { url: img, detail: 'low' as const } })),
               {
                 type: 'text' as const,
-                text: `Return JSON with:
-{
-  "title": "...(<=80 chars)",
-  "description": "...",
-  "category": "Most specific path (e.g., Clothing, Shoes & Accessories > Men > Shirts > Dress Shirts)",
-  "item_specifics": [],
-  "detected": {
-    "brand": "...", "size": "...", "colors": ["..."],
-    "materials": ["..."],
-    "style": "...", "type": "...", "productLine": "...",
-    "features": ["..."],
+                text: `Extract a clean, structured analysis. JSON schema:
 
-    /* additional neutral hints to maximize fill */
-    "pattern": "...",
-    "sleeve_length": "...",
-    "dress_length": "...",
-    "jacket_length": "...",
-    "collar_style": "...",
-    "neckline": "...",
-    "closure": "...",
-    "garment_care": "...",
-    "model": "...",
-    "season": "...",
-    "country_of_origin": "..."
+{
+  "title": "SEO title, <=80 chars",
+  "description": "short description from the photos/labels",
+  "detected": {
+    "brand": "brand or null",
+    "size": "size label or null",
+    "colors": ["primary","secondary?"],
+    "materials": ["materials/percent words seen in tags"],
+    "style": "style guess",
+    "type": "type guess",
+    "department": "Men|Women|Unisex|Boys|Girls if visible",
+    "features": ["keywords like pockets, zip, lined, adjustable waist"],
+    "ocr": "short concatenated text from labels/tags (if visible)"
   },
-  "keywords": ["..."], "suggested_price": "29.99", "confidence_score": 0.95
+  "keywords": ["search terms"]
 }`,
               },
             ],
           },
         ],
+        max_tokens: 1800,
       }),
     });
-    if (!oa.ok) throw new Error(`OpenAI error: ${oa.status} ${await oa.text()}`);
-    const oaJson = await oa.json();
-    const content = oaJson.choices?.[0]?.message?.content ?? '{}';
-    const parsedAnalysis = JSON.parse(content || '{}');
 
-    // ---- 3) eBay category + aspects
+    if (!openaiResponse.ok) {
+      const errorData = await openaiResponse.text();
+      throw new Error(`OpenAI API error: ${openaiResponse.status} ${errorData}`);
+    }
+
+    const openaiResult = await openaiResponse.json();
+    const content = openaiResult?.choices?.[0]?.message?.content || '{}';
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      throw new Error('Invalid response format from OpenAI');
+    }
+
+    // 3) eBay category suggestion + live aspect schema
     const origin = req.headers.origin || `https://${req.headers.host}`;
-    const ebayUrl = `${origin}/api/ebay-categories`;
+    const ebayApiUrl = `${origin}/api/ebay-categories`;
 
-    const sugg = await fetch(ebayUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'getSuggestedCategories',
-        title: parsedAnalysis.title,
-        keywords: parsedAnalysis.keywords || [],
-      }),
+    // suggested category
+    let categoryId = '11450';
+    let categoryName = 'Clothing, Shoes & Accessories';
+    let categoryPath = categoryName;
+    let suggestions: any[] = [{ id: categoryId, name: categoryName, path: categoryPath }];
+
+    try {
+      const catResp = await fetch(ebayApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'getSuggestedCategories', title: parsed.title, keywords: parsed.keywords || [] }),
+      });
+      if (catResp.ok) {
+        const catData = await catResp.json();
+        categoryId = catData.categoryId || categoryId;
+        categoryName = catData.categoryName || categoryName;
+        categoryPath = catData.categoryPath || categoryName;
+        suggestions = (catData.suggestions || []).map((s: any) => ({ id: s.id, name: s.name, path: s.path || s.name }));
+      }
+    } catch {
+      /* fallback already set */
+    }
+
+    // fetch live aspects
+    let aspects: any[] = [];
+    try {
+      const aspResp = await fetch(ebayApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
+      });
+      if (aspResp.ok) {
+        const aspData = await aspResp.json();
+        aspects = aspData.aspects || [];
+      }
+    } catch {
+      aspects = [];
+    }
+
+    // 4) Reasoning pass -> produce item_specifics (snap to live options)
+    const detected = parsed?.detected || {};
+    const item_specifics = buildReasonedSpecifics({
+      aspects,
+      detected,
+      title: parsed?.title || '',
+      description: `${parsed?.description || ''} ${detected?.ocr || ''}`,
     });
 
-    if (!sugg.ok) throw new Error(`Taxonomy suggestion failed: ${sugg.status}`);
-    const suggData = await sugg.json();
-
-    parsedAnalysis.ebay_category_id = suggData.categoryId;
-    parsedAnalysis.ebay_category_name = suggData.categoryName;
-    parsedAnalysis.ebay_category_path = suggData.categoryPath || suggData.categoryName;
-    parsedAnalysis.category = {
-      id: suggData.categoryId,
-      name: suggData.categoryName,
-      path: suggData.categoryPath || suggData.categoryName,
+    // 5) Assemble final analysis payload
+    const result = {
+      title: parsed?.title || '',
+      description: parsed?.description || '',
+      category: { id: categoryId, name: categoryName, path: categoryPath },
+      category_suggestions: suggestions,
+      category_specifics_schema: aspects,
+      item_specifics,
+      keywords: parsed?.keywords || [],
+      detected,
     };
-    parsedAnalysis.category_suggestions = (suggData.suggestions || []).map((s: any) => ({
-      id: s.id,
-      name: s.name,
-      path: s.path || s.name,
-    }));
 
-    const aspectsResp = await fetch(ebayUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'getCategorySpecifics', categoryId: suggData.categoryId }),
-    });
-    if (!aspectsResp.ok) throw new Error(`Aspects fetch failed: ${aspectsResp.status}`);
-    const aspectsData = await aspectsResp.json();
-    const ebayAspects: any[] = aspectsData.aspects || [];
-
-    // ---- 4) map (two-pass w/ dependencies)
-    const mapped = mapWithDependencies(
-      parsedAnalysis.detected || {},
-      ebayAspects,
-      parsedAnalysis.category?.path || '',
-      parsedAnalysis.title || ''
-    );
-
-    parsedAnalysis.category_specifics_schema = ebayAspects;
-    parsedAnalysis.item_specifics = mapped;
-
-    // ---- 5) Optional Make webhook
+    // 6) Optional webhook (Make.com)
     if (process.env.VITE_MAKE_WEBHOOK_URL) {
       try {
         await fetch(process.env.VITE_MAKE_WEBHOOK_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id,
-            analysis: parsedAnalysis,
-            image_urls: images,
-            timestamp: new Date().toISOString(),
-          }),
+          body: JSON.stringify({ session_id, analysis: result, image_urls: images, timestamp: new Date().toISOString() }),
         });
-      } catch { /* ignore */ }
+      } catch {
+        /* non-fatal */
+      }
     }
 
-    return res.status(200).json({
-      success: true,
-      data: parsedAnalysis,
-      images_processed: base64Images.length,
-      session_id,
-    });
-  } catch (err: any) {
+    return res.status(200).json({ success: true, data: result, images_processed: base64Images.length, session_id });
+  } catch (error: any) {
     return res.status(500).json({
-      error: err?.message || 'Internal server error',
-      details: process.env.NODE_ENV === 'development' ? err?.stack : undefined,
+      error: error.message || 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
-}
-
-/* =========================================================
-   Dependency-aware mapper
-   ========================================================= */
-function mapWithDependencies(
-  detected: any,
-  ebayAspects: any[],
-  categoryPath: string,
-  title: string
-) {
-  const dep = inferDepartment(categoryPath, title);
-  const sizeTypeGuess = inferSizeType({ size: detected?.size, title, categoryPath });
-
-  // Build aliases where helpful (especially for Size Type)
-  const sizeTypeOpts = getOptionsFor(ebayAspects, 'size type');
-  const sizeTypeAlias = sizeTypeAliasesForOptions(sizeTypeOpts);
-
-  // PASS 1: map everything conservatively (no dependency enforcement yet)
-  const pass1 = mapLoose(detected, ebayAspects, {
-    department: dep,
-    sizeTypeGuess,
-    sizeTypeAlias,
-    title,
-    categoryPath,
-  });
-
-  // PASS 2: enforce dependencies & re-snap where needed
-  enforceDependencies(pass1, ebayAspects, {
-    department: dep,
-    sizeTypeGuess,
-    sizeTypeAlias,
-    detected,
-    title,
-    categoryPath,
-  });
-
-  return pass1;
-}
-
-function getAspect(ary: any[], nameSubstr: string) {
-  const n = norm(nameSubstr);
-  return ary.find((a) => norm(a?.name || '').includes(n));
-}
-function getOptionsFor(ary: any[], nameSubstr: string) {
-  const a = getAspect(ary, nameSubstr);
-  return (a?.values || []) as string[];
-}
-
-/** pass 1: independent, conservative mapping */
-function mapLoose(
-  det: any,
-  ebayAspects: any[],
-  ctx: {
-    department: string;
-    sizeTypeGuess: string;
-    sizeTypeAlias: Record<string, string[]>;
-    title: string;
-    categoryPath: string;
-  }
-) {
-  const {
-    department, sizeTypeGuess, sizeTypeAlias,
-  } = ctx;
-
-  const color = Array.isArray(det?.colors) ? det.colors[0] : det?.colors || '';
-  const featuresArr: string[] = det?.features || [];
-  const material = Array.isArray(det?.materials) ? det.materials[0] : det?.materials || '';
-
-  const mapped: any[] = [];
-
-  for (const a of ebayAspects) {
-    const name = a?.name || '';
-    const n = norm(name);
-    const opts: string[] = a?.values || [];
-    const selectionOnly = !!a?.selectionOnly;
-    const multi = !!a?.multi;
-
-    let value = '';
-    let useAliases: Record<string, string[]> | undefined;
-
-    if (n === 'department') {
-      const { value: v, score } = snapToOption(department, opts);
-      value = score >= 0.6 ? v : '';
-    } else if (n.includes('size type')) {
-      useAliases = sizeTypeAlias;
-      const { value: v, score } = snapToOption(sizeTypeGuess, opts, useAliases);
-      value = score >= 0.6 ? v : '';
-    } else if (n === 'size' || n.includes('waist size') || n.includes('inseam') || n.includes('neck size') || n.includes('chest size')) {
-      const { value: v, score } = snapToOption(det?.size || '', opts);
-      value = selectionOnly ? (score >= 0.6 ? v : '') : (det?.size || '');
-    } else if (n.includes('color') || n.includes('colour')) {
-      const { value: v, score } = snapToOption(color, opts);
-      value = selectionOnly ? (score >= 0.6 ? v : '') : color;
-    } else if (n.includes('material') || n.includes('fabric')) {
-      const { value: v, score } = snapToOption(material, opts);
-      value = selectionOnly ? (score >= 0.6 ? v : '') : material;
-    } else if (n.includes('features')) {
-      const picked = snapMany(featuresArr, opts);
-      value = multi ? picked.join(', ') : (picked[0] || '');
-    } else {
-      // generic: try to use detected[name-like] if present
-      const guess =
-        det?.[camelLike(n)] ||
-        det?.[n.replace(/\s+/g, '_')] ||
-        '';
-
-      if (multi) {
-        const chosen = snapMany(Array.isArray(guess) ? guess : [guess], opts);
-        value = chosen.join(', ');
-      } else {
-        const { value: v, score } = snapToOption(String(guess || ''), opts);
-        value = selectionOnly ? (score >= 0.6 ? v : '') : (guess || (score >= 0.7 ? v : ''));
-      }
-    }
-
-    mapped.push({
-      name,
-      value,
-      required: !!a?.required,
-      type: a?.type,
-      options: opts,
-      selectionOnly,
-      multi,
-      freeTextAllowed: !!a?.freeTextAllowed,
-    });
-  }
-
-  return mapped;
-}
-
-/** pass 2: enforce dependencies (Size Type ➜ Size) and re-snap */
-function enforceDependencies(
-  specs: any[],
-  ebayAspects: any[],
-  ctx: {
-    department: string;
-    sizeTypeGuess: string;
-    sizeTypeAlias: Record<string, string[]>;
-    detected: any;
-    title: string;
-    categoryPath: string;
-  }
-) {
-  // ——— Size Type ➜ Size ———
-  const sizeTypeIdx = specs.findIndex((s) => norm(s.name).includes('size type'));
-  const sizeIdx = specs.findIndex((s) => {
-    const n = norm(s.name);
-    return n === 'size' || n.includes('waist size') || n.includes('inseam') || n.includes('neck size') || n.includes('chest size');
-  });
-
-  if (sizeTypeIdx !== -1) {
-    const st = specs[sizeTypeIdx];
-    // If Size Type is empty but options exist, choose a conservative default using guess + aliases
-    if (!st.value && st.options?.length) {
-      const { value: v, score } = snapToOption(ctx.sizeTypeGuess, st.options, ctx.sizeTypeAlias);
-      if (score >= 0.6) st.value = v;
-      else {
-        // fallback: pick a neutral standard if present to keep form valid
-        const defaults = ['Regular', 'Misses', 'Men', 'Women'];
-        const pick = st.options.find((o: string) => defaults.includes(o));
-        if (pick) st.value = pick;
-      }
-    }
-
-    // If size exists but selectionOnly and we didn't confidently snap it, re-snap now with Size Type fixed
-    if (sizeIdx !== -1) {
-      const size = specs[sizeIdx];
-      if (size.selectionOnly && size.options?.length) {
-        const { value: v, score } = snapToOption(size.value || ctx.detected?.size || '', size.options);
-        size.value = score >= 0.6 ? v : ''; // avoid invalid combos
-      }
-    }
-  }
-}
-
-/* =========================
-   helpers
-   ========================= */
-function camelLike(s: string) {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+([a-z0-9])/g, (_, c) => c.toUpperCase())
-    .replace(/[^a-z0-9]/g, '');
 }
