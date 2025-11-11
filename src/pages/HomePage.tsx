@@ -31,6 +31,128 @@ function chooseOptionValue(
 }
 
 /* -------------------------------------------------------
+   Size / Size Type dependency helpers (robust heuristics)
+   ------------------------------------------------------- */
+
+// detect the current "Size Type" selected value from item specifics
+function getSizeTypeValue(specs: any[]): string {
+  const st = specs?.find((s: any) => /size type/i.test(s?.name || ''));
+  return st?.value || '';
+}
+
+// recognize size-like aspect names that should be filtered by Size Type
+function isSizeAspectName(name: string): boolean {
+  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+}
+
+// numeric grabber for big/tall heuristics
+function parseFirstNumber(s: string): number | null {
+  const m = (s || '').match(/\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
+// word detectors
+const hasWord = (w: string, s: string) => new RegExp(`(^|\\b)${w}(\\b|$)`, 'i').test(s);
+
+// Big & Tall tokens (covers many eBay option patterns)
+function isTallToken(v: string) {
+  return /(tall|long|\bLT\b|\bXLT\b|\b2XLT\b|\b3XLT\b|\b4XLT\b|\b5XLT\b)/i.test(v);
+}
+function isPetiteToken(v: string) {
+  return /(petite|\bP\b|\bPS\b|\bPM\b|\bPL\b|\bPXL\b|\bPetites?\b)/i.test(v);
+}
+function isJuniorToken(v: string) {
+  return /(junior|jr\b|juniors)/i.test(v);
+}
+function isMaternityToken(v: string) {
+  return /maternity/i.test(v);
+}
+function isBigToken(v: string) {
+  return /(husky|big|big & tall|b&t)/i.test(v);
+}
+function isPlusNumeric(v: string) {
+  // 1X 2X 3X etc are usually "Plus" or Big sets
+  return /\b[1-6]X(L|LT)?\b/i.test(v);
+}
+function isLargeNumeric(v: string) {
+  // heuristic: if numeric looks large (waist 46+, neck/chest high)
+  const n = parseFirstNumber(v);
+  if (n == null) return false;
+  return n >= 46; // conservative split point that works broadly
+}
+
+// juniors numeric heuristic (odd numbers 1,3,5,7,... common in juniors pants/dresses)
+function isJuniorsOddNumber(v: string) {
+  const n = parseFirstNumber(v);
+  if (n == null) return false;
+  return n % 2 === 1 && n <= 19; // 1..19 odd
+}
+
+/**
+ * Filter the size options based on Size Type selection.
+ * If no type chosen -> return full set.
+ * These heuristics are intentionally permissive to cover eBay’s breadth.
+ */
+function filterSizeOptionsBySizeType(
+  sizeType: string,
+  allOptions: string[] = [],
+  categoryPath: string = ''
+): string[] {
+  const st = (sizeType || '').toLowerCase();
+  if (!st) return allOptions;
+
+  // base sets
+  const tallSet = (v: string) => isTallToken(v);
+  const petiteSet = (v: string) => isPetiteToken(v);
+  const juniorSet = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
+  const maternitySet = (v: string) => isMaternityToken(v);
+
+  const regularExclude = (v: string) =>
+    !isTallToken(v) &&
+    !isPetiteToken(v) &&
+    !isJuniorToken(v) &&
+    !isMaternityToken(v);
+
+  if (st.includes('big') || st.includes('tall') || st.includes('husky')) {
+    return allOptions.filter(
+      (v) =>
+        tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v)
+    );
+  }
+  if (st.includes('petite')) {
+    return allOptions.filter((v) => petiteSet(v));
+  }
+  if (st.includes('tall')) {
+    return allOptions.filter((v) => tallSet(v));
+  }
+  if (st.includes('junior')) {
+    return allOptions.filter((v) => juniorSet(v));
+  }
+  if (st.includes('maternity')) {
+    // many categories don’t flag maternity in size options; show all
+    return allOptions;
+  }
+  if (st.includes('plus')) {
+    // try to prefer plus-like tokens; fallback to all if none
+    const filtered = allOptions.filter((v) => isPlusNumeric(v));
+    return filtered.length ? filtered : allOptions.filter(regularExclude);
+  }
+  // Regular/Misses/Default
+  return allOptions.filter(regularExclude);
+}
+
+// convenience: ensure that current Size still valid for the chosen Size Type
+function normalizeSizeAgainstSizeType(
+  sizeTypeVal: string,
+  sizeValue: string,
+  sizeOptions: string[],
+  categoryPath: string
+): string {
+  const filtered = filterSizeOptionsBySizeType(sizeTypeVal, sizeOptions, categoryPath);
+  return filtered.includes(sizeValue) ? sizeValue : '';
+}
+
+/* -------------------------------------------------------
    Compact, searchable token selector for item specifics
    ------------------------------------------------------- */
 function TokenSelect({
@@ -58,7 +180,7 @@ function TokenSelect({
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
     .filter((o) => (lowerQuery ? o.toLowerCase().includes(lowerQuery) : true))
-    .slice(0, 50); // keep it snappy
+    .slice(0, 50);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -131,7 +253,7 @@ function TokenSelect({
             </span>
           ))}
 
-        {/* For single select show the current value as a small pill */}
+        {/* Single pill */}
         {!multi && selected[0] && (
           <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
             {selected[0]}
@@ -148,7 +270,6 @@ function TokenSelect({
           </span>
         )}
 
-        {/* Input */}
         <input
           ref={inputRef}
           value={query}
@@ -159,7 +280,6 @@ function TokenSelect({
           className="flex-1 min-w-[120px] border-0 outline-none text-sm py-1 placeholder-gray-400"
         />
 
-        {/* Clear button (if there is a value and no query) */}
         {(multi ? selected.length > 0 : !!selected[0]) && !query && !disabled && (
           <button
             type="button"
@@ -175,7 +295,6 @@ function TokenSelect({
         )}
       </div>
 
-      {/* Dropdown */}
       {open && !disabled && filtered.length > 0 && (
         <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-gray-200 bg-white shadow">
           {filtered.map((o) => (
@@ -183,7 +302,7 @@ function TokenSelect({
               type="button"
               key={o}
               className="w-full text-left px-3 py-2 text-sm hover:bg-teal-50"
-              onMouseDown={(e) => e.preventDefault()} // keep focus
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => addOption(o)}
             >
               {o}
@@ -365,7 +484,6 @@ export default function HomePage() {
 
         const value = chooseOptionValue(previous, aspect.values ?? [], isSelectionOnly);
 
-        // if multi comes from eBay, carry it forward (server may include it)
         return {
           name: aspect.name,
           required: Boolean(aspect.required),
@@ -416,16 +534,35 @@ export default function HomePage() {
     }));
   };
 
+  // main change handler with dependency logic between Size Type and Size
   const handleItemSpecificsChange = (index: number, value: string | string[]) => {
     setListingData((prev: any) => {
       const next = [...(prev?.item_specifics ?? [])];
       if (!next[index]) return prev;
 
+      // update field
       if (next[index]?.multi) {
         const arr = Array.isArray(value) ? value : value ? [String(value)] : [];
         next[index] = { ...next[index], value: arr };
       } else {
         next[index] = { ...next[index], value: String(Array.isArray(value) ? value[0] ?? '' : value) };
+      }
+
+      // if "Size Type" changed, normalize any "Size"-like aspect
+      if (/size type/i.test(next[index].name || '')) {
+        const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
+        if (sizeIdx !== -1) {
+          const sizeSpec = next[sizeIdx];
+          const newSizeTypeVal = String(next[index].value || '');
+          const filtered = filterSizeOptionsBySizeType(
+            newSizeTypeVal,
+            sizeSpec?.options || [],
+            prev?.category?.path || ''
+          );
+          if (!filtered.includes(sizeSpec?.value)) {
+            next[sizeIdx] = { ...sizeSpec, value: '' };
+          }
+        }
       }
 
       return { ...(prev ?? {}), item_specifics: next };
@@ -552,105 +689,106 @@ export default function HomePage() {
     }
   };
 
-/**
- * Validates the listing data before publishing
- * Returns validation result with any error messages
- */
-const validateListing = (): { valid: boolean; errors: string[] } => {
-  const errors: string[] = [];
+  /**
+   * Validates the listing data before publishing
+   */
+  const validateListing = (): { valid: boolean; errors: string[] } => {
+    const errors: string[] = [];
 
-  // 1. Check basic required fields
-  if (!listingData?.title?.trim()) {
-    errors.push('Title is required');
-  }
-  
-  if (!listingData?.description?.trim()) {
-    errors.push('Description is required');
-  }
-  
-  if (!listingData?.category?.id) {
-    errors.push('Category must be selected');
-  }
+    if (!listingData?.title?.trim()) errors.push('Title is required');
+    if (!listingData?.description?.trim()) errors.push('Description is required');
+    if (!listingData?.category?.id) errors.push('Category must be selected');
+    if (listingData?.title && listingData.title.length > 80) {
+      errors.push('Title must be 80 characters or less');
+    }
 
-  // 2. Check title length (eBay limit is 80 characters)
-  if (listingData?.title && listingData.title.length > 80) {
-    errors.push('Title must be 80 characters or less');
-  }
-
-  // 3. Check required item specifics
-  const specifics = listingData?.item_specifics ?? [];
-  
-  for (const spec of specifics) {
-    if (!spec.required) continue; // Skip optional fields
-
-    const value = spec.value;
-    
-    // Handle both single values and multi-select arrays
-    if (Array.isArray(value)) {
-      // Multi-select field
-      if (value.length === 0) {
-        errors.push(`${spec.name} is required (select at least one option)`);
-      }
-    } else {
-      // Single value field
-      const trimmedValue = String(value ?? '').trim();
-      if (!trimmedValue) {
-        errors.push(`${spec.name} is required`);
+    const specifics = listingData?.item_specifics ?? [];
+    for (const spec of specifics) {
+      if (!spec.required) continue;
+      const value = spec.value;
+      if (Array.isArray(value)) {
+        if (value.length === 0) errors.push(`${spec.name} is required (select at least one option)`);
+      } else {
+        if (!String(value ?? '').trim()) errors.push(`${spec.name} is required`);
       }
     }
-  }
 
-  // 4. Check if at least one photo exists
-  if (photos.length === 0) {
-    errors.push('At least one photo is required');
-  }
+    if (photos.length === 0) errors.push('At least one photo is required');
 
-  return {
-    valid: errors.length === 0,
-    errors
+    return { valid: errors.length === 0, errors };
   };
-};
+
   const handlePublishToEbay = async () => {
-  if (!listingData) return;
+    if (!listingData) return;
 
-  // Run validation FIRST
-  const validation = validateListing();
-  setValidationErrors(validation.errors);
-
-  if (!validation.valid) {
-    // Scroll to top so user sees errors
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    return; // Stop here, don't proceed with publish
-  }
-
-  // Validation passed, proceed with publishing
-  setStatus('Publishing to eBay...');
-  
-  try {
-    const response = await fetch('/api/publish-listing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        listing_data: listingData,
-        images: photoPreviewUrls,
-      }),
-    });
-
-    if (!response.ok) {
-      const msg = await response.text();
-      throw new Error(msg || 'Failed to start the publishing process.');
+    const validation = validateListing();
+    setValidationErrors(validation.errors);
+    if (!validation.valid) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
     }
 
-    setStatus('Listing sent to eBay for publishing!');
-    setValidationErrors([]); // Clear any old errors
-    alert('Your listing has been sent to eBay! It may take a minute to appear.');
-    
-  } catch (error: any) {
-    console.error('Error publishing listing:', error);
-    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-    alert(`An error occurred: ${error?.message ?? 'Unknown error'}`);
-  }
-};
+    setStatus('Publishing to eBay...');
+    try {
+      const response = await fetch('/api/publish-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listing_data: listingData,
+          images: photoPreviewUrls,
+        }),
+      });
+
+      if (!response.ok) {
+        const msg = await response.text();
+        throw new Error(msg || 'Failed to start the publishing process.');
+      }
+
+      setStatus('Listing sent to eBay for publishing!');
+      setValidationErrors([]);
+      alert('Your listing has been sent to eBay! It may take a minute to appear.');
+    } catch (error: any) {
+      console.error('Error publishing listing:', error);
+      setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+      alert(`An error occurred: ${error?.message ?? 'Unknown error'}`);
+    }
+  };
+
+  // Build UI rows; for "Size" rows, filter options dynamically using current Size Type
+  const renderSpecificRow = (spec: any, index: number) => {
+    let effectiveSpec = spec;
+
+    if (isSizeAspectName(spec?.name || '')) {
+      const sizeTypeVal = getSizeTypeValue(listingData?.item_specifics || []);
+      const filteredOpts = filterSizeOptionsBySizeType(
+        sizeTypeVal,
+        Array.isArray(spec?.options) ? spec.options : [],
+        listingData?.category?.path || ''
+      );
+
+      // If current value is now invalid, clear it (safety on first render after AI)
+      if (spec?.value && !filteredOpts.includes(spec.value)) {
+        effectiveSpec = { ...spec, options: filteredOpts, value: '' };
+      } else {
+        effectiveSpec = { ...spec, options: filteredOpts };
+      }
+    }
+
+    return (
+      <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
+        <div className="flex items-center">
+          <span className="text-sm text-gray-700">{spec?.name || 'Specific'}</span>
+          {spec?.required ? <span className="ml-1 text-red-500">*</span> : null}
+        </div>
+
+        <ItemSpecificControl
+          spec={effectiveSpec}
+          onChange={(newValue) => handleItemSpecificsChange(index, newValue)}
+        />
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col">
       <section className="py-16 md:py-24 bg-white">
@@ -662,6 +800,17 @@ const validateListing = (): { valid: boolean; errors: string[] } => {
                 Upload up to 12 photos and see how our AI creates professional listings instantly
               </p>
             </div>
+
+            {validationErrors.length > 0 && (
+              <div className="mb-6 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+                <p className="font-semibold mb-2">Please fix the following before publishing:</p>
+                <ul className="list-disc ml-5">
+                  {validationErrors.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {!listingData ? (
               <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -860,19 +1009,9 @@ const validateListing = (): { valid: boolean; errors: string[] } => {
                           Item Specifics
                         </label>
 
-                        {listingData.item_specifics.map((spec: any, index: number) => (
-                          <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
-                            <div className="flex items-center">
-                              <span className="text-sm text-gray-700">{spec?.name || 'Specific'}</span>
-                              {spec?.required ? <span className="ml-1 text-red-500">*</span> : null}
-                            </div>
-
-                            <ItemSpecificControl
-                              spec={spec}
-                              onChange={(newValue) => handleItemSpecificsChange(index, newValue)}
-                            />
-                          </div>
-                        ))}
+                        {listingData.item_specifics.map((spec: any, index: number) =>
+                          renderSpecificRow(spec, index)
+                        )}
                       </div>
                     )}
                   </div>
