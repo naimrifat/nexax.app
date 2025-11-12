@@ -21,7 +21,7 @@ function includesAny(hay: string, needles: string[]) {
   return needles.some((n) => h.includes(norm(n)));
 }
 
-// lenient option snapper for selectionOnly aspects
+// Hardened option snapper for selectionOnly aspects (score-based)
 function pickBestOption(target: string, options: string[] = []) {
   if (!target) return '';
   if (!options?.length) return target;
@@ -32,40 +32,116 @@ function pickBestOption(target: string, options: string[] = []) {
   const exact = options.find((o) => norm(o) === t);
   if (exact) return exact;
 
-  // 2) starts-with / contains (both directions)
-  const soft = options.find(
-    (o) => norm(o).startsWith(t) || t.startsWith(norm(o)) || norm(o).includes(t) || t.includes(norm(o))
-  );
-  if (soft) return soft;
-
-  // 3) token overlap
-  const tTokens = tokens(t);
+  // 2) token overlap + begins/contains bonus
+  const tt = tokens(t);
   let best = '';
-  let bestScore = -1;
-  for (const opt of options) {
-    const score = tTokens.filter((x) => tokens(opt).includes(x)).length;
-    if (score > bestScore) { bestScore = score; best = opt; }
+  let bestScore = 0;
+  for (const o of options) {
+    const on = norm(o);
+    const ov = tokens(on);
+    const overlap = tt.filter((x) => ov.includes(x)).length;
+    const beginsBonus = on.startsWith(t) || t.startsWith(on) ? 1 : 0;
+    const containsBonus = on.includes(t) || t.includes(on) ? 0.5 : 0;
+    const score = overlap + beginsBonus + containsBonus;
+    if (score > bestScore) { bestScore = score; best = o; }
   }
-  return best || options[0] || '';
+  return best || '';
 }
 
 // infer dept quickly from breadcrumb
 function inferDepartmentFromPath(path: string) {
   const p = norm(path);
-  if (p.includes("women")) return "Women";
-  if (p.includes("men")) return "Men";
-  if (p.includes("girls")) return "Girls";
-  if (p.includes("boys")) return "Boys";
-  if (p.includes("unisex")) return "Unisex Adult";
-  return "";
+  if (p.includes('women')) return 'Women';
+  if (p.includes('men')) return 'Men';
+  if (p.includes('girls')) return 'Girls';
+  if (p.includes('boys')) return 'Boys';
+  if (p.includes('unisex')) return 'Unisex Adult';
+  return '';
 }
 
 function inferSizeType({ size, title, categoryPath }: { size?: string; title?: string; categoryPath?: string; }) {
-  const hay = [size, title, categoryPath].filter(Boolean).join(" ").toLowerCase();
-  if (includesAny(hay, ["petite"])) return "Petite";
-  if (includesAny(hay, ["tall", "long"])) return "Tall";
-  if (includesAny(hay, ["plus", "extended", "big & tall", "big tall"])) return "Plus";
-  return "Regular";
+  const hay = [size, title, categoryPath].filter(Boolean).join(' ').toLowerCase();
+  if (includesAny(hay, ['petite'])) return 'Petite';
+  if (includesAny(hay, ['tall', 'long'])) return 'Tall';
+  if (includesAny(hay, ['plus', 'extended', 'big & tall', 'big tall'])) return 'Plus';
+  return 'Regular';
+}
+
+/* ----------------------------------------
+   Types + schema utilities
+-----------------------------------------*/
+type AspectSchema = {
+  name: string;
+  required: boolean;
+  type: 'SelectionOnly' | 'FreeText' | string;
+  multi: boolean;
+  selectionOnly: boolean;
+  freeTextAllowed: boolean;
+  values: string[];
+};
+
+function buildSchemaMaps(aspects: AspectSchema[]) {
+  const byName = new Map<string, AspectSchema>();
+  const optionSets = new Map<string, Set<string>>();
+  const canonicalValue = new Map<string, Map<string, string>>(); // per-aspect norm(value) -> canonical
+
+  for (const a of aspects) {
+    const key = norm(a.name);
+    byName.set(key, a);
+
+    const set = new Set<string>();
+    const canonMap = new Map<string, string>();
+    for (const v of a.values || []) {
+      const nv = norm(v);
+      set.add(nv);
+      canonMap.set(nv, v);
+    }
+    optionSets.set(key, set);
+    canonicalValue.set(key, canonMap);
+  }
+  return { byName, optionSets, canonicalValue };
+}
+
+function normalizeValueForAspect(
+  aspect: AspectSchema,
+  raw: any,
+  optionSet: Set<string> | undefined,
+  canonMap: Map<string, string> | undefined
+) {
+  const toArray = (v: any) => Array.isArray(v) ? v : (v == null || v === '' ? [] : [v]);
+  const vals = toArray(raw).map(String).filter(Boolean);
+
+  if (aspect.selectionOnly) {
+    if (!optionSet || !canonMap) return [];
+    if (aspect.multi) {
+      const kept: string[] = [];
+      for (const v of vals) {
+        const nv = norm(v);
+        if (optionSet.has(nv)) kept.push(canonMap.get(nv)!);
+        else {
+          const snapped = pickBestOption(v, aspect.values);
+          if (snapped) kept.push(snapped);
+        }
+      }
+      // de-duplicate while preserving order
+      const seen = new Set<string>();
+      return kept.filter(val => { const k = norm(val); if (seen.has(k)) return false; seen.add(k); return true; });
+    } else {
+      const first = vals[0] ?? '';
+      const nv = norm(first);
+      if (optionSet.has(nv)) return [canonMap.get(nv)!];
+      const snapped = pickBestOption(first, aspect.values);
+      return snapped ? [snapped] : [];
+    }
+  } else {
+    if (aspect.multi) {
+      const seen = new Set<string>(); const out: string[] = [];
+      for (const v of vals) { const k = norm(v); if (!seen.has(k)) { seen.add(k); out.push(v); } }
+      return out;
+    } else {
+      return vals.length ? [vals[0]] : [];
+    }
+  }
 }
 
 /* ----------------------------------------
@@ -127,7 +203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           role: 'system',
           content:
-            "You are an expert eBay lister. Read ALL photos together. Extract concrete facts (brand, size, color, materials, construction, features, closures, themes, patterns, lengths, fits, etc.). Return structured JSON only.",
+            'You are an expert eBay lister. Read ALL photos together. Extract concrete facts (brand, size, color, materials, construction, features, closures, themes, patterns, lengths, fits, etc.). Return structured JSON only.',
         },
         {
           role: 'user',
@@ -144,7 +220,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     "size": "...",
     "department": "Men|Women|Girls|Boys|Unisex Adult",
     "colors": ["..."],
-    "materials": ["Polyester", "Cotton", "Down", ...],
+    "materials": ["Polyester","Cotton","Down", "..."],
     "outerShellMaterial": "...",
     "liningMaterial": "...",
     "insulationMaterial": "...",
@@ -152,7 +228,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     "type": "...",
     "lengthHint": "short|knee length|midi|maxi|long|cropped|hip|thigh|knee|mid-calf|ankle",
     "closure": "Zip|Buttons|Buckle|Pullover|Hook & Eye|... (or null)",
-    "features": ["Hood", "Pockets", "Water Resistant", "Stretch", ...],
+    "features": ["Hood","Pockets","Water Resistant","Stretch", "..."],
     "pattern": "Solid|Floral|Plaid|Striped|Animal Print|Logo|Graphic|Quilted|... (best guess)",
     "theme": ["Outdoor","Sports","Y2K","80s","90s","Animals","Floral", ...],
     "countryOfOrigin": "... if visible",
@@ -169,7 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ],
     });
 
-    const visionJSON = safeJSON(vision.choices?.[0]?.message?.content || "{}", {});
+    const visionJSON = safeJSON(vision.choices?.[0]?.message?.content || '{}', {});
     const detected = visionJSON.detected || {};
     const title = visionJSON.title || '';
     const description = visionJSON.description || '';
@@ -219,7 +295,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Pull aspects for the chosen category
-    let aspects: any[] = [];
+    let aspects: AspectSchema[] = [];
     try {
       const sp = await fetch(ebayApiUrl, {
         method: 'POST',
@@ -228,24 +304,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
       if (sp.ok) {
         const data = await sp.json();
-        aspects = data?.aspects ?? [];
+        aspects = (data?.aspects ?? []).map((a: any) => ({
+          name: a.name,
+          required: !!a.required,
+          type: a.type,
+          multi: !!a.multi,
+          selectionOnly: a.type === 'SelectionOnly',
+          freeTextAllowed: a.type !== 'SelectionOnly',
+          values: Array.isArray(a.values) ? a.values : [],
+        }));
       }
     } catch {
       aspects = [];
     }
 
+    // Build fast lookup maps for schema enforcement
+    const { byName, optionSets, canonicalValue } = buildSchemaMaps(aspects);
+
     /* ----------------------------------------
-       Stage B: Reconcile to eBay aspects
-       (model picks legal options; we fall back if needed)
+       Stage B: Reconcile to eBay aspects (AI guided)
+       (model picks legal options; we strictly post-validate)
     -----------------------------------------*/
-    // Prepare a compact aspects payload for the model
     const aspectsForModel = aspects.map(a => ({
       name: a.name,
       required: !!a.required,
-      selectionOnly: a.type === 'SelectionOnly',
+      selectionOnly: a.selectionOnly,
       multi: !!a.multi,
-      freeTextAllowed: a.type !== 'SelectionOnly',
-      options: Array.isArray(a.values) ? a.values.slice(0, 150) : [], // cap for token sanity
+      freeTextAllowed: a.freeTextAllowed,
+      options: (a.values || []).slice(0, 150), // cap for token sanity
     }));
 
     const reconcile = await callOpenAIChat({
@@ -256,7 +342,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           role: 'system',
           content:
-            "You are mapping product facts to eBay item specifics. For each aspect, choose *valid* option(s) from the given options when selectionOnly=true. If freeText is allowed and no option fits, return clear text. Use domain reasoning, e.g.: maxi ⇒ Long length; puffer ⇒ Down insulation; 65% polyester ⇒ Polyester (fabric); 60/40 cotton/poly ⇒ Cotton Blend + Polyester Blend; animal print ⇒ Theme: Animals; floral ⇒ Theme: Floral. Prefer common neutral choices when multiple are correct (e.g., Pattern: Solid when clearly solid). Return JSON only.",
+            'You are mapping product facts to eBay item specifics. Rules: For selectionOnly aspects, you MUST return only values from the provided options. If none fit, return empty string (or empty array for multi). Do not paraphrase option labels. Prefer clear, common choices when multiple apply. Return JSON only.',
         },
         {
           role: 'user',
@@ -288,62 +374,109 @@ Return:
       ]
     });
 
-    const recJSON = safeJSON(reconcile.choices?.[0]?.message?.content || "{}", {});
-    let finalSpecifics: Array<{name: string; value: any}> = Array.isArray(recJSON.final_specifics) ? recJSON.final_specifics : [];
+    const recJSON = safeJSON(reconcile.choices?.[0]?.message?.content || '{}', {});
+    let aiSpecifics: Array<{ name: string; value: any }> =
+      Array.isArray(recJSON.final_specifics) ? recJSON.final_specifics : [];
 
-    // Hard fallback: if model returned nothing, do heuristic snapping instead of empty UI
-    if (!finalSpecifics.length) {
-      finalSpecifics = aspects.map((a) => {
-        const n = norm(a.name);
-        const options: string[] = a.values ?? [];
-        const selOnly = a.type === 'SelectionOnly';
-        let guess = '';
+    // --- Post-validate AI specifics against schema (strict) ---
+    const mappingLog: string[] = [];
+    const sanitizedSpecifics: Array<{ name: string; value: string | string[]; source: 'ai' | 'fallback' }> = [];
 
-        // pull from detected
-        if (n.includes('brand')) guess = detected.brand || '';
-        else if (n === 'department') guess = department;
-        else if (n.includes('size type')) guess = sizeType;
-        else if (n === 'size' || n.includes('waist') || n.includes('inseam')) guess = detected.size || '';
-        else if (n.includes('color') || n.includes('colour')) guess = (Array.isArray(detected.colors) ? detected.colors[0] : detected.colors) || '';
-        else if (n.includes('outer') && n.includes('material')) guess = detected.outerShellMaterial || (detected.materials?.[0] || '');
-        else if (n.includes('lining') && n.includes('material')) guess = detected.liningMaterial || '';
-        else if (n.includes('insulation') && n.includes('material')) guess = detected.insulationMaterial || (includesAny(title+description, ['puffer','down']) ? 'Down' : '');
-        else if (n === 'style') guess = detected.style || '';
-        else if (n === 'type') guess = detected.type || '';
-        else if (n.includes('pattern')) guess = detected.pattern || '';
-        else if (n.includes('length')) {
-          const h = norm(detected.lengthHint || '');
-          if (h.includes('maxi') || h.includes('long') || h.includes('ankle')) guess = 'Long';
-          else if (h.includes('midi') || h.includes('mid')) guess = 'Midi';
-          else if (h.includes('knee')) guess = 'Knee Length';
-          else if (h.includes('short') || h.includes('hip') || h.includes('cropped')) guess = 'Short';
-        }
-        else if (n.includes('closure')) guess = detected.closure || (includesAny(title+description, ['zip','zipper']) ? 'Zip' : '');
-        else if (n.includes('theme')) guess = Array.isArray(detected.theme) ? detected.theme : detected.theme ? [detected.theme] : [];
-        else if (n.includes('features')) guess = Array.isArray(detected.features) ? detected.features : (detected.features ? [detected.features] : []);
-        else if (n.includes('country') && n.includes('origin')) guess = detected.countryOfOrigin || '';
-        else if (n.includes('model')) guess = detected.model || '';
-        else if (n.includes('sleeve') && n.includes('length')) guess = detected.sleeveLength || '';
-        else if (n === 'fit') guess = detected.fit || '';
+    for (const s of aiSpecifics) {
+      const key = norm(s.name);
+      const a = byName.get(key);
+      if (!a) continue;
 
-        // normalize through options if necessary
-        if (Array.isArray(guess)) {
-          const snapped = guess
-            .map((g) => selOnly ? pickBestOption(String(g), options) : String(g))
-            .filter(Boolean);
-          return { name: a.name, value: snapped };
-        } else {
-          const snapped = selOnly ? pickBestOption(guess, options) : guess;
-          return { name: a.name, value: snapped };
-        }
-      });
+      const normalized = normalizeValueForAspect(
+        a,
+        s.value,
+        optionSets.get(key),
+        canonicalValue.get(key)
+      );
+
+      if (!normalized.length) {
+        mappingLog.push(`AI → rejected or empty for "${a.name}"`);
+        sanitizedSpecifics.push({ name: a.name, value: a.multi ? [] : '', source: 'ai' });
+      } else {
+        const v = a.multi ? normalized : normalized[0];
+        mappingLog.push(`AI → accepted for "${a.name}": ${JSON.stringify(v)}`);
+        sanitizedSpecifics.push({ name: a.name, value: v, source: 'ai' });
+      }
     }
+
+    let finalSpecifics: Array<{ name: string; value: any }> =
+      sanitizedSpecifics.map(({ name, value }) => ({ name, value }));
+
+    // --- Gap fill (heuristics) ONLY where empty (esp. required) ---
+    const filled = new Map(finalSpecifics.map(s => [norm(s.name), s]));
+
+    for (const a of aspects) {
+      const k = norm(a.name);
+      const existing = filled.get(k);
+      const isEmpty =
+        !existing ||
+        (Array.isArray(existing.value) ? existing.value.length === 0 : !String(existing.value || '').trim());
+
+      if (!isEmpty) continue;
+
+      const options: string[] = a.values ?? [];
+      const selOnly = a.selectionOnly;
+      let guess: any = '';
+
+      // reuse your heuristic mapping logic
+      const td = title + description;
+
+      const n = norm(a.name);
+      if (n.includes('brand')) guess = (detected.brand || '');
+      else if (n === 'department') guess = department;
+      else if (n.includes('size type')) guess = sizeType;
+      else if (n === 'size' || n.includes('waist') || n.includes('inseam')) guess = detected.size || '';
+      else if (n.includes('color') || n.includes('colour')) guess = (Array.isArray(detected.colors) ? detected.colors[0] : detected.colors) || '';
+      else if (n.includes('outer') && n.includes('material')) guess = detected.outerShellMaterial || (detected.materials?.[0] || '');
+      else if (n.includes('lining') && n.includes('material')) guess = detected.liningMaterial || '';
+      else if (n.includes('insulation') && n.includes('material')) guess = detected.insulationMaterial || (includesAny(td, ['puffer', 'down']) ? 'Down' : '');
+      else if (n === 'style') guess = detected.style || '';
+      else if (n === 'type') guess = detected.type || '';
+      else if (n.includes('pattern')) guess = detected.pattern || '';
+      else if (n.includes('length')) {
+        const h = norm(detected.lengthHint || '');
+        if (h.includes('maxi') || h.includes('long') || h.includes('ankle')) guess = 'Long';
+        else if (h.includes('midi') || h.includes('mid')) guess = 'Midi';
+        else if (h.includes('knee')) guess = 'Knee Length';
+        else if (h.includes('short') || h.includes('hip') || h.includes('cropped')) guess = 'Short';
+      }
+      else if (n.includes('closure')) guess = detected.closure || (includesAny(td, ['zip', 'zipper']) ? 'Zip' : '');
+      else if (n.includes('theme')) guess = Array.isArray(detected.theme) ? detected.theme : detected.theme ? [detected.theme] : [];
+      else if (n.includes('features')) guess = Array.isArray(detected.features) ? detected.features : (detected.features ? [detected.features] : []);
+      else if (n.includes('country') && n.includes('origin')) guess = detected.countryOfOrigin || '';
+      else if (n.includes('model')) guess = detected.model || '';
+      else if (n.includes('sleeve') && n.includes('length')) guess = detected.sleeveLength || '';
+      else if (n === 'fit') guess = detected.fit || '';
+
+      // normalize through schema
+      const snappedArr = normalizeValueForAspect(
+        a,
+        guess,
+        optionSets.get(k),
+        canonicalValue.get(k)
+      );
+
+      if (snappedArr.length) {
+        const v = a.multi ? snappedArr : snappedArr[0];
+        filled.set(k, { name: a.name, value: v });
+        mappingLog.push(`Heuristic → filled "${a.name}" with ${JSON.stringify(v)}`);
+      } else {
+        filled.set(k, { name: a.name, value: a.multi ? [] : '' });
+      }
+    }
+
+    finalSpecifics = Array.from(filled.values());
 
     // Ensure every aspect is present (even if empty) so UI can render all rows
     const finalSpecificsMap = new Map(finalSpecifics.map(s => [norm(s.name), s]));
     for (const a of aspects) {
       if (!finalSpecificsMap.has(norm(a.name))) {
-        finalSpecifics.push({ name: a.name, value: '' });
+        finalSpecifics.push({ name: a.name, value: a.multi ? [] : '' });
       }
     }
 
@@ -357,29 +490,33 @@ Return:
       ebay_category_name: category.name,
       ebay_category_path: category.path,
       detected,
-      // For UI: include full schema so you can show options in the dropdowns
+      // schema for UI rendering
       category_specifics_schema: aspects.map(a => ({
         name: a.name,
         required: !!a.required,
         type: a.type,
         multi: !!a.multi,
-        selectionOnly: a.type === 'SelectionOnly',
-        freeTextAllowed: a.type !== 'SelectionOnly',
+        selectionOnly: a.selectionOnly,
+        freeTextAllowed: a.freeTextAllowed,
         values: a.values ?? [],
       })),
-      // What the UI should render as initial values:
-      item_specifics: finalSpecifics.map(s => ({
-        name: s.name,
-        value: s.value,
-        options: (aspects.find(a => norm(a.name) === norm(s.name))?.values) ?? [],
-        required: !!(aspects.find(a => norm(a.name) === norm(s.name))?.required),
-        multi: !!(aspects.find(a => norm(a.name) === norm(s.name))?.multi),
-        selectionOnly: (aspects.find(a => norm(a.name) === norm(s.name))?.type) === 'SelectionOnly',
-        freeTextAllowed: (aspects.find(a => norm(a.name) === norm(s.name))?.type) !== 'SelectionOnly',
-      })),
+      // initial values for UI
+      item_specifics: finalSpecifics.map(s => {
+        const a = aspects.find(x => norm(x.name) === norm(s.name));
+        return {
+          name: s.name,
+          value: s.value,
+          options: a?.values ?? [],
+          required: !!a?.required,
+          multi: !!a?.multi,
+          selectionOnly: !!a?.selectionOnly,
+          freeTextAllowed: !!a?.freeTextAllowed,
+        };
+      }),
       keywords: visionJSON.keywords || [],
       confidence_score: visionJSON.confidence_score ?? undefined,
       reconcile_notes: recJSON.notes ?? undefined,
+      mapping_log: mappingLog, // optional: remove in prod if too verbose
     };
 
     // Optional webhook for Make.com
