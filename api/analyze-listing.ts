@@ -196,7 +196,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
        Stage A: Vision analysis (broad)
     -----------------------------------------*/
     const vision = await callOpenAIChat({
-      model: 'gpt-4o',
+      model: 'gpt-.51',
       response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
@@ -335,7 +335,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }));
 
     const reconcile = await callOpenAIChat({
-      model: 'gpt-4o',
+      model: 'gpt-5.1',
       response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
