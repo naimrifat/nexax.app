@@ -245,40 +245,57 @@ function normalizeValueForAspect(
   optionSet: Set<string> | undefined,
   canonMap: Map<string, string> | undefined
 ) {
-  const toArray = (v: any) => Array.isArray(v) ? v : (v == null || v === '' ? [] : [v]);
-  // normalize each candidate through synonyms/color/pattern resolver
-  const vals = toArray(raw).map(String).filter(Boolean).map((v) => preprocessValue(aspect, v));
+  const toArray = (v: any) =>
+    Array.isArray(v) ? v : (v == null || v === '' ? [] : [v]);
 
-  if (aspect.selectionOnly) {
-    if (!optionSet || !canonMap) return [];
+  // normalize each candidate through synonyms/color/pattern resolver
+  const vals = toArray(raw)
+    .map(String)
+    .filter(Boolean)
+    .map((v) => preprocessValue(aspect, v));
+
+  const hasOptions = !!(aspect.values && aspect.values.length);
+  const snapOne = (v: string): string | '' => {
+    if (!hasOptions || !optionSet || !canonMap) return '';
+    const nv = norm(v);
+    if (optionSet.has(nv)) return canonMap.get(nv)!;
+    const snapped = pickBestOption(v, aspect.values);
+    return snapped || '';
+  };
+
+  // 1) Try to express everything in terms of allowed options
+  if (hasOptions) {
     if (aspect.multi) {
-      const kept: string[] = [];
+      const snapped: string[] = [];
       for (const v of vals) {
-        const nv = norm(v);
-        if (optionSet.has(nv)) kept.push(canonMap.get(nv)!);
-        else {
-          const snapped = pickBestOption(v, aspect.values);
-          if (snapped) kept.push(snapped);
-        }
+        const s = snapOne(v);
+        if (s) snapped.push(s);
       }
-      // de-duplicate, then cap to 3 to avoid spammy multi-select values
-      return dedupeArray(kept).slice(0, 3);
+      const deduped = dedupeArray(snapped).slice(0, 3);
+      if (deduped.length) return deduped;
+      // if nothing snapped and free text is allowed, we MAY fall through to raw text
+      if (!aspect.freeTextAllowed) return [];
+      // otherwise continue to raw free-text handling below
     } else {
       const first = vals[0] ?? '';
-      const nv = norm(first);
-      if (optionSet.has(nv)) return [canonMap.get(nv)!];
-      const snapped = pickBestOption(first, aspect.values);
-      return snapped ? [snapped] : [];
-    }
-  } else {
-    if (aspect.multi) {
-      return dedupeArray(vals).slice(0, 3);
-    } else {
-      return vals.length ? [vals[0]] : [];
+      const s = snapOne(first);
+      if (s) return [s];
+      if (!aspect.freeTextAllowed) return [];
+      // otherwise continue to raw free-text handling below
     }
   }
-}
 
+  // 2) Fallback: use cleaned raw values as free text (only if allowed)
+  if (!aspect.freeTextAllowed) {
+    return [];
+  }
+
+  if (aspect.multi) {
+    return dedupeArray(vals).slice(0, 3);
+  } else {
+    return vals.length ? [vals[0]] : [];
+  }
+}
 /* ----------------------------------------
    OpenAI helpers
 -----------------------------------------*/
