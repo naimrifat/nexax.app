@@ -68,6 +68,126 @@ function inferSizeType({ size, title, categoryPath }: { size?: string; title?: s
 }
 
 /* ----------------------------------------
+   Synonyms / normalization helpers
+-----------------------------------------*/
+
+// Value-level synonym tables keyed by canonical aspect category
+const VALUE_SYNONYMS: Record<string, Record<string, string>> = {
+  Color: {
+    grey: 'Gray',
+    gray: 'Gray',
+    charcoal: 'Gray',
+    'navy blue': 'Navy',
+    navy: 'Navy',
+    'light blue': 'Blue',
+    'sky blue': 'Blue',
+    tan: 'Beige',
+    khaki: 'Beige',
+    offwhite: 'White',
+    'off-white': 'White',
+    cream: 'Ivory',
+  },
+  Material: {
+    'polyester blend': 'Polyester',
+    'cotton blend': 'Cotton',
+    '100% cotton': 'Cotton',
+    '100% polyester': 'Polyester',
+    fleece: 'Fleece',
+    denim: 'Denim',
+  },
+  Department: {
+    women: 'Women',
+    womens: 'Women',
+    womenswear: 'Women',
+    men: 'Men',
+    mens: 'Men',
+    unisex: 'Unisex Adult',
+  },
+};
+
+// Simple color canonicalization table
+const COLOR_CANON: Record<string, string> = {
+  black: 'Black',
+  white: 'White',
+  gray: 'Gray',
+  grey: 'Gray',
+  charcoal: 'Gray',
+  red: 'Red',
+  blue: 'Blue',
+  navy: 'Navy',
+  green: 'Green',
+  beige: 'Beige',
+  tan: 'Beige',
+  khaki: 'Beige',
+  brown: 'Brown',
+  pink: 'Pink',
+  purple: 'Purple',
+  yellow: 'Yellow',
+  orange: 'Orange',
+  ivory: 'Ivory',
+};
+
+// Pattern keyword mapping
+const PATTERN_KEYWORDS: Record<string, string[]> = {
+  Floral: ['floral', 'flower', 'botanical'],
+  Solid: ['solid', 'plain'],
+  Striped: ['stripe', 'striped'],
+  Plaid: ['plaid', 'tartan'],
+  'Animal Print': ['animal print', 'leopard', 'cheetah', 'zebra', 'snake'],
+  Graphic: ['graphic', 'logo', 'print'],
+  Quilted: ['quilted'],
+};
+
+// Map raw aspect name to a canonical key used in the tables above
+function canonicalAspectKey(aspectName: string): string | null {
+  const n = norm(aspectName);
+  if (n.includes('color') || n.includes('colour')) return 'Color';
+  if (n.includes('material')) return 'Material';
+  if (n === 'department') return 'Department';
+  if (n.includes('pattern')) return 'Pattern';
+  return null;
+}
+
+function unifySynonyms(aspectName: string, raw: string): string {
+  const key = canonicalAspectKey(aspectName);
+  if (!key) return raw;
+  const table = VALUE_SYNONYMS[key];
+  if (!table) return raw;
+  const n = norm(raw);
+  for (const from in table) {
+    if (n === norm(from)) return table[from];
+  }
+  return raw;
+}
+
+function normalizeColor(raw: string): string {
+  const n = norm(raw);
+  return COLOR_CANON[n] || raw;
+}
+
+function resolvePattern(raw: string): string {
+  const r = norm(raw);
+  for (const pattern in PATTERN_KEYWORDS) {
+    if (PATTERN_KEYWORDS[pattern].some((k) => r.includes(k))) {
+      return pattern;
+    }
+  }
+  return raw;
+}
+
+function dedupeArray<T>(arr: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const v of arr) {
+    const key = norm(String(v));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+  }
+  return out;
+}
+
+/* ----------------------------------------
    Types + schema utilities
 -----------------------------------------*/
 type AspectSchema = {
@@ -102,6 +222,23 @@ function buildSchemaMaps(aspects: AspectSchema[]) {
   return { byName, optionSets, canonicalValue };
 }
 
+// Preprocess a single raw value based on aspect semantics (color/material/pattern/etc.)
+function preprocessValue(aspect: AspectSchema, raw: string): string {
+  let v = raw;
+  const key = canonicalAspectKey(aspect.name);
+  if (!key) return v;
+
+  if (key === 'Color') {
+    v = unifySynonyms(aspect.name, v);
+    v = normalizeColor(v);
+  } else if (key === 'Material' || key === 'Department') {
+    v = unifySynonyms(aspect.name, v);
+  } else if (key === 'Pattern') {
+    v = resolvePattern(v);
+  }
+  return v;
+}
+
 function normalizeValueForAspect(
   aspect: AspectSchema,
   raw: any,
@@ -109,7 +246,8 @@ function normalizeValueForAspect(
   canonMap: Map<string, string> | undefined
 ) {
   const toArray = (v: any) => Array.isArray(v) ? v : (v == null || v === '' ? [] : [v]);
-  const vals = toArray(raw).map(String).filter(Boolean);
+  // normalize each candidate through synonyms/color/pattern resolver
+  const vals = toArray(raw).map(String).filter(Boolean).map((v) => preprocessValue(aspect, v));
 
   if (aspect.selectionOnly) {
     if (!optionSet || !canonMap) return [];
@@ -123,9 +261,8 @@ function normalizeValueForAspect(
           if (snapped) kept.push(snapped);
         }
       }
-      // de-duplicate while preserving order
-      const seen = new Set<string>();
-      return kept.filter(val => { const k = norm(val); if (seen.has(k)) return false; seen.add(k); return true; });
+      // de-duplicate, then cap to 3 to avoid spammy multi-select values
+      return dedupeArray(kept).slice(0, 3);
     } else {
       const first = vals[0] ?? '';
       const nv = norm(first);
@@ -135,9 +272,7 @@ function normalizeValueForAspect(
     }
   } else {
     if (aspect.multi) {
-      const seen = new Set<string>(); const out: string[] = [];
-      for (const v of vals) { const k = norm(v); if (!seen.has(k)) { seen.add(k); out.push(v); } }
-      return out;
+      return dedupeArray(vals).slice(0, 3);
     } else {
       return vals.length ? [vals[0]] : [];
     }
@@ -423,10 +558,9 @@ Return:
       const selOnly = a.selectionOnly;
       let guess: any = '';
 
-      // reuse your heuristic mapping logic
       const td = title + description;
-
       const n = norm(a.name);
+
       if (n.includes('brand')) guess = (detected.brand || '');
       else if (n === 'department') guess = department;
       else if (n.includes('size type')) guess = sizeType;
@@ -453,7 +587,6 @@ Return:
       else if (n.includes('sleeve') && n.includes('length')) guess = detected.sleeveLength || '';
       else if (n === 'fit') guess = detected.fit || '';
 
-      // normalize through schema
       const snappedArr = normalizeValueForAspect(
         a,
         guess,
@@ -516,7 +649,7 @@ Return:
       keywords: visionJSON.keywords || [],
       confidence_score: visionJSON.confidence_score ?? undefined,
       reconcile_notes: recJSON.notes ?? undefined,
-      mapping_log: mappingLog, // optional: remove in prod if too verbose
+      mapping_log: mappingLog, // optional: remove or trim for prod
     };
 
     // Optional webhook for Make.com
