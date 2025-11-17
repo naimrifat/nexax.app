@@ -193,16 +193,6 @@ function resolvePattern(raw: string): string {
     }
   }
   return raw;
-}
-function resolvePattern(raw: string): string {
-  const r = norm(raw);
-  for (const pattern in PATTERN_KEYWORDS) {
-    if (PATTERN_KEYWORDS[pattern].some((k) => r.includes(k))) {
-      return pattern;
-    }
-  }
-  return raw;
-}
 
 // Clean up raw material strings so they match dropdown options better
 function normalizeMaterialText(raw: string): string {
