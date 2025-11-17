@@ -26,7 +26,9 @@ ALGORITHM (MENTAL CHECKLIST)
    - Do NOT simply copy raw tag text like "100% Acrylic" or "Shell: 60% Cotton 40% Polyester".
    - Example mappings:
      - Tag: "100% Acrylic" → option: "Acrylic".
-     - Tag: "Shell: 60% Cotton, 40% Polyester" with options ["Cotton", "Cotton Blend", "Polyester", "Polyester Blend"] → choose "Cotton Blend" (primary fiber) or the best single option.
+     - Tag: "Shell: 60% Cotton, 40% Polyester" with options
+       ["Cotton", "Cotton Blend", "Polyester", "Polyester Blend"]
+       → choose "Cotton Blend" (primary fiber) or the best single option.
      - Tag: "Ivory" with options ["White", "Ivory"] → choose "Ivory".
    - Only use custom free-text values when:
      (a) no option reasonably fits, AND
