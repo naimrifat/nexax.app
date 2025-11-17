@@ -108,6 +108,10 @@ const VALUE_SYNONYMS: Record<string, Record<string, string>> = {
     'cotton blend': 'Cotton',
     '100% cotton': 'Cotton',
     '100% polyester': 'Polyester',
+    '100% acrylic': 'Acrylic',
+    'Elastane': 'Spandex',
+    'Genuine Leather':'Leather',
+    'Lycra': 'Spandex',
     fleece: 'Fleece',
     denim: 'Denim',
   },
@@ -190,6 +194,40 @@ function resolvePattern(raw: string): string {
   }
   return raw;
 }
+function resolvePattern(raw: string): string {
+  const r = norm(raw);
+  for (const pattern in PATTERN_KEYWORDS) {
+    if (PATTERN_KEYWORDS[pattern].some((k) => r.includes(k))) {
+      return pattern;
+    }
+  }
+  return raw;
+}
+
+// Clean up raw material strings so they match dropdown options better
+function normalizeMaterialText(raw: string): string {
+  let v = raw;
+
+  // strip common label prefixes
+  v = v.replace(/^(shell|lining|body|fabric|material):?\s*/i, '');
+
+  // remove percentage prefixes like "100% " or "60% "
+  v = v.replace(/\b\d{1,3}%\s*/g, '');
+
+  // collapse slashes "Cotton/Polyester" -> "Cotton Polyester"
+  v = v.replace(/\s*\/\s*/g, ' ');
+
+  // normalize spacing
+  v = v.replace(/\s+/g, ' ').trim();
+
+  return v;
+}
+
+function dedupeArray<T>(arr: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  ...
+}
 
 function dedupeArray<T>(arr: T[]): T[] {
   const seen = new Set<string>();
@@ -238,7 +276,6 @@ function buildSchemaMaps(aspects: AspectSchema[]) {
   return { byName, optionSets, canonicalValue };
 }
 
-// Preprocess a single raw value based on aspect semantics (color/material/pattern/etc.)
 function preprocessValue(aspect: AspectSchema, raw: string): string {
   let v = raw;
   const key = canonicalAspectKey(aspect.name);
@@ -247,7 +284,11 @@ function preprocessValue(aspect: AspectSchema, raw: string): string {
   if (key === 'Color') {
     v = unifySynonyms(aspect.name, v);
     v = normalizeColor(v);
-  } else if (key === 'Material' || key === 'Department') {
+  } else if (key === 'Material') {
+    // strip things like "Shell: 100% Acrylic" -> "Acrylic"
+    v = normalizeMaterialText(v);
+    v = unifySynonyms(aspect.name, v);
+  } else if (key === 'Department') {
     v = unifySynonyms(aspect.name, v);
   } else if (key === 'Pattern') {
     v = resolvePattern(v);
