@@ -473,17 +473,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Build fast lookup maps for schema enforcement
     const { byName, optionSets, canonicalValue } = buildSchemaMaps(aspects);
 
-    /* ----------------------------------------
-       Stage B: Reconcile to eBay aspects (AI guided)
-       (model picks legal options; we strictly post-validate)
-    -----------------------------------------*/
-    const aspectsForModel = aspects.map(a => ({
+        const aspectsForModel = aspects.map(a => ({
       name: a.name,
       required: !!a.required,
       selectionOnly: a.selectionOnly,
       multi: !!a.multi,
       freeTextAllowed: a.freeTextAllowed,
-      options: (a.values || []).slice(0, 150),
+      options: (a.values || []).slice(0, 150), // cap for tokens
     }));
 
     const userPrompt = buildReconcileUserPrompt({
