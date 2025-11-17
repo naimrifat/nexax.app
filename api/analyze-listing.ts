@@ -1,5 +1,8 @@
 // api/analyze-listing.ts
-import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from '../prompts/reconcilePrompt';
+import {
+  RECONCILE_SYSTEM_PROMPT,
+  buildReconcileUserPrompt
+} from '../prompts/reconcilePrompt';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export const config = {
