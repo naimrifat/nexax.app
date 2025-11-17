@@ -486,15 +486,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       options: (a.values || []).slice(0, 150), // cap for token sanity
     }));
 
-    const reconcile = await callOpenAIChat({
+        const reconcile = await callOpenAIChat({
       model: 'gpt-5.1',
       response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
         {
           role: 'system',
-          content:
-            'You are mapping product facts to eBay item specifics. Rules: For selectionOnly aspects, you MUST return only values from the provided options. If none fit, return empty string (or empty array for multi). Do not paraphrase option labels. Prefer clear, common choices when multiple apply. Return JSON only.',
+          content: `
+You are an expert eBay lister.
+
+Your job: take real-world facts about the item (photos, tags, text) and map them into eBay item specifics.
+
+CRITICAL RULES:
+
+1) For any aspect that has a list of options, you MUST treat those options as the allowed vocabulary.
+   - First, try to choose one or more options that best match the real-world facts.
+   - Do NOT just copy raw tag text like "100% Acrylic" or "Shell: 60% Cotton 40% Polyester".
+   - Instead, reason like a human and map it to the closest option label, for example:
+     - Tag says "100% Acrylic" and options include "Acrylic" -> choose "Acrylic".
+     - Tag says "Shell: 60% Cotton, 40% Polyester" and options are ["Cotton", "Cotton Blend", "Polyester", "Polyester Blend"] -> choose "Cotton Blend".
+     - Tag says "Ivory" and options include "White" and "Ivory" -> prefer "Ivory".
+   - Only use a custom free-text value if:
+     (a) no option reasonably fits, AND
+     (b) the aspect allows free text.
+
+2) Do NOT invent precise measurements.
+   - Do NOT infer or guess values for: Waist Size, Inseam, Rise, Chest Size, Hip Size, or any numeric measurement fields.
+   - Leave those empty if you cannot clearly read a measurement in the images or text.
+
+3) Some fields are often unknowable from photos and should be left empty unless VERY clearly visible:
+   - California Prop 65 Warning
+   - Personalization Instructions
+   - MPN (unless you clearly see a model/style code)
+   - Country/Region of Manufacture (only if tag is clearly readable)
+   - Garment Care (only if care label is clearly readable)
+
+4) It is better to leave a field empty than to hallucinate or guess.
+   - If you are not confident based on the facts, leave the value as an empty string (or empty array for multi-select).
+
+5) For multi-select aspects:
+   - Choose the 1–3 most relevant options.
+   - Do NOT spam many options; behave like a careful human lister.
+
+Return JSON only.
+          `.trim(),
         },
         {
           role: 'user',
@@ -509,15 +545,48 @@ Description: ${description}
 Facts detected from photos (free-text):
 ${JSON.stringify(detected, null, 2)}
 
-Aspects to fill (choose options when provided):
+Aspects to fill:
+Each aspect has:
+- name
+- required (bool)
+- selectionOnly (bool)
+- multi (bool)
+- freeTextAllowed (bool)
+- options (array of allowed values; may be empty)
+
+ASPECTS:
 ${JSON.stringify(aspectsForModel, null, 2)}
+
+/*
+EXAMPLE 1 (material reasoning):
+
+Facts: tag says "Shell: 100% Acrylic".
+Aspect: "Material"
+Options: ["Acrylic", "Cotton", "Polyester", "Cotton Blend", "Polyester Blend"]
+
+Correct mapping:
+- value: "Acrylic"
+- NOT "100% Acrylic"
+- NOT "Shell: 100% Acrylic"
+
+EXAMPLE 2 (measurements):
+
+Facts: no clear measurement tag visible for waist or inseam.
+Aspects: "Waist Size", "Inseam"
+
+Correct mapping:
+- value: "" (empty) for both.
+- Do NOT guess numbers.
+
+END OF EXAMPLES.
+*/
 
 Return:
 {
   "final_specifics": [
-    {"name": "...", "value": "string OR string[]"}
+    { "name": "Aspect Name", "value": "string OR string[]" }
   ],
-  "notes": "short note about any assumptions"
+  "notes": "short note about any assumptions or fields intentionally left blank"
 }
 `
             }
