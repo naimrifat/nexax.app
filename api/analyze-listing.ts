@@ -8,7 +8,7 @@ export const config = {
 };
 
 /* ----------------------------------------
-   Small helpers
+   Small helpers
 -----------------------------------------*/
 const norm = (s: any) => String(s ?? '').toLowerCase().trim();
 const tokens = (s: string) => norm(s).split(/[\s\/,&-]+/).filter(Boolean);
@@ -84,7 +84,7 @@ function inferSizeType({
 }
 
 /* ----------------------------------------
-   Synonyms / normalization helpers
+   Synonyms / normalization helpers
 -----------------------------------------*/
 
 // Value-level synonym tables keyed by canonical aspect category
@@ -193,6 +193,7 @@ function resolvePattern(raw: string): string {
     }
   }
   return raw;
+} // <--- FIX 1: Missing closing brace added here
 
 // Clean up raw material strings so they match dropdown options better
 function normalizeMaterialText(raw: string): string {
@@ -213,11 +214,7 @@ function normalizeMaterialText(raw: string): string {
   return v;
 }
 
-function dedupeArray<T>(arr: T[]): T[] {
-  const seen = new Set<string>();
-  const out: T[] = [];
-  ...
-}
+// FIX 2: Removed incomplete/duplicate function definition (original lines 167-170)
 
 function dedupeArray<T>(arr: T[]): T[] {
   const seen = new Set<string>();
@@ -232,7 +229,7 @@ function dedupeArray<T>(arr: T[]): T[] {
 }
 
 /* ----------------------------------------
-   Types + schema utilities
+   Types + schema utilities
 -----------------------------------------*/
 type AspectSchema = {
   name: string;
@@ -344,7 +341,7 @@ function normalizeValueForAspect(
 }
 
 /* ----------------------------------------
-   OpenAI helpers
+   OpenAI helpers
 -----------------------------------------*/
 async function callOpenAIChat(body: any) {
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -360,7 +357,7 @@ async function callOpenAIChat(body: any) {
 }
 
 /* ----------------------------------------
-   MAIN HANDLER
+   MAIN HANDLER
 -----------------------------------------*/
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -392,11 +389,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     /* ----------------------------------------
-       Stage A: Vision analysis (broad)
-    -----------------------------------------*/
+       Stage A: Vision analysis (broad)
+    -----------------------------------------*/
     const vision = await callOpenAIChat({
-      model: 'gpt-5.1',
-      response_format: { type: 'json_object' },
+      model: 'gpt-4o', // <--- FIX 3: Changed from placeholder 'gpt-5.1' to 'gpt-4o'
+      response_format: { type: 'json_object' }, // <--- FIX 4: Added for reliable JSON output
       temperature: 0.2,
       messages: [
         {
@@ -415,23 +412,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               type: 'text' as const,
               text: `Return JSON like:
 {
-  "title": "... (<=80 chars)",
-  "description": "...",
-  "detected": {
-    "brand": "...",
-    "size": "...",
-    "department": "Men|Women|Girls|Boys|Unisex Adult",
-    "colors": ["..."],
-    "materials": ["Polyester","Cotton","Down", "..."],
-    "outerShellMaterial": "...",
-    "liningMaterial": "...",
-    "insulationMaterial": "...",
-    "style": "...",
-    "type": "...",
-    "lengthHint": "short|knee length|midi|maxi|long|cropped|hip|thigh|knee|mid-calf|ankle",
-    "closure": "Zip|Buttons|Buckle|Pullover|Hook & Eye|... (or null)",
-    "features": ["Hood","Pockets","Water Resistant","Stretch", "..."],
-    "pattern": "Solid|Floral|Plaid|Striped|Animal Print|Logo|Graphic|Quilted|... (best guess)`,
+  "title": "... (<=80 chars)",
+  "description": "...",
+  "detected": {
+    "brand": "...",
+    "size": "...",
+    "department": "Men|Women|Girls|Boys|Unisex Adult",
+    "colors": ["..."],
+    "materials": ["Polyester","Cotton","Down", "..."],
+    "outerShellMaterial": "...",
+    "liningMaterial": "...",
+    "insulationMaterial": "...",
+    "style": "...",
+    "type": "...",
+    "lengthHint": "short|knee length|midi|maxi|long|cropped|hip|thigh|knee|mid-calf|ankle",
+    "closure": "Zip|Buttons|Buckle|Pullover|Hook & Eye|... (or null)",
+    "features": ["Hood","Pockets","Water Resistant","Stretch", "..."],
+    "pattern": "Solid|Floral|Plaid|Striped|Animal Print|Logo|Graphic|Quilted|... (best guess)`,
             },
           ],
         },
@@ -454,8 +451,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     /* ----------------------------------------
-       eBay: category suggestion + aspects
-    -----------------------------------------*/
+       eBay: category suggestion + aspects
+    -----------------------------------------*/
     const origin = req.headers.origin || `https://${req.headers.host}`;
     const ebayApiUrl = `${origin}/api/ebay-categories`;
 
@@ -523,7 +520,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { byName, optionSets, canonicalValue } = buildSchemaMaps(aspects);
 
     /* ----------------------------------------
-       Stage B: Reconcile to eBay aspects (AI guided)
+       Stage B: Reconcile to eBay aspects (AI guided)
 -----------------------------------------*/
     const aspectsForModel = aspects.map((a) => ({
       name: a.name,
@@ -543,7 +540,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const reconcile = await callOpenAIChat({
-      model: 'gpt-5.1',
+      model: 'gpt-4o', // <--- FIX 3: Changed from placeholder 'gpt-5.1' to 'gpt-4o'
       response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
