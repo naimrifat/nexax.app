@@ -73,7 +73,11 @@ export default function ResultsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
-  
+
+  // NEW: validation + publish state
+  const [errors, setErrors] = useState<string[]>([]);
+  const [isPublishing, setIsPublishing] = useState(false);
+
   // Use ref to store aiDetected - won't cause re-renders
   const aiDetectedRef = useRef<AiDetected>({});
 
@@ -112,7 +116,7 @@ export default function ResultsPage() {
   const fetchCategorySpecifics = useCallback(async (categoryId: string) => {
     console.log('🔍 Fetching specifics for category:', categoryId);
     setLoadingSpecifics(true);
-    
+
     try {
       const response = await fetch('/api/ebay-categories', {
         method: 'POST',
@@ -139,7 +143,7 @@ export default function ResultsPage() {
       // Use ref value instead of state
       const filledSpecifics = smartFillSpecifics(newSpecifics, aiDetectedRef.current);
       setSpecifics(filledSpecifics);
-      
+
     } catch (error) {
       console.error('❌ Error fetching specifics:', error);
     } finally {
@@ -154,7 +158,7 @@ export default function ResultsPage() {
     const loadData = async () => {
       console.log('📥 Loading initial data...');
       setLoading(true);
-      
+
       const urlParams = new URLSearchParams(window.location.search);
       const sessionId = urlParams.get('session');
 
@@ -304,6 +308,81 @@ export default function ResultsPage() {
     return category.name;
   }, [category]);
 
+  // NEW: client-side validation
+  const validateListing = useCallback(() => {
+    const errs: string[] = [];
+
+    if (!title.trim()) errs.push('Title is required.');
+    if (!description.trim()) errs.push('Description is required.');
+    if (!category) errs.push('Category is required.');
+    if (!imageUrl) errs.push('At least one image is required.');
+
+    specifics.forEach((spec) => {
+      if (!spec.required) return;
+      const value = spec.value;
+      const empty =
+        value == null ||
+        (Array.isArray(value) ? value.length === 0 : !String(value).trim());
+
+      if (empty) {
+        errs.push(`${spec.name} is required.`);
+      }
+    });
+
+    return { valid: errs.length === 0, errors: errs };
+  }, [title, description, category, imageUrl, specifics]);
+
+  // NEW: publish handler
+  const handlePublish = useCallback(async () => {
+    const { valid, errors } = validateListing();
+    if (!valid) {
+      setErrors(errors);
+      return;
+    }
+
+    setErrors([]);
+    setIsPublishing(true);
+
+    try {
+      const payload = {
+        title,
+        description,
+        price: isNaN(parseFloat(price)) ? undefined : parseFloat(price),
+        currency: 'USD',
+        quantity: 1,
+        category,
+        item_specifics: specifics.map(s => ({
+          name: s.name,
+          value: s.value,
+        })),
+        image_urls: imageUrl ? [imageUrl] : [],
+      };
+
+      const resp = await fetch('/api/publish-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await resp.json().catch(() => null);
+
+      if (!resp.ok || !data?.success) {
+        throw new Error(data?.error || 'Publish API error');
+      }
+
+      console.log('✅ Publish success:', data);
+      alert('Listing sent to nexax publish endpoint (stub).');
+
+      // Optionally navigate somewhere:
+      // navigate('/create-listing');
+    } catch (e: any) {
+      console.error('❌ Publish error:', e);
+      alert(e?.message || 'Failed to publish listing.');
+    } finally {
+      setIsPublishing(false);
+    }
+  }, [title, description, price, category, specifics, imageUrl, validateListing]);
+
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
@@ -451,20 +530,45 @@ export default function ResultsPage() {
           />
         </section>
 
+        {/* NEW: validation errors */}
+        {errors.length > 0 && (
+          <div
+            style={{
+              marginTop: 24,
+              padding: 12,
+              borderRadius: 4,
+              border: '1px solid red',
+              background: '#ffecec',
+              color: '#900',
+              fontSize: 14,
+            }}
+          >
+            <strong>Please fix these before publishing:</strong>
+            <ul style={{ marginTop: 8, paddingLeft: 20 }}>
+              {errors.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div style={{ marginTop: 32, display: 'flex', gap: 12 }}>
           <button
+            onClick={handlePublish}
+            disabled={isPublishing}
             style={{
               padding: '12px 32px',
               background: '#0064d2',
               color: 'white',
               border: 'none',
               borderRadius: 4,
-              cursor: 'pointer',
+              cursor: isPublishing ? 'default' : 'pointer',
               fontSize: 16,
-              fontWeight: 600
+              fontWeight: 600,
+              opacity: isPublishing ? 0.7 : 1,
             }}
           >
-            Publish to eBay
+            {isPublishing ? 'Publishing…' : 'Publish to eBay'}
           </button>
           <button
             onClick={() => navigate('/create-listing')}
