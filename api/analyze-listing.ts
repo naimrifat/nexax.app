@@ -1,5 +1,5 @@
 // api/analyze-listing.ts
-import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from './prompts/reconcilePrompt.js';
+import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from '../prompts/reconcilePrompt';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export const config = {
@@ -8,7 +8,7 @@ export const config = {
 };
 
 /* ----------------------------------------
-   Small helpers
+   Small helpers
 -----------------------------------------*/
 const norm = (s: any) => String(s ?? '').toLowerCase().trim();
 const tokens = (s: string) => norm(s).split(/[\s\/,&-]+/).filter(Boolean);
@@ -84,7 +84,7 @@ function inferSizeType({
 }
 
 /* ----------------------------------------
-   Synonyms / normalization helpers
+   Synonyms / normalization helpers
 -----------------------------------------*/
 
 // Value-level synonym tables keyed by canonical aspect category
@@ -108,10 +108,6 @@ const VALUE_SYNONYMS: Record<string, Record<string, string>> = {
     'cotton blend': 'Cotton',
     '100% cotton': 'Cotton',
     '100% polyester': 'Polyester',
-    '100% acrylic': 'Acrylic',
-    'Elastane': 'Spandex',
-    'Genuine Leather':'Leather',
-    'Lycra': 'Spandex',
     fleece: 'Fleece',
     denim: 'Denim',
   },
@@ -193,28 +189,7 @@ function resolvePattern(raw: string): string {
     }
   }
   return raw;
-} // <--- FIX 1: Missing closing brace added here
-
-// Clean up raw material strings so they match dropdown options better
-function normalizeMaterialText(raw: string): string {
-  let v = raw;
-
-  // strip common label prefixes
-  v = v.replace(/^(shell|lining|body|fabric|material):?\s*/i, '');
-
-  // remove percentage prefixes like "100% " or "60% "
-  v = v.replace(/\b\d{1,3}%\s*/g, '');
-
-  // collapse slashes "Cotton/Polyester" -> "Cotton Polyester"
-  v = v.replace(/\s*\/\s*/g, ' ');
-
-  // normalize spacing
-  v = v.replace(/\s+/g, ' ').trim();
-
-  return v;
 }
-
-// FIX 2: Removed incomplete/duplicate function definition (original lines 167-170)
 
 function dedupeArray<T>(arr: T[]): T[] {
   const seen = new Set<string>();
@@ -229,7 +204,7 @@ function dedupeArray<T>(arr: T[]): T[] {
 }
 
 /* ----------------------------------------
-   Types + schema utilities
+   Types + schema utilities
 -----------------------------------------*/
 type AspectSchema = {
   name: string;
@@ -263,6 +238,7 @@ function buildSchemaMaps(aspects: AspectSchema[]) {
   return { byName, optionSets, canonicalValue };
 }
 
+// Preprocess a single raw value based on aspect semantics (color/material/pattern/etc.)
 function preprocessValue(aspect: AspectSchema, raw: string): string {
   let v = raw;
   const key = canonicalAspectKey(aspect.name);
@@ -271,11 +247,7 @@ function preprocessValue(aspect: AspectSchema, raw: string): string {
   if (key === 'Color') {
     v = unifySynonyms(aspect.name, v);
     v = normalizeColor(v);
-  } else if (key === 'Material') {
-    // strip things like "Shell: 100% Acrylic" -> "Acrylic"
-    v = normalizeMaterialText(v);
-    v = unifySynonyms(aspect.name, v);
-  } else if (key === 'Department') {
+  } else if (key === 'Material' || key === 'Department') {
     v = unifySynonyms(aspect.name, v);
   } else if (key === 'Pattern') {
     v = resolvePattern(v);
@@ -316,15 +288,14 @@ function normalizeValueForAspect(
       }
       const deduped = dedupeArray(snapped).slice(0, 3);
       if (deduped.length) return deduped;
-      // if nothing snapped and free text is allowed, we MAY fall through to raw text
       if (!aspect.freeTextAllowed) return [];
-      // otherwise continue to raw free-text handling below
+      // fall through to free-text handling
     } else {
       const first = vals[0] ?? '';
       const s = snapOne(first);
       if (s) return [s];
       if (!aspect.freeTextAllowed) return [];
-      // otherwise continue to raw free-text handling below
+      // fall through to free-text handling
     }
   }
 
@@ -341,7 +312,7 @@ function normalizeValueForAspect(
 }
 
 /* ----------------------------------------
-   OpenAI helpers
+   OpenAI helpers
 -----------------------------------------*/
 async function callOpenAIChat(body: any) {
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -357,7 +328,7 @@ async function callOpenAIChat(body: any) {
 }
 
 /* ----------------------------------------
-   MAIN HANDLER
+   MAIN HANDLER
 -----------------------------------------*/
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -389,11 +360,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     /* ----------------------------------------
-       Stage A: Vision analysis (broad)
-    -----------------------------------------*/
+       Stage A: Vision analysis (broad)
+    -----------------------------------------*/
     const vision = await callOpenAIChat({
-      model: 'gpt-4o', // <--- FIX 3: Changed from placeholder 'gpt-5.1' to 'gpt-4o'
-      response_format: { type: 'json_object' }, // <--- FIX 4: Added for reliable JSON output
+      model: 'gpt-5.1',
+      response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
         {
@@ -412,23 +383,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               type: 'text' as const,
               text: `Return JSON like:
 {
-  "title": "... (<=80 chars)",
-  "description": "...",
-  "detected": {
-    "brand": "...",
-    "size": "...",
-    "department": "Men|Women|Girls|Boys|Unisex Adult",
-    "colors": ["..."],
-    "materials": ["Polyester","Cotton","Down", "..."],
-    "outerShellMaterial": "...",
-    "liningMaterial": "...",
-    "insulationMaterial": "...",
-    "style": "...",
-    "type": "...",
-    "lengthHint": "short|knee length|midi|maxi|long|cropped|hip|thigh|knee|mid-calf|ankle",
-    "closure": "Zip|Buttons|Buckle|Pullover|Hook & Eye|... (or null)",
-    "features": ["Hood","Pockets","Water Resistant","Stretch", "..."],
-    "pattern": "Solid|Floral|Plaid|Striped|Animal Print|Logo|Graphic|Quilted|... (best guess)`,
+  "title": "... (<=80 chars)",
+  "description": "...",
+  "detected": {
+    "brand": "...",
+    "size": "...",
+    "department": "Men|Women|Girls|Boys|Unisex Adult",
+    "colors": ["..."],
+    "materials": ["Polyester","Cotton","Down", "..."],
+    "outerShellMaterial": "...",
+    "liningMaterial": "...",
+    "insulationMaterial": "...",
+    "style": "...",
+    "type": "...",
+    "lengthHint": "short|knee length|midi|maxi|long|cropped|hip|thigh|knee|mid-calf|ankle",
+    "closure": "Zip|Buttons|Buckle|Pullover|Hook & Eye|... (or null)",
+    "features": ["Hood","Pockets","Water Resistant","Stretch", "..."],
+    "pattern": "Solid|Floral|Plaid|Striped|Animal Print|Logo|Graphic|Quilted|... (best guess)",
+    "theme": ["Outdoor","Sports","Y2K","80s","90s","Animals","Floral", ...],
+    "countryOfOrigin": "... if visible",
+    "model": "... if visible",
+    "sleeveLength": "Short|3/4|Long|Sleeveless|... if visible",
+    "fit": "Regular|Slim|Relaxed|Classic|... if visible",
+    "sizeTypeHint": "Regular|Plus|Petite|Tall|Big & Tall if visible"
+  },
+  "keywords": ["..."]
+}`,
             },
           ],
         },
@@ -442,17 +422,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // coarse, model-independent inferences
     const categoryGuessingText = `${title}\n${description}`;
-    const department =
-      detected.department || inferDepartmentFromPath(categoryGuessingText);
-    const sizeType = detected.sizeTypeHint || inferSizeType({
-      size: detected.size,
-      title,
-      categoryPath: categoryGuessingText,
-    });
+    const department = detected.department || inferDepartmentFromPath(categoryGuessingText);
+    const sizeType =
+      detected.sizeTypeHint ||
+      inferSizeType({
+        size: detected.size,
+        title,
+        categoryPath: categoryGuessingText,
+      });
 
     /* ----------------------------------------
-       eBay: category suggestion + aspects
-    -----------------------------------------*/
+       eBay: category suggestion + aspects
+    -----------------------------------------*/
     const origin = req.headers.origin || `https://${req.headers.host}`;
     const ebayApiUrl = `${origin}/api/ebay-categories`;
 
@@ -520,8 +501,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { byName, optionSets, canonicalValue } = buildSchemaMaps(aspects);
 
     /* ----------------------------------------
-       Stage B: Reconcile to eBay aspects (AI guided)
------------------------------------------*/
+       Stage B: Reconcile to eBay aspects (AI guided)
+    -----------------------------------------*/
     const aspectsForModel = aspects.map((a) => ({
       name: a.name,
       required: !!a.required,
@@ -540,7 +521,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const reconcile = await callOpenAIChat({
-      model: 'gpt-4o', // <--- FIX 3: Changed from placeholder 'gpt-5.1' to 'gpt-4o'
+      model: 'gpt-5.1',
       response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
@@ -558,8 +539,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const recJSON = safeJSON(reconcile.choices?.[0]?.message?.content || '{}', {});
-    let aiSpecifics: Array<{ name: string; value: any }> =
-      Array.isArray(recJSON.final_specifics) ? recJSON.final_specifics : [];
+    let aiSpecifics: Array<{ name: string; value: any }> = Array.isArray(recJSON.final_specifics)
+      ? recJSON.final_specifics
+      : [];
 
     // --- Post-validate AI specifics against schema (strict) ---
     const mappingLog: string[] = [];
@@ -583,11 +565,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (!normalized.length) {
         mappingLog.push(`AI → rejected or empty for "${a.name}"`);
-        sanitizedSpecifics.push({
-          name: a.name,
-          value: a.multi ? [] : '',
-          source: 'ai',
-        });
+        sanitizedSpecifics.push({ name: a.name, value: a.multi ? [] : '', source: 'ai' });
       } else {
         const v = a.multi ? normalized : normalized[0];
         mappingLog.push(`AI → accepted for "${a.name}": ${JSON.stringify(v)}`);
@@ -595,8 +573,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    let finalSpecifics: Array<{ name: string; value: any }> =
-      sanitizedSpecifics.map(({ name, value }) => ({ name, value }));
+    let finalSpecifics: Array<{ name: string; value: any }> = sanitizedSpecifics.map(
+      ({ name, value }) => ({ name, value })
+    );
 
     // --- Gap fill (heuristics) ONLY where empty (esp. required) ---
     const filled = new Map(finalSpecifics.map((s) => [norm(s.name), s]));
@@ -613,6 +592,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!isEmpty) continue;
 
       const options: string[] = a.values ?? [];
+      const selOnly = a.selectionOnly;
       let guess: any = '';
 
       const td = title + description;
@@ -621,32 +601,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (n.includes('brand')) guess = detected.brand || '';
       else if (n === 'department') guess = department;
       else if (n.includes('size type')) guess = sizeType;
-      else if (n === 'size' || n.includes('waist') || n.includes('inseam'))
-        guess = detected.size || '';
+      else if (n === 'size' || n.includes('waist') || n.includes('inseam')) guess = detected.size || '';
       else if (n.includes('color') || n.includes('colour'))
-        guess =
-          (Array.isArray(detected.colors)
-            ? detected.colors[0]
-            : detected.colors) || '';
+        guess = (Array.isArray(detected.colors) ? detected.colors[0] : detected.colors) || '';
       else if (n.includes('outer') && n.includes('material'))
         guess = detected.outerShellMaterial || detected.materials?.[0] || '';
-      else if (n.includes('lining') && n.includes('material'))
-        guess = detected.liningMaterial || '';
+      else if (n.includes('lining') && n.includes('material')) guess = detected.liningMaterial || '';
       else if (n.includes('insulation') && n.includes('material'))
         guess =
-          detected.insulationMaterial ||
-          (includesAny(td, ['puffer', 'down']) ? 'Down' : '');
+          detected.insulationMaterial || (includesAny(td, ['puffer', 'down']) ? 'Down' : '');
       else if (n === 'style') guess = detected.style || '';
       else if (n === 'type') guess = detected.type || '';
       else if (n.includes('pattern')) guess = detected.pattern || '';
       else if (n.includes('length')) {
         const h = norm(detected.lengthHint || '');
-        if (h.includes('maxi') || h.includes('long') || h.includes('ankle'))
-          guess = 'Long';
+        if (h.includes('maxi') || h.includes('long') || h.includes('ankle')) guess = 'Long';
         else if (h.includes('midi') || h.includes('mid')) guess = 'Midi';
         else if (h.includes('knee')) guess = 'Knee Length';
-        else if (h.includes('short') || h.includes('hip') || h.includes('cropped'))
-          guess = 'Short';
+        else if (h.includes('short') || h.includes('hip') || h.includes('cropped')) guess = 'Short';
       } else if (n.includes('closure'))
         guess = detected.closure || (includesAny(td, ['zip', 'zipper']) ? 'Zip' : '');
       else if (n.includes('theme'))
@@ -661,11 +633,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           : detected.features
           ? [detected.features]
           : [];
-      else if (n.includes('country') && n.includes('origin'))
-        guess = detected.countryOfOrigin || '';
+      else if (n.includes('country') && n.includes('origin')) guess = detected.countryOfOrigin || '';
       else if (n.includes('model')) guess = detected.model || '';
-      else if (n.includes('sleeve') && n.includes('length'))
-        guess = detected.sleeveLength || '';
+      else if (n.includes('sleeve') && n.includes('length')) guess = detected.sleeveLength || '';
       else if (n === 'fit') guess = detected.fit || '';
 
       const snappedArr = normalizeValueForAspect(
