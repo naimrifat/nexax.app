@@ -733,24 +733,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       mapping_log: mappingLog, // optional: remove or trim for prod
     };
 
-    // Optional webhook for Make.com
-    if (process.env.VITE_MAKE_WEBHOOK_URL) {
-      try {
-        await fetch(process.env.VITE_MAKE_WEBHOOK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id,
-            analysis: payload,
-            image_urls: images,
-            timestamp: new Date().toISOString(),
-          }),
-        });
-      } catch {
-        /* ignore */
-      }
-    }
-
     return res.status(200).json({
       success: true,
       data: payload,
