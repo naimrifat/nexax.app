@@ -1,11 +1,5 @@
 // src/pages/ResultsPage.tsx
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-  useCallback,
-  useRef,
-} from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 type Category = {
@@ -26,6 +20,9 @@ type ItemSpecific = {
   required?: boolean;
   type?: string;
   options?: string[];
+  selectionOnly?: boolean;
+  freeTextAllowed?: boolean;
+  multi?: boolean;
 };
 
 type AiDetected = {
@@ -43,17 +40,21 @@ type AiData = {
   description?: string;
   price_suggestion?: { optimal?: number | string };
   image_url?: string;
+  images?: string[];
+  image_urls?: string[];
   category?: CategoryWithPath;
   category_suggestions?: Category[];
   item_specifics?: ItemSpecific[] | Record<string, string>;
   keywords?: string[] | string;
   detected?: AiDetected;
+  data?: any;
+  analysis?: any;
 };
 
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
   if (Array.isArray(s)) {
-    return s.filter((x) => x && typeof x.name === 'string');
+    return s.filter(x => x && typeof x.name === 'string');
   }
   if (typeof s === 'object') {
     return Object.entries(s).map(([name, value]) => ({
@@ -70,128 +71,148 @@ export default function ResultsPage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.00');
+
+  // Multi-image state
+  const [images, setImages] = useState<string[]>([]);
+  const [mainImageIndex, setMainImageIndex] = useState(0);
+
+  // legacy single image (used by the small preview card)
   const [imageUrl, setImageUrl] = useState('');
+
   const [keywords, setKeywords] = useState('');
   const [category, setCategory] = useState<CategoryWithPath | null>(null);
-  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>(
-    []
-  );
+  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
 
-  // AI-detected facts from the analysis
+  // store AI-detected facts without causing re-renders
   const aiDetectedRef = useRef<AiDetected>({});
 
-  // Smart mapper (still used when fetching category specifics)
-  const smartFillSpecifics = useCallback(
-    (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
-      return newSpecifics.map((field) => {
-        let value = '';
-        const fieldLower = field.name.toLowerCase();
+  // ---- helpers for images ----
+  const setImagesFromAnySource = (rawAnalysis: any, rawRoot: any) => {
+    const fromAnalysis =
+      (Array.isArray(rawAnalysis?.images) && rawAnalysis.images) ||
+      (Array.isArray(rawAnalysis?.image_urls) && rawAnalysis.image_urls) ||
+      [];
+    const fromRoot =
+      (Array.isArray(rawRoot?.images) && rawRoot.images) ||
+      (Array.isArray(rawRoot?.image_urls) && rawRoot.image_urls) ||
+      [];
+    const combined = fromAnalysis.length ? fromAnalysis : fromRoot;
+    if (combined && combined.length) {
+      setImages(combined);
+      setMainImageIndex(0);
+      setImageUrl(combined[0]); // keep preview in sync
+    } else if (rawAnalysis?.image_url) {
+      setImages([rawAnalysis.image_url]);
+      setMainImageIndex(0);
+      setImageUrl(rawAnalysis.image_url);
+    }
+  };
 
-        if (fieldLower.includes('brand')) {
-          value = aiData.brand || '';
-        } else if (fieldLower.includes('size')) {
-          value = aiData.size || '';
-        } else if (fieldLower.includes('color') || fieldLower.includes('colour')) {
-          value = aiData.color || '';
-        } else if (fieldLower.includes('condition')) {
-          value = aiData.condition || '';
-        } else if (fieldLower.includes('material')) {
-          value = aiData.material || '';
-        } else if (fieldLower.includes('style')) {
-          value = aiData.style || '';
-        }
+  const moveImage = (from: number, to: number) => {
+    setImages(prev => {
+      if (from < 0 || to < 0 || from >= prev.length || to >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    setMainImageIndex(to);
+  };
 
-        if (
-          value &&
-          field.type === 'dropdown' &&
-          field.options &&
-          field.options.length > 0
-        ) {
-          const matchedOption = field.options.find(
-            (opt) => opt.toLowerCase() === value.toLowerCase()
-          );
-          value = matchedOption || '';
-        }
+  // ---- Smart mapper for item specifics ----
+  const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
+    return newSpecifics.map(field => {
+      let value = '';
+      const fieldLower = field.name.toLowerCase();
 
-        return { ...field, value };
-      });
-    },
-    []
-  );
-
-  // Fetch category specifics
-  const fetchCategorySpecifics = useCallback(
-    async (categoryId: string) => {
-      console.log('🔍 Fetching specifics for category:', categoryId);
-      setLoadingSpecifics(true);
-
-      try {
-        const response = await fetch('/api/ebay-categories', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'getCategorySpecifics',
-            categoryId: categoryId,
-          }),
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch category specifics');
-
-        const data = await response.json();
-        console.log('✅ Category specifics received:', data);
-
-        const newSpecifics: ItemSpecific[] = (data.aspects || []).map(
-          (aspect: any) => ({
-            name: aspect.name,
-            value: '',
-            required: aspect.required || false,
-            type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
-            options: aspect.values || [],
-          })
-        );
-
-        const filledSpecifics = smartFillSpecifics(
-          newSpecifics,
-          aiDetectedRef.current
-        );
-        setSpecifics(filledSpecifics);
-      } catch (error) {
-        console.error('❌ Error fetching specifics:', error);
-      } finally {
-        setLoadingSpecifics(false);
+      if (fieldLower.includes('brand')) {
+        value = aiData.brand || '';
+      } else if (fieldLower.includes('size')) {
+        value = aiData.size || '';
+      } else if (fieldLower.includes('color') || fieldLower.includes('colour')) {
+        value = aiData.color || '';
+      } else if (fieldLower.includes('condition')) {
+        value = aiData.condition || '';
+      } else if (fieldLower.includes('material')) {
+        value = aiData.material || '';
+      } else if (fieldLower.includes('style')) {
+        value = aiData.style || '';
       }
-    },
-    [smartFillSpecifics]
-  );
 
-  // Load initial analysis data (once)
+      if (value && field.type === 'dropdown' && field.options && field.options.length > 0) {
+        const matchedOption = field.options.find(
+          opt => opt.toLowerCase() === value.toLowerCase()
+        );
+        value = matchedOption || '';
+      }
+
+      return { ...field, value };
+    });
+  }, []);
+
+  // ---- Fetch category specifics ----
+  const fetchCategorySpecifics = useCallback(async (categoryId: string) => {
+    setLoadingSpecifics(true);
+
+    try {
+      const response = await fetch('/api/ebay-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'getCategorySpecifics',
+          categoryId
+        })
+      });
+
+      if (!response.ok) throw new Error('Failed to fetch category specifics');
+
+      const data = await response.json();
+
+      const newSpecifics: ItemSpecific[] = (data.aspects || []).map((aspect: any) => ({
+        name: aspect.name,
+        value: '',
+        required: !!aspect.required,
+        type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
+        options: aspect.values || [],
+        selectionOnly: aspect.type === 'SelectionOnly',
+        freeTextAllowed: aspect.type !== 'SelectionOnly',
+        multi: !!aspect.multi,
+      }));
+
+      const filledSpecifics = smartFillSpecifics(newSpecifics, aiDetectedRef.current);
+      setSpecifics(filledSpecifics);
+    } catch (error) {
+      console.error('Error fetching specifics:', error);
+    } finally {
+      setLoadingSpecifics(false);
+    }
+  }, [smartFillSpecifics]);
+
+  // ---- Load initial data (once) ----
   useEffect(() => {
     let isMounted = true;
 
     const loadData = async () => {
-      console.log('📥 Loading initial data...');
       setLoading(true);
 
       const urlParams = new URLSearchParams(window.location.search);
       const sessionId = urlParams.get('session');
 
+      // 1) Try server-side session first
       if (sessionId) {
         try {
           const res = await fetch(`/api/listing-data/${sessionId}`);
           if (!res.ok) throw new Error('Failed to fetch data from API');
 
-          const data = await res.json();
-          console.log('🔍 Received data from API:', data);
+          const root = await res.json();
+          const analysis = root.data || root.analysis || root;
 
           if (!isMounted) return;
-
-          const analysis = data.data || data.analysis || data;
-          console.log('📦 Analysis object:', analysis);
 
           setTitle(analysis.title ?? '');
           setDescription(analysis.description ?? '');
@@ -200,7 +221,6 @@ export default function ResultsPage() {
               ? analysis.price_suggestion.optimal.toFixed(2)
               : String(analysis.price_suggestion?.optimal ?? '0.00')
           );
-          setImageUrl(analysis.image_url ?? '');
 
           aiDetectedRef.current = analysis.detected || {};
 
@@ -214,6 +234,9 @@ export default function ResultsPage() {
           const initialCategory = analysis.category ?? null;
           setCategory(initialCategory);
 
+          // images
+          setImagesFromAnySource(analysis, root);
+
           if (initialCategory && initialCategory.id) {
             await fetchCategorySpecifics(initialCategory.id);
           } else {
@@ -223,7 +246,7 @@ export default function ResultsPage() {
           setLoading(false);
           return;
         } catch (err: any) {
-          console.error('❌ Error fetching from API:', err);
+          console.error('Error fetching from API:', err);
           if (isMounted) {
             setError(err.message || 'Failed to load data');
             setLoading(false);
@@ -232,7 +255,7 @@ export default function ResultsPage() {
         }
       }
 
-      // Fallback: sessionStorage
+      // 2) Fallback to client-side sessionStorage
       const raw = sessionStorage.getItem('aiListingData');
       if (!raw) {
         navigate('/create-listing', { replace: true });
@@ -240,8 +263,8 @@ export default function ResultsPage() {
       }
 
       try {
-        const data: AiData = JSON.parse(raw);
-        const analysis = (data as any).data || (data as any).analysis || data;
+        const parsed: AiData = JSON.parse(raw);
+        const analysis: any = (parsed as any).data || (parsed as any).analysis || parsed;
 
         if (!isMounted) return;
 
@@ -252,7 +275,6 @@ export default function ResultsPage() {
             ? analysis.price_suggestion.optimal.toFixed(2)
             : String(analysis.price_suggestion?.optimal ?? '0.00')
         );
-        setImageUrl(analysis.image_url ?? '');
 
         aiDetectedRef.current = analysis.detected || {};
 
@@ -266,6 +288,8 @@ export default function ResultsPage() {
         const initialCategory = analysis.category ?? null;
         setCategory(initialCategory);
 
+        setImagesFromAnySource(analysis, parsed);
+
         if (initialCategory && initialCategory.id) {
           await fetchCategorySpecifics(initialCategory.id);
         } else {
@@ -274,7 +298,7 @@ export default function ResultsPage() {
 
         setLoading(false);
       } catch (e: any) {
-        console.error('❌ Failed to parse data:', e);
+        console.error('Failed to parse data:', e);
         if (isMounted) {
           setError('Failed to load listing data');
           setLoading(false);
@@ -286,31 +310,33 @@ export default function ResultsPage() {
 
     return () => {
       isMounted = false;
-      console.log('🧹 ResultsPage unmount');
     };
   }, [navigate, fetchCategorySpecifics]);
 
-  // Category change
+  // keep small preview image synced with main image
+  useEffect(() => {
+    if (images.length && mainImageIndex >= 0 && mainImageIndex < images.length) {
+      setImageUrl(images[mainImageIndex]);
+    }
+  }, [images, mainImageIndex]);
+
+  // ---- Category change ----
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
-    console.log('🔄 Category changed to:', newCategory);
     setCategory(newCategory);
     setShowCategoryModal(false);
     await fetchCategorySpecifics(newCategory.id);
   };
 
   const updateSpecific = (idx: number, value: string) => {
-    setSpecifics((prev) => {
+    setSpecifics(prev => {
       const next = [...prev];
       next[idx] = { ...next[idx], value };
       return next;
     });
   };
 
-  const addSpecific = () =>
-    setSpecifics((prev) => [...prev, { name: '', value: '' }]);
-
-  const removeSpecific = (idx: number) =>
-    setSpecifics((prev) => prev.filter((_, i) => i !== idx));
+  const addSpecific = () => setSpecifics(prev => [...prev, { name: '', value: '' }]);
+  const removeSpecific = (idx: number) => setSpecifics(prev => prev.filter((_, i) => i !== idx));
 
   const categoryBreadcrumb = useMemo(() => {
     if (!category) return 'No category selected';
@@ -319,66 +345,60 @@ export default function ResultsPage() {
     return category.name;
   }, [category]);
 
-  // 🔴 THIS is what talks to /api/publish-listing
+  // ---- Publish handler (still stubbed to your backend stub) ----
   const handlePublish = async () => {
     try {
-      if (!title.trim()) {
-        alert('Please enter a title before publishing.');
-        return;
-      }
-      if (!description.trim()) {
-        alert('Please enter a description before publishing.');
-        return;
-      }
-      if (!category) {
-        alert('Please select a category before publishing.');
-        return;
-      }
-      if (!imageUrl) {
-        alert('Please upload at least one image before publishing.');
-        return;
-      }
+      const trimmedTitle = title.trim();
+      const trimmedDescription = description.trim();
 
-      const payload = {
-        title: title.trim(),
-        description: description.trim(),
-        price: parseFloat(price || '0') || 0,
-        currency: 'USD',
-        quantity: 1,
-        category: {
-          id: category.id,
-          name: category.name,
-          path: category.path ?? categoryBreadcrumb,
-        },
-        item_specifics: specifics
-          .filter((s) => s.name && String(s.value ?? '').trim() !== '')
-          .map((s) => ({ name: s.name, value: s.value })),
-        image_urls: [imageUrl],
+      if (!trimmedTitle) throw new Error('Title is required.');
+      if (!trimmedDescription) throw new Error('Description is required.');
+      if (!category) throw new Error('Category is required.');
+      if (!images.length) throw new Error('At least one image is required.');
+
+      const normalizedSpecifics = specifics.map(s => ({
+        name: s.name,
+        value: s.value,
+        required: !!s.required,
+      }));
+
+      const keywordArray = keywords
+        .split(',')
+        .map(k => k.trim())
+        .filter(Boolean);
+
+      const listing_data = {
+        title: trimmedTitle,
+        description: trimmedDescription,
+        category,
+        item_specifics: normalizedSpecifics,
+        keywords: keywordArray,
+        price_suggestion: { optimal: price },
       };
-
-      console.log('📤 Publishing payload:', payload);
 
       const res = await fetch('/api/publish-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          listing_data,
+          images,
+        }),
       });
 
       const data = await res.json();
-      console.log('📥 publish-listing response:', data);
 
       if (!res.ok || !data.success) {
-        alert(`An error occurred: ${JSON.stringify(data)}`);
-        return;
+        const details = data?.error || JSON.stringify(data);
+        throw new Error(details);
       }
 
-      alert('Listing payload accepted by server (stub).');
+      alert('Your listing has been sent to eBay! It may take a minute to appear.');
     } catch (err: any) {
-      console.error('❌ handlePublish error:', err);
-      alert(`Unexpected error: ${err?.message || String(err)}`);
+      alert(`An error occurred: ${err?.message || String(err)}`);
     }
   };
 
+  // ---- Render ----
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
@@ -397,34 +417,110 @@ export default function ResultsPage() {
   }
 
   return (
-    <div
-      style={{
-        padding: 24,
-        display: 'grid',
-        gridTemplateColumns: '1fr 360px',
-        gap: 24,
-      }}
-    >
+    <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
       <main>
-        <h1>Create eBay Listing</h1>
+        <h1>Your Generated Listing</h1>
+
+        {/* Photos / gallery with reordering */}
+        <section style={{ marginBottom: 24 }}>
+          <h3>Photos</h3>
+          {images.length === 0 ? (
+            <div style={{ marginTop: 8, color: '#666' }}>No photos available for this listing.</div>
+          ) : (
+            <>
+              <div
+                style={{
+                  marginTop: 8,
+                  marginBottom: 12,
+                  height: 320,
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  border: '1px solid #ddd',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#f5f5f5',
+                }}
+              >
+                <img
+                  src={images[mainImageIndex]}
+                  alt="Main"
+                  style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {images.map((img, idx) => (
+                  <div key={idx} style={{ width: 70 }}>
+                    <div
+                      onClick={() => setMainImageIndex(idx)}
+                      style={{
+                        borderRadius: 4,
+                        overflow: 'hidden',
+                        border: idx === mainImageIndex ? '2px solid #0064d2' : '1px solid #ddd',
+                        cursor: 'pointer',
+                        background: '#fafafa',
+                        height: 70,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <img
+                        src={img}
+                        alt={`Thumb ${idx + 1}`}
+                        style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 4, marginTop: 4 }}>
+                      <button
+                        type="button"
+                        onClick={() => moveImage(idx, idx - 1)}
+                        disabled={idx === 0}
+                        style={{
+                          border: '1px solid #ccc',
+                          borderRadius: 3,
+                          padding: '0 4px',
+                          fontSize: 10,
+                          background: idx === 0 ? '#f5f5f5' : '#fff',
+                          cursor: idx === 0 ? 'default' : 'pointer',
+                        }}
+                      >
+                        ←
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveImage(idx, idx + 1)}
+                        disabled={idx === images.length - 1}
+                        style={{
+                          border: '1px solid #ccc',
+                          borderRadius: 3,
+                          padding: '0 4px',
+                          fontSize: 10,
+                          background: idx === images.length - 1 ? '#f5f5f5' : '#fff',
+                          cursor: idx === images.length - 1 ? 'default' : 'pointer',
+                        }}
+                      >
+                        →
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
 
         <section>
           <h3>Title</h3>
           <input
             placeholder="Enter title..."
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={e => setTitle(e.target.value)}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
             maxLength={80}
           />
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginTop: 4,
-              textAlign: 'right',
-            }}
-          >
+          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>
             {title.length}/80 characters
           </div>
         </section>
@@ -443,14 +539,8 @@ export default function ResultsPage() {
               marginTop: 8,
             }}
           >
-            <div
-              style={{ flex: 1, marginRight: 12, overflow: 'hidden' }}
-            >
-              <div
-                style={{ fontSize: 12, color: '#666', marginBottom: 4 }}
-              >
-                Selected Category:
-              </div>
+            <div style={{ flex: 1, marginRight: 12, overflow: 'hidden' }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Selected Category:</div>
               <div
                 style={{
                   fontWeight: 500,
@@ -485,16 +575,10 @@ export default function ResultsPage() {
         <section style={{ marginTop: 24 }}>
           <h3>
             Item Specifics{' '}
-            {loadingSpecifics && (
-              <span style={{ fontSize: 14, color: '#666' }}>
-                (Loading...)
-              </span>
-            )}
+            {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading...)</span>}
           </h3>
           {specifics.length === 0 && !loadingSpecifics && (
-            <div style={{ opacity: 0.7, marginTop: 8 }}>
-              No specifics loaded. Select a category first.
-            </div>
+            <div style={{ opacity: 0.7, marginTop: 8 }}>No specifics loaded. Select a category first.</div>
           )}
           {specifics.map((spec, i) => (
             <div key={i} style={{ marginTop: 12 }}>
@@ -507,23 +591,13 @@ export default function ResultsPage() {
                 }}
               >
                 {spec.name}
-                {spec.required && (
-                  <span style={{ color: 'red', marginLeft: 4 }}>*</span>
-                )}
+                {spec.required && <span style={{ color: 'red', marginLeft: 4 }}>*</span>}
               </label>
-              {spec.type === 'dropdown' &&
-              spec.options &&
-              spec.options.length > 0 ? (
+              {spec.type === 'dropdown' && spec.options && spec.options.length > 0 ? (
                 <select
                   value={spec.value}
-                  onChange={(e) => updateSpecific(i, e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    fontSize: 14,
-                    borderRadius: 4,
-                    border: '1px solid #ddd',
-                  }}
+                  onChange={e => updateSpecific(i, e.target.value)}
+                  style={{ width: '100%', padding: 10, fontSize: 14, borderRadius: 4, border: '1px solid #ddd' }}
                 >
                   <option value="">Select {spec.name}</option>
                   {spec.options.map((opt, idx) => (
@@ -537,14 +611,8 @@ export default function ResultsPage() {
                   type="text"
                   placeholder={`Enter ${spec.name}`}
                   value={spec.value}
-                  onChange={(e) => updateSpecific(i, e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    fontSize: 14,
-                    borderRadius: 4,
-                    border: '1px solid #ddd',
-                  }}
+                  onChange={e => updateSpecific(i, e.target.value)}
+                  style={{ width: '100%', padding: 10, fontSize: 14, borderRadius: 4, border: '1px solid #ddd' }}
                 />
               )}
             </div>
@@ -563,7 +631,7 @@ export default function ResultsPage() {
           <textarea
             placeholder="Enter description..."
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={e => setDescription(e.target.value)}
             rows={8}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
@@ -574,7 +642,7 @@ export default function ResultsPage() {
           <input
             placeholder="e.g., vintage, designer, rare"
             value={keywords}
-            onChange={(e) => setKeywords(e.target.value)}
+            onChange={e => setKeywords(e.target.value)}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
@@ -585,7 +653,7 @@ export default function ResultsPage() {
             type="number"
             step="0.01"
             value={price}
-            onChange={(e) => setPrice(e.target.value)}
+            onChange={e => setPrice(e.target.value)}
             style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
@@ -654,31 +722,13 @@ export default function ResultsPage() {
               <div style={{ color: '#999' }}>No image</div>
             )}
           </div>
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: 14,
-              marginBottom: 8,
-            }}
-          >
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
             {title || 'Your Product Title'}
           </div>
-          <div
-            style={{
-              color: '#c93',
-              fontWeight: 700,
-              fontSize: 20,
-            }}
-          >
+          <div style={{ color: '#c93', fontWeight: 700, fontSize: 20 }}>
             US ${price || '0.00'}
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginTop: 8,
-            }}
-          >
+          <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
             Category: {category?.name || 'Not selected'}
           </div>
         </div>
@@ -757,36 +807,19 @@ function CategorySelectorModal({
           </button>
         </div>
 
-        <div
-          style={{
-            marginBottom: 16,
-            padding: 12,
-            background: '#f0f8ff',
-            borderRadius: 4,
-          }}
-        >
-          <div
-            style={{ fontSize: 12, color: '#666', marginBottom: 4 }}
-          >
-            Current Category:
-          </div>
+        <div style={{ marginBottom: 16, padding: 12, background: '#f0f8ff', borderRadius: 4 }}>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Current Category:</div>
           <div style={{ fontWeight: 600 }}>
-            {currentCategory
-              ? currentCategory.path || currentCategory.name
-              : 'None'}
+            {currentCategory ? currentCategory.path || currentCategory.name : 'None'}
           </div>
         </div>
 
-        <h4 style={{ marginTop: 24, marginBottom: 12 }}>
-          Suggested Categories:
-        </h4>
+        <h4 style={{ marginTop: 24, marginBottom: 12 }}>Suggested Categories:</h4>
         {suggestions.length === 0 ? (
-          <div style={{ color: '#666', fontStyle: 'italic' }}>
-            No suggestions available
-          </div>
+          <div style={{ color: '#666', fontStyle: 'italic' }}>No suggestions available</div>
         ) : (
           <div>
-            {suggestions.map((cat) => (
+            {suggestions.map(cat => (
               <div
                 key={cat.id}
                 onClick={() => onSelect(cat as CategoryWithPath)}
@@ -796,28 +829,17 @@ function CategorySelectorModal({
                   borderRadius: 4,
                   marginBottom: 8,
                   cursor: 'pointer',
-                  background:
-                    currentCategory?.id === cat.id ? '#e3f2fd' : 'white',
+                  background: currentCategory?.id === cat.id ? '#e3f2fd' : 'white',
                   transition: 'background 0.2s',
                 }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.background = '#f5f5f5')
-                }
-                onMouseLeave={(e) =>
+                onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
+                onMouseLeave={e =>
                   (e.currentTarget.style.background =
                     currentCategory?.id === cat.id ? '#e3f2fd' : 'white')
                 }
               >
                 <div style={{ fontWeight: 500 }}>{cat.name}</div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: '#666',
-                    marginTop: 4,
-                  }}
-                >
-                  ID: {cat.id}
-                </div>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>ID: {cat.id}</div>
               </div>
             ))}
           </div>
@@ -827,13 +849,12 @@ function CategorySelectorModal({
           style={{
             marginTop: 24,
             paddingTop: 16,
-            borderTop: '1px solid #ddd',
+            borderTop: '1px solid '#ddd',
             fontSize: 14,
             color: '#666',
           }}
         >
-          💡 Tip: Selecting a category will automatically load its required item
-          specifics
+          💡 Tip: Selecting a category will automatically load its required item specifics
         </div>
       </div>
     </div>
