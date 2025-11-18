@@ -2,117 +2,91 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export const config = {
-  api: { bodyParser: { sizeLimit: '1mb' } },
+  api: { bodyParser: { sizeLimit: '2mb' } },
   maxDuration: 60,
 };
 
+type Category = {
+  id: string;
+  name?: string;
+  path?: string;
+  [key: string]: any;
+};
+
+type ItemSpecific = {
+  name: string;
+  value: string;
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const body = req.body || {};
+    const body: any = req.body || {};
 
-    // Support both camelCase and Pascal/snake just in case
-    const title: string = body.title ?? body.Title ?? '';
-    const description: string = body.description ?? body.Description ?? '';
+    // Support BOTH:
+    // 1) { listing_data: {...}, images: [...] }
+    // 2) { title, description, category, item_specifics, image_urls }
+    const listingData = body.listing_data || body;
 
-    const price: number | undefined =
-      typeof body.price === 'number'
-        ? body.price
-        : typeof body.Price === 'number'
-        ? body.Price
-        : undefined;
+    const title: string = listingData.title ?? '';
+    const description: string = listingData.description ?? '';
+    const category: Category | null = listingData.category ?? null;
+    const itemSpecifics: ItemSpecific[] = Array.isArray(listingData.item_specifics)
+      ? listingData.item_specifics
+      : [];
 
-    const currency: string = body.currency ?? body.Currency ?? 'USD';
-
-    const quantity: number =
-      typeof body.quantity === 'number'
-        ? body.quantity
-        : typeof body.Quantity === 'number'
-        ? body.Quantity
-        : 1;
-
-    const category = body.category ?? body.Category ?? null;
-
-    const itemSpecificsRaw = body.item_specifics ?? body.itemSpecifics ?? [];
-    const imageUrlsRaw = body.image_urls ?? body.imageUrls ?? body.images ?? [];
+    const rawImages = body.images || body.image_urls || [];
+    const imageUrls: string[] = Array.isArray(rawImages)
+      ? rawImages.filter((u: any) => typeof u === 'string' && u.trim() !== '')
+      : [];
 
     const errors: string[] = [];
 
-    // Required fields
     if (!title.trim()) errors.push('Title is required.');
     if (!description.trim()) errors.push('Description is required.');
-    if (!category) errors.push('Category is required.');
+    if (!category || !category.id) errors.push('Category is required.');
 
-    // Item specifics must be an array of { name, value }
-    let item_specifics: Array<{ name: string; value: any }> = [];
-    if (!Array.isArray(itemSpecificsRaw)) {
+    if (!Array.isArray(itemSpecifics)) {
       errors.push('item_specifics must be an array of { name, value }.');
-    } else {
-      item_specifics = itemSpecificsRaw
-        .filter((s: any) => s && typeof s.name === 'string')
-        .map((s: any) => ({
-          name: String(s.name),
-          value: s.value,
-        }));
-      if (item_specifics.length === 0) {
-        errors.push('item_specifics must be an array of { name, value }.');
-      }
     }
 
-    // Image URLs
-    const image_urls: string[] = Array.isArray(imageUrlsRaw)
-      ? imageUrlsRaw.map((u: any) => String(u)).filter(Boolean)
-      : [];
-
-    if (image_urls.length === 0) {
+    if (!imageUrls.length) {
       errors.push('At least one image URL is required.');
     }
 
-    if (errors.length > 0) {
+    if (errors.length) {
       return res.status(400).json({
         error: 'Validation failed',
         details: errors,
       });
     }
 
-    // Clean payload ready for eBay (stub for now)
+    // NOTE: this is still a stub — we’re NOT calling eBay yet.
+    // We just echo back the payload the way eBay would need it.
     const listingPayload = {
-      title,
-      description,
-      price,
-      currency,
-      quantity,
+      title: title.trim(),
+      description: description.trim(),
       category,
-      item_specifics,
-      image_urls,
+      item_specifics: itemSpecifics,
+      image_urls: imageUrls,
+      // You can tack on price/currency/etc later
     };
 
-    console.log(
-      '📤 Ready to publish listing (stub):',
-      JSON.stringify(listingPayload, null, 2)
-    );
+    console.log('✅ Listing payload ready to send to eBay:', listingPayload);
 
     return res.status(200).json({
       success: true,
-      message: 'Listing payload validated and accepted (stub).',
-      listingPayload,
+      message: 'Listing payload validated (stub).',
+      data: listingPayload,
     });
   } catch (err: any) {
-    console.error('❌ publish-listing error:', err);
+    console.error('❌ /api/publish-listing error:', err);
     return res.status(500).json({
-      error: err?.message || 'Internal server error',
+      error: 'Internal server error',
+      details: err?.message || String(err),
     });
   }
 }
