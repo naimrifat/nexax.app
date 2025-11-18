@@ -205,12 +205,13 @@ export default function ResultsPage() {
               : String(analysis.price_suggestion?.optimal ?? '0.00'),
           );
 
-          // Images: prefer array, fall back to single URL or stored value
           const imgs: string[] =
-            analysis.images ||
-            data.images ||
-            (analysis.image_url ? [analysis.image_url] : []) ||
-            [];
+          analysis.images ||
+          analysis.image_urls ||          // ✅ new
+          data.images ||
+          data.image_urls ||              // ✅ new
+          (analysis.image_url ? [analysis.image_url] : []) ||
+          [];
           setImages(imgs);
           setMainImageIndex(0);
 
@@ -265,13 +266,15 @@ export default function ResultsPage() {
             : String(analysis.price_suggestion?.optimal ?? '0.00'),
         );
 
-        const imgs: string[] =
-          analysis.images ||
-          data.images ||
-          (analysis.image_url ? [analysis.image_url] : []) ||
-          [];
-        setImages(imgs);
-        setMainImageIndex(0);
+       const imgs: string[] =
+       analysis.images ||
+       analysis.image_urls ||          // ✅ new
+       data.images ||
+       data.image_urls ||              // ✅ new
+       (analysis.image_url ? [analysis.image_url] : []) ||
+       [];
+       setImages(imgs);
+       setMainImageIndex(0);
 
         aiDetectedRef.current = analysis.detected || {};
 
