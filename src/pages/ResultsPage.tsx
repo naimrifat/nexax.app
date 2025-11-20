@@ -1,1005 +1,242 @@
-// src/pages/ResultsPage.tsx
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-  useCallback,
-  useRef,
-} from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-
-type Category = {
-  id: string;
-  name: string;
-  parentId?: string;
-  level?: number;
-};
-
-type CategoryWithPath = Category & {
-  path?: string;
-  breadcrumbs?: string[];
-};
-
-type ItemSpecific = {
-  name: string;
-  value: string;
-  required?: boolean;
-  type?: string; // "dropdown" | "text"
-  options?: string[];
-  multi?: boolean;
-  selectionOnly?: boolean;
-  freeTextAllowed?: boolean;
-};
-
-type AiDetected = {
-  brand?: string;
-  size?: string;
-  color?: string;
-  condition?: string;
-  material?: string;
-  style?: string;
-  [key: string]: any;
-};
-
-type AiData = {
-  title?: string;
-  description?: string;
-  price_suggestion?: { optimal?: number | string };
-  image_url?: string; // legacy single-image field
-  images?: string[];
-  category?: CategoryWithPath;
-  category_suggestions?: Category[];
-  item_specifics?: ItemSpecific[] | Record<string, string>;
-  keywords?: string[] | string;
-  detected?: AiDetected;
-};
-
-function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
-  if (!s) return [];
-  if (Array.isArray(s)) {
-    return s.filter((x) => x && typeof x.name === 'string');
-  }
-  if (typeof s === 'object') {
-    return Object.entries(s).map(([name, value]) => ({
-      name,
-      value: String(value ?? ''),
-    }));
-  }
-  return [];
-}
+import { useListingData } from '../hooks/useListingData';
+import { useCategorySpecifics } from '../hooks/useCategorySpecifics';
+import { SpecificsEditor } from '../components/SpecificsEditor';
+import { ItemSpecific, AiData } from '../types';
+import clsx from 'clsx';
 
 export default function ResultsPage() {
   const navigate = useNavigate();
+  
+  // 1. Fetch Data (From Session or Server)
+  // This hook automatically handles the "Refresh" bug by checking storage
+  const { data: initialData, isLoading: isInitialLoading, isError } = useListingData();
 
+  // 2. Local Form State
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.00');
-  const [keywords, setKeywords] = useState('');
-  const [category, setCategory] = useState<CategoryWithPath | null>(null);
-  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
-  const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [loadingSpecifics, setLoadingSpecifics] = useState(false);
-  const [publishing, setPublishing] = useState(false);
-
-  // images + main image index
   const [images, setImages] = useState<string[]>([]);
-  const [mainImageIndex, setMainImageIndex] = useState(0);
+  const [category, setCategory] = useState<AiData['category']>(undefined);
+  const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
+  const [keywords, setKeywords] = useState('');
 
-  // AI-detected facts (ref so it doesn’t cause re-renders)
-  const aiDetectedRef = useRef<AiDetected>({});
+  // 3. Fetch Schema (Only runs when category ID exists)
+  // This hook uses TanStack Query to cache the response
+  const { data: newSchema, isLoading: isSchemaLoading } = useCategorySpecifics(category?.id);
 
-  // Smart mapper from detected facts → specifics
-  const smartFillSpecifics = useCallback(
-    (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
-      return newSpecifics.map((field) => {
-        let value = '';
-        const fieldLower = field.name.toLowerCase();
-
-        if (fieldLower.includes('brand')) {
-          value = aiData.brand || '';
-        } else if (fieldLower.includes('size type')) {
-          // leave for backend/AI, unless you want to map here
-        } else if (fieldLower === 'size' || fieldLower.includes('size')) {
-          value = aiData.size || '';
-        } else if (
-          fieldLower.includes('color') ||
-          fieldLower.includes('colour')
-        ) {
-          value = aiData.color || '';
-        } else if (fieldLower.includes('condition')) {
-          value = aiData.condition || '';
-        } else if (fieldLower.includes('material')) {
-          value = aiData.material || '';
-        } else if (fieldLower.includes('style')) {
-          value = aiData.style || '';
-        }
-
-        // Snap to dropdown options if present
-        if (value && field.type === 'dropdown' && field.options?.length) {
-          const exact = field.options.find(
-            (opt) => opt.toLowerCase() === value.toLowerCase(),
-          );
-          value = exact || value;
-        }
-
-        return { ...field, value };
-      });
-    },
-    [],
-  );
-
-  // Fetch specifics for a category
-  const fetchCategorySpecifics = useCallback(
-    async (categoryId: string) => {
-      setLoadingSpecifics(true);
-      try {
-        const response = await fetch('/api/ebay-categories', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'getCategorySpecifics',
-            categoryId,
-          }),
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch category specifics');
-
-        const data = await response.json();
-
-        const newSpecifics: ItemSpecific[] = (data.aspects || []).map(
-          (aspect: any) => ({
-            name: aspect.name,
-            value: '',
-            required: !!aspect.required,
-            type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
-            options: aspect.values || [],
-            multi: !!aspect.multi,
-            selectionOnly: aspect.type === 'SelectionOnly',
-            freeTextAllowed: aspect.type !== 'SelectionOnly',
-          }),
-        );
-
-        const filledSpecifics = smartFillSpecifics(
-          newSpecifics,
-          aiDetectedRef.current || {},
-        );
-        setSpecifics(filledSpecifics);
-      } catch (err) {
-        console.error('Error fetching specifics:', err);
-      } finally {
-        setLoadingSpecifics(false);
-      }
-    },
-    [smartFillSpecifics],
-  );
-
-  // Load initial data (from /api/listing-data/:session OR sessionStorage)
+  // --- EFFECT: Initialize Form from AI Data ---
   useEffect(() => {
-    let isMounted = true;
+    if (initialData) {
+      setTitle(initialData.title || '');
+      setDescription(initialData.description || '');
+      setPrice(String(initialData.price_suggestion?.optimal || '0.00'));
+      setImages(initialData.images || []);
+      setCategory(initialData.category);
+      
+      const kw = Array.isArray(initialData.keywords) ? initialData.keywords.join(', ') : initialData.keywords;
+      setKeywords(String(kw || ''));
 
-    const loadData = async () => {
-      setLoading(true);
-
-      const urlParams = new URLSearchParams(window.location.search);
-      const sessionId = urlParams.get('session');
-
-      // Preferred: server-stored listing data
-      if (sessionId) {
-        try {
-          const res = await fetch(`/api/listing-data/${sessionId}`);
-          if (!res.ok) throw new Error('Failed to fetch data from API');
-          const data = await res.json();
-
-          if (!isMounted) return;
-
-          const analysis: any = data.data || data.analysis || data;
-
-          setTitle(analysis.title ?? '');
-          setDescription(analysis.description ?? '');
-          setPrice(
-            typeof analysis.price_suggestion?.optimal === 'number'
-              ? analysis.price_suggestion.optimal.toFixed(2)
-              : String(analysis.price_suggestion?.optimal ?? '0.00'),
-          );
-
-          const imgs: string[] =
-          analysis.images ||
-          analysis.image_urls ||          // ✅ new
-          data.images ||
-          data.image_urls ||              // ✅ new
-          (analysis.image_url ? [analysis.image_url] : []) ||
-          [];
-          setImages(imgs);
-          setMainImageIndex(0);
-
-          aiDetectedRef.current = analysis.detected || {};
-
-          const kw = Array.isArray(analysis.keywords)
-            ? analysis.keywords.join(', ')
-            : String(analysis.keywords ?? '');
-          setKeywords(kw);
-
-          setCategorySuggestions(analysis.category_suggestions ?? []);
-
-          const initialCategory = analysis.category ?? null;
-          setCategory(initialCategory);
-
-          if (initialCategory && initialCategory.id) {
-            await fetchCategorySpecifics(initialCategory.id);
-          } else {
-            setSpecifics(normalizeSpecifics(analysis.item_specifics));
-          }
-
-          setLoading(false);
-          return;
-        } catch (err: any) {
-          console.error('Error fetching listing-data API:', err);
-          if (isMounted) {
-            setError(err.message || 'Failed to load data');
-            setLoading(false);
-          }
-          return;
-        }
+      if (initialData.item_specifics) {
+        setSpecifics(initialData.item_specifics);
       }
+    }
+  }, [initialData]);
 
-      // Fallback: sessionStorage
-      const raw = sessionStorage.getItem('aiListingData');
-      if (!raw) {
-        navigate('/create-listing', { replace: true });
-        return;
-      }
+  // --- EFFECT: Merge Schema when Category Changes ---
+  // This ensures that if the category changes (or initially loads),
+  // the specific fields (dropdowns vs text) match eBay's rules.
+  useEffect(() => {
+    if (newSchema && category?.id) {
+      console.log("Merging new schema for category:", category.id);
+      
+      const merged = newSchema.map(schemaItem => {
+        // Find if we already have a value for this aspect (case-insensitive)
+        const existing = specifics.find(s => s.name.toLowerCase() === schemaItem.name.toLowerCase());
+        
+        return {
+          name: schemaItem.name,
+          // Keep existing value if found, otherwise empty
+          value: existing?.value || '',
+          required: schemaItem.required,
+          options: schemaItem.values, // Map 'values' from schema to 'options' for specific
+          selectionOnly: schemaItem.selectionOnly,
+          multi: schemaItem.multi,
+          freeTextAllowed: schemaItem.freeTextAllowed
+        };
+      });
+      
+      // Keep custom specifics (ones the user added that aren't in the schema)
+      const schemaNames = new Set(newSchema.map(s => s.name.toLowerCase()));
+      const customSpecifics = specifics.filter(s => !schemaNames.has(s.name.toLowerCase()));
+      
+      setSpecifics([...merged, ...customSpecifics]);
+    }
+  }, [newSchema]); 
 
-      try {
-        const data: AiData | any = JSON.parse(raw);
-        const analysis: any = data.data || data.analysis || data;
 
-        if (!isMounted) return;
-
-        setTitle(analysis.title ?? '');
-        setDescription(analysis.description ?? '');
-        setPrice(
-          typeof analysis.price_suggestion?.optimal === 'number'
-            ? analysis.price_suggestion.optimal.toFixed(2)
-            : String(analysis.price_suggestion?.optimal ?? '0.00'),
-        );
-
-       const imgs: string[] =
-       analysis.images ||
-       analysis.image_urls ||          // ✅ new
-       data.images ||
-       data.image_urls ||              // ✅ new
-       (analysis.image_url ? [analysis.image_url] : []) ||
-       [];
-       setImages(imgs);
-       setMainImageIndex(0);
-
-        aiDetectedRef.current = analysis.detected || {};
-
-        const kw = Array.isArray(analysis.keywords)
-          ? analysis.keywords.join(', ')
-          : String(analysis.keywords ?? '');
-        setKeywords(kw);
-
-        setCategorySuggestions(analysis.category_suggestions ?? []);
-
-        const initialCategory = analysis.category ?? null;
-        setCategory(initialCategory);
-
-        if (initialCategory && initialCategory.id) {
-          await fetchCategorySpecifics(initialCategory.id);
-        } else {
-          setSpecifics(normalizeSpecifics(analysis.item_specifics));
-        }
-
-        setLoading(false);
-      } catch (e: any) {
-        console.error('Failed to parse sessionStorage listing data:', e);
-        if (isMounted) {
-          setError('Failed to load listing data');
-          setLoading(false);
-        }
-      }
-    };
-
-    loadData();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [navigate, fetchCategorySpecifics]);
-
-  // Handle category change
-  const handleCategorySelect = async (newCategory: CategoryWithPath) => {
-    setCategory(newCategory);
-    setShowCategoryModal(false);
-    await fetchCategorySpecifics(newCategory.id);
+  // --- Handlers ---
+  const handleSpecificChange = (idx: number, val: string | string[]) => {
+    const next = [...specifics];
+    next[idx] = { ...next[idx], value: val };
+    setSpecifics(next);
   };
 
-  const updateSpecific = (idx: number, value: string) => {
-    setSpecifics((prev) => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], value };
-      return next;
-    });
+  const handleAddSpecific = () => {
+    setSpecifics([...specifics, { name: '', value: '', freeTextAllowed: true }]);
   };
 
-  const addSpecific = () =>
-    setSpecifics((prev) => [...prev, { name: '', value: '' }]);
-  const removeSpecific = (idx: number) =>
-    setSpecifics((prev) => prev.filter((_, i) => i !== idx));
-
-  const categoryBreadcrumb = useMemo(() => {
-    if (!category) return 'No category selected';
-    if (category.path) return category.path;
-    if (category.breadcrumbs) return category.breadcrumbs.join(' > ');
-    return category.name;
-  }, [category]);
-
-  const mainImageUrl = images[mainImageIndex] || '';
+  const handleRemoveSpecific = (idx: number) => {
+    setSpecifics(specifics.filter((_, i) => i !== idx));
+  };
 
   const handlePublish = async () => {
-    if (!title.trim() || !description.trim() || !category) {
-      alert('Title, description, and category are required.');
-      return;
-    }
-    if (!images.length) {
-      alert('At least one image is required.');
-      return;
-    }
-
-    try {
-      setPublishing(true);
-
-      // Put chosen main image first in the array
-      const orderedImages = [
-        images[mainImageIndex],
-        ...images.filter((_, idx) => idx !== mainImageIndex),
-      ];
-
-      const listing_data = {
-        title: title.trim(),
-        description: description.trim(),
-        category: { id: category.id, name: category.name },
-        item_specifics: specifics.map((s) => ({
-          name: s.name,
-          value: s.value,
-          required: !!s.required,
-          multi: !!s.multi,
-          selectionOnly: !!s.selectionOnly,
-          freeTextAllowed: s.freeTextAllowed !== false,
-          options: s.options || [],
-        })),
-        keywords: keywords
-          .split(',')
-          .map((k) => k.trim())
-          .filter(Boolean),
-        price_suggestion: {
-          optimal: parseFloat(price || '0') || 0,
+    const payload = {
+        listing_data: {
+            title,
+            description,
+            category,
+            item_specifics: specifics,
+            price_suggestion: { optimal: price }
         },
-      };
-
-      const res = await fetch('/api/publish-listing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listing_data,
-          images: orderedImages,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        console.error('Publish error:', data);
-        alert(
-          `An error occurred: ${JSON.stringify(
-            data,
-            null,
-            2,
-          )}`,
-        );
-        return;
-      }
-
-      alert('Your listing has been sent to eBay! It may take a minute to appear.');
-    } catch (err: any) {
-      console.error('Publish error:', err);
-      alert(
-        `An unexpected error occurred while publishing: ${
-          err?.message || String(err)
-        }`,
-      );
-    } finally {
-      setPublishing(false);
+        images
+    };
+    
+    try {
+        const res = await fetch('/api/publish-listing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error(await res.text());
+        alert("Success! Listing published.");
+    } catch (e: any) {
+        alert("Error publishing: " + e.message);
     }
   };
 
-  if (loading) {
+  // --- Render ---
+  if (isInitialLoading) {
     return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
-        <h2>Loading listing data...</h2>
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <h2 className="text-xl font-semibold text-gray-700">Loading your listing...</h2>
+        </div>
       </div>
     );
   }
 
-  if (error) {
+  if (isError || !initialData) {
     return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
-        <h2 style={{ color: 'red' }}>{error}</h2>
-        <button onClick={() => navigate('/create-listing')}>Go Back</button>
+      <div className="p-12 text-center">
+        <h2 className="text-red-600 text-2xl font-bold mb-4">Failed to load data</h2>
+        <p className="mb-6 text-gray-600">Your session may have expired or the data is missing.</p>
+        <button onClick={() => navigate('/create-listing')} className="btn btn-primary">Start Over</button>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        padding: 24,
-        display: 'grid',
-        gridTemplateColumns: '1fr 360px',
-        gap: 24,
-      }}
-    >
-      <main>
-        <h1>Create eBay Listing</h1>
-
-        {/* IMAGES */}
-        <section style={{ marginTop: 16 }}>
-          <h3>Photos</h3>
-          <div
-            style={{
-              marginTop: 8,
-              marginBottom: 12,
-              height: 320,
-              borderRadius: 8,
-              overflow: 'hidden',
-              border: '1px solid #ddd',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: '#f5f5f5',
-            }}
-          >
-            {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="Main"
-                style={{
-                  maxHeight: '100%',
-                  maxWidth: '100%',
-                  objectFit: 'contain',
-                }}
-              />
-            ) : (
-              <div style={{ color: '#999' }}>No image</div>
-            )}
+    <div className="min-h-screen bg-gray-50 p-6 md:p-12">
+      <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        {/* Left Main Column */}
+        <main className="lg:col-span-2 space-y-8">
+          <div className="flex items-center justify-between">
+            <h1 className="text-3xl font-bold text-gray-900">Edit Listing</h1>
           </div>
 
-          {images.length > 1 && (
-            <div
-              style={{
-                display: 'flex',
-                gap: 8,
-                flexWrap: 'wrap',
-              }}
-            >
-              {images.map((img, idx) => (
-                <div
-                  key={idx}
-                  onClick={() => setMainImageIndex(idx)}
-                  style={{
-                    borderRadius: 4,
-                    overflow: 'hidden',
-                    border:
-                      idx === mainImageIndex
-                        ? '2px solid #0064d2'
-                        : '1px solid #ddd',
-                    cursor: 'pointer',
-                    background: '#fafafa',
-                    height: 70,
-                    width: 70,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <img
-                    src={img}
-                    alt={`thumb-${idx}`}
-                    style={{
-                      maxHeight: '100%',
-                      maxWidth: '100%',
-                      objectFit: 'cover',
-                    }}
-                  />
+          {/* Photos */}
+          <section className="card p-6 bg-white shadow rounded-lg">
+            <h3 className="text-xl font-semibold mb-4">Photos</h3>
+            <div className="grid grid-cols-4 sm:grid-cols-6 gap-4">
+              {images.map((img, i) => (
+                <div key={i} className={clsx("aspect-square rounded-lg overflow-hidden border-2 bg-gray-100", i === 0 ? "border-teal-500" : "border-transparent")}>
+                  <img src={img} alt="" className="w-full h-full object-cover" />
                 </div>
               ))}
             </div>
-          )}
-        </section>
+          </section>
 
-        {/* TITLE */}
-        <section style={{ marginTop: 24 }}>
-          <h3>Title</h3>
-          <input
-            placeholder="Enter title..."
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            style={{
-              width: '100%',
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
-            maxLength={80}
+          {/* Details */}
+          <section className="card p-6 bg-white shadow rounded-lg space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <input 
+                type="text" 
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 text-lg font-medium"
+                value={title} 
+                onChange={e => setTitle(e.target.value)} 
+                maxLength={80} 
+              />
+              <div className="text-right text-xs text-gray-500 mt-1">{title.length} / 80</div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea 
+                rows={8} 
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                value={description} 
+                onChange={e => setDescription(e.target.value)} 
+              />
+            </div>
+          </section>
+
+          {/* Specifics Editor */}
+          <SpecificsEditor 
+            specifics={specifics} 
+            onChange={handleSpecificChange}
+            onRemove={handleRemoveSpecific}
+            onAdd={handleAddSpecific}
+            loading={isSchemaLoading}
           />
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginTop: 4,
-              textAlign: 'right',
-            }}
-          >
-            {title.length}/80 characters
-          </div>
-        </section>
+          
+          <section className="card p-6 bg-white shadow rounded-lg">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Keywords</label>
+            <input 
+              type="text" 
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+              value={keywords} 
+              onChange={e => setKeywords(e.target.value)} 
+            />
+          </section>
+        </main>
 
-        {/* CATEGORY */}
-        <section style={{ marginTop: 24 }}>
-          <h3>Category</h3>
-          <div
-            style={{
-              border: '1px solid #ddd',
-              borderRadius: 4,
-              padding: 12,
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: '#f9f9f9',
-              marginTop: 8,
-            }}
-          >
-            <div
-              style={{
-                flex: 1,
-                marginRight: 12,
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12,
-                  color: '#666',
-                  marginBottom: 4,
-                }}
-              >
-                Selected Category:
-              </div>
-              <div
-                style={{
-                  fontWeight: 500,
-                  fontSize: 14,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {categoryBreadcrumb}
+        {/* Right Sidebar */}
+        <aside className="space-y-6">
+          <div className="card p-6 bg-white shadow rounded-lg sticky top-6">
+            <h2 className="text-lg font-semibold mb-4">Summary</h2>
+            
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-gray-500 uppercase">Category</label>
+              <div className="mt-1 p-2 bg-gray-50 rounded border border-gray-200 text-sm font-medium text-gray-900 break-words">
+                  {category?.path || category?.name || 'No Category'}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowCategoryModal(true)}
-              style={{
-                padding: '8px 16px',
-                background: '#0064d2',
-                color: 'white',
-                border: 'none',
-                borderRadius: 4,
-                cursor: 'pointer',
-                fontSize: 14,
-                flexShrink: 0,
-              }}
+
+            <div className="mb-6">
+              <label className="block text-xs font-medium text-gray-500 uppercase">Price</label>
+              <div className="relative mt-1">
+                <span className="absolute left-3 top-2 text-gray-500">$</span>
+                <input 
+                  type="text" 
+                  className="w-full pl-7 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 text-xl font-bold"
+                  value={price} 
+                  onChange={e => setPrice(e.target.value)} 
+                />
+              </div>
+            </div>
+
+            <button 
+              onClick={handlePublish} 
+              className="w-full bg-teal-600 text-white font-bold py-3 px-4 rounded hover:bg-teal-700 transition-colors shadow-lg shadow-teal-500/20"
             >
-              Change
+              Publish to eBay
             </button>
           </div>
-        </section>
-
-        {/* ITEM SPECIFICS */}
-        <section style={{ marginTop: 24 }}>
-          <h3>
-            Item Specifics{' '}
-            {loadingSpecifics && (
-              <span style={{ fontSize: 14, color: '#666' }}>
-                (Loading...)
-              </span>
-            )}
-          </h3>
-          {specifics.length === 0 && !loadingSpecifics && (
-            <div style={{ opacity: 0.7, marginTop: 8 }}>
-              No specifics loaded. Select a category first.
-            </div>
-          )}
-          {specifics.map((spec, i) => (
-            <div key={i} style={{ marginTop: 12 }}>
-              <label
-                style={{
-                  display: 'block',
-                  marginBottom: 4,
-                  fontSize: 14,
-                  fontWeight: 500,
-                }}
-              >
-                {spec.name}
-                {spec.required && (
-                  <span style={{ color: 'red', marginLeft: 4 }}>*</span>
-                )}
-              </label>
-              {spec.type === 'dropdown' && spec.options?.length ? (
-                <select
-                  value={spec.value}
-                  onChange={(e) => updateSpecific(i, e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    fontSize: 14,
-                    borderRadius: 4,
-                    border: '1px solid #ddd',
-                  }}
-                >
-                  <option value="">Select {spec.name}</option>
-                  {spec.options.map((opt, idx) => (
-                    <option key={idx} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  placeholder={`Enter ${spec.name}`}
-                  value={spec.value}
-                  onChange={(e) => updateSpecific(i, e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    fontSize: 14,
-                    borderRadius: 4,
-                    border: '1px solid #ddd',
-                  }}
-                />
-              )}
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={addSpecific}
-            style={{
-              marginTop: 12,
-              padding: '8px 16px',
-              fontSize: 14,
-            }}
-          >
-            + Add Custom Specific
-          </button>
-        </section>
-
-        {/* DESCRIPTION */}
-        <section style={{ marginTop: 24 }}>
-          <h3>Description</h3>
-          <textarea
-            placeholder="Enter description..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={8}
-            style={{
-              width: '100%',
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
-          />
-        </section>
-
-        {/* KEYWORDS */}
-        <section style={{ marginTop: 24 }}>
-          <h3>Keywords</h3>
-          <input
-            placeholder="e.g., vintage, designer, rare"
-            value={keywords}
-            onChange={(e) => setKeywords(e.target.value)}
-            style={{
-              width: '100%',
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
-          />
-        </section>
-
-        {/* PRICE */}
-        <section style={{ marginTop: 24 }}>
-          <h3>Price</h3>
-          <input
-            type="number"
-            step="0.01"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            style={{
-              width: 240,
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
-          />
-        </section>
-
-        {/* BUTTONS */}
-        <div style={{ marginTop: 32, display: 'flex', gap: 12 }}>
-          <button
-            onClick={handlePublish}
-            disabled={publishing}
-            style={{
-              padding: '12px 32px',
-              background: publishing ? '#999' : '#0064d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: publishing ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {publishing ? 'Publishing…' : 'Publish to eBay'}
-          </button>
-          <button
-            onClick={() => navigate('/create-listing')}
-            style={{
-              padding: '12px 32px',
-              background: '#f0f0f0',
-              color: '#333',
-              border: '1px solid #ddd',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 16,
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      </main>
-
-      {/* PREVIEW SIDEBAR */}
-      <aside>
-        <div
-          style={{
-            border: '1px solid #ddd',
-            borderRadius: 8,
-            padding: 16,
-            position: 'sticky',
-            top: 24,
-          }}
-        >
-          <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
-          <div
-            style={{
-              height: 200,
-              background: '#f5f5f5',
-              display: 'grid',
-              placeItems: 'center',
-              marginBottom: 12,
-              borderRadius: 4,
-            }}
-          >
-            {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="preview"
-                style={{
-                  maxHeight: 200,
-                  maxWidth: '100%',
-                  borderRadius: 4,
-                  objectFit: 'contain',
-                }}
-              />
-            ) : (
-              <div style={{ color: '#999' }}>No image</div>
-            )}
-          </div>
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: 14,
-              marginBottom: 8,
-            }}
-          >
-            {title || 'Your Product Title'}
-          </div>
-          <div
-            style={{
-              color: '#c93',
-              fontWeight: 700,
-              fontSize: 20,
-            }}
-          >
-            US ${price || '0.00'}
-          </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginTop: 8,
-            }}
-          >
-            Category: {category?.name || 'Not selected'}
-          </div>
-        </div>
-      </aside>
-
-      {showCategoryModal && (
-        <CategorySelectorModal
-          currentCategory={category}
-          suggestions={categorySuggestions}
-          onSelect={handleCategorySelect}
-          onClose={() => setShowCategoryModal(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-function CategorySelectorModal({
-  currentCategory,
-  suggestions,
-  onSelect,
-  onClose,
-}: {
-  currentCategory: CategoryWithPath | null;
-  suggestions: Category[];
-  onSelect: (cat: CategoryWithPath) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'grid',
-        placeItems: 'center',
-        zIndex: 1000,
-      }}
-    >
-      <div
-        style={{
-          background: 'white',
-          borderRadius: 8,
-          padding: 24,
-          maxWidth: 600,
-          width: '90%',
-          maxHeight: '80vh',
-          overflow: 'auto',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 16,
-          }}
-        >
-          <h3 style={{ margin: 0 }}>Select Category</h3>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: 24,
-              cursor: 'pointer',
-              padding: 0,
-              width: 32,
-              height: 32,
-            }}
-          >
-            ×
-          </button>
-        </div>
-
-        <div
-          style={{
-            marginBottom: 16,
-            padding: 12,
-            background: '#f0f8ff',
-            borderRadius: 4,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginBottom: 4,
-            }}
-          >
-            Current Category:
-          </div>
-          <div style={{ fontWeight: 600 }}>
-            {currentCategory
-              ? currentCategory.path || currentCategory.name
-              : 'None'}
-          </div>
-        </div>
-
-        <h4
-          style={{
-            marginTop: 24,
-            marginBottom: 12,
-          }}
-        >
-          Suggested Categories:
-        </h4>
-        {suggestions.length === 0 ? (
-          <div style={{ color: '#666', fontStyle: 'italic' }}>
-            No suggestions available
-          </div>
-        ) : (
-          <div>
-            {suggestions.map((cat) => (
-              <div
-                key={cat.id}
-                onClick={() => onSelect(cat as CategoryWithPath)}
-                style={{
-                  padding: 12,
-                  border: '1px solid #ddd',
-                  borderRadius: 4,
-                  marginBottom: 8,
-                  cursor: 'pointer',
-                  background:
-                    currentCategory?.id === cat.id ? '#e3f2fd' : 'white',
-                  transition: 'background 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = '#f5f5f5';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background =
-                    currentCategory?.id === cat.id ? '#e3f2fd' : 'white';
-                }}
-              >
-                <div style={{ fontWeight: 500 }}>{cat.name}</div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: '#666',
-                    marginTop: 4,
-                  }}
-                >
-                  ID: {cat.id}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div
-          style={{
-            marginTop: 24,
-            paddingTop: 16,
-            borderTop: '1px solid #ddd', // ✅ correct string
-            fontSize: 14,
-            color: '#666',
-          }}
-        >
-          💡 Tip: Selecting a category will automatically load its required item
-          specifics
-        </div>
+        </aside>
       </div>
     </div>
   );
