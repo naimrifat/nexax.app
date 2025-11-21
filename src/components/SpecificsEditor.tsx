@@ -1,11 +1,10 @@
-// src/components/SpecificsEditor.tsx
 import React, { useEffect, useRef, useState } from 'react';
 import type { ItemSpecific } from '../types';
 
 type Props = {
   specifics: ItemSpecific[];
   onChange: (idx: number, val: string | string[]) => void;
-  onRemove: (idx: number) => void;
+  onRemove: (idx: number) => void; // still here in case you use it for custom fields
   onAdd: () => void;
   loading?: boolean;
 };
@@ -128,7 +127,7 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
 export function SpecificsEditor({
   specifics,
   onChange,
-  onRemove,
+  onRemove, // currently unused visually, but kept for API compatibility
   onAdd,
   loading,
 }: Props) {
@@ -171,9 +170,9 @@ export function SpecificsEditor({
           return (
             <div
               key={`${spec.name || 'custom'}-${idx}`}
-              className="grid grid-cols-1 md:grid-cols-7 gap-3 items-start"
+              className="grid grid-cols-1 md:grid-cols-6 gap-3 items-start"
             >
-              {/* Name / Meta */}
+              {/* Name */}
               <div className="md:col-span-2">
                 <div className="text-sm font-medium text-gray-900 break-words">
                   {spec.name || (
@@ -182,15 +181,6 @@ export function SpecificsEditor({
                   {spec.required ? (
                     <span className="text-red-500 ml-1">*</span>
                   ) : null}
-                </div>
-                <div className="text-xs text-gray-500 mt-1 space-x-2">
-                  {isMulti && <span className="inline-block">Multi</span>}
-                  {spec.selectionOnly && (
-                    <span className="inline-block">Options only</span>
-                  )}
-                  {spec.freeTextAllowed && (
-                    <span className="inline-block">Free text allowed</span>
-                  )}
                 </div>
               </div>
 
@@ -212,7 +202,7 @@ export function SpecificsEditor({
                       value={singleValue}
                       onChange={(e) => onChange(idx, e.target.value)}
                     >
-                      <option value="">Select…</option>
+                      <option value="">Select...</option>
                       {options.map((opt) => (
                         <option key={opt} value={opt}>
                           {opt}
@@ -273,17 +263,6 @@ export function SpecificsEditor({
                     onChange={(e) => onChange(idx, e.target.value)}
                   />
                 )}
-              </div>
-
-              {/* Remove button */}
-              <div className="md:col-span-1 flex md:justify-end">
-                <button
-                  type="button"
-                  onClick={() => onRemove(idx)}
-                  className="text-sm text-red-600 hover:text-red-700 font-medium"
-                >
-                  Remove
-                </button>
               </div>
             </div>
           );
