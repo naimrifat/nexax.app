@@ -68,12 +68,12 @@ return {
       if (Array.isArray(v)) return v[0] ?? '';
       return String(v ?? '');
     }
-  })(),
+  })(), // 👈  important: close both the IIFE and the property with a comma here
   required: schemaItem.required,
-  options: schemaItem.values,               // map schema values to options
+  options: schemaItem.values, // Map 'values' from schema to 'options' for specific
   selectionOnly: schemaItem.selectionOnly,
   multi: schemaItem.multi,
-  freeTextAllowed: schemaItem.freeTextAllowed
+  freeTextAllowed: schemaItem.freeTextAllowed,
 };
       
       // Keep custom specifics (ones the user added that aren't in the schema)
