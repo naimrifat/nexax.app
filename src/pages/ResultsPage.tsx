@@ -55,17 +55,26 @@ export default function ResultsPage() {
         // Find if we already have a value for this aspect (case-insensitive)
         const existing = specifics.find(s => s.name.toLowerCase() === schemaItem.name.toLowerCase());
         
-        return {
-          name: schemaItem.name,
-          // Keep existing value if found, otherwise empty
-          value: existing?.value || '',
-          required: schemaItem.required,
-          options: schemaItem.values, // Map 'values' from schema to 'options' for specific
-          selectionOnly: schemaItem.selectionOnly,
-          multi: schemaItem.multi,
-          freeTextAllowed: schemaItem.freeTextAllowed
-        };
-      });
+return {
+  name: schemaItem.name,
+  // Keep existing value if present; otherwise choose the correct empty type.
+  value: (() => {
+    const v = existing?.value;
+    if (schemaItem.multi) {
+      if (Array.isArray(v)) return v;
+      if (typeof v === 'string' && v.trim() !== '') return [v.trim()];
+      return [];
+    } else {
+      if (Array.isArray(v)) return v[0] ?? '';
+      return String(v ?? '');
+    }
+  })(),
+  required: schemaItem.required,
+  options: schemaItem.values,               // map schema values to options
+  selectionOnly: schemaItem.selectionOnly,
+  multi: schemaItem.multi,
+  freeTextAllowed: schemaItem.freeTextAllowed
+};
       
       // Keep custom specifics (ones the user added that aren't in the schema)
       const schemaNames = new Set(newSchema.map(s => s.name.toLowerCase()));
