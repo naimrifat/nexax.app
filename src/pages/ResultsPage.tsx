@@ -48,57 +48,7 @@ export default function ResultsPage() {
     }
   }, [initialData]);
 
-  // --- EFFECT: Merge Schema when Category Changes ---
-  // This ensures that if the category changes (or initially loads),
-  // the specific fields (dropdowns vs text) match eBay's rules.
   useEffect(() => {
-    if (newSchema && category?.id) {
-      console.log('Merging new schema for category:', category.id);
-
-      const merged: ItemSpecific[] = newSchema.map((schemaItem) => {
-        // Find if we already have a value for this aspect (case-insensitive)
-        const existing = specifics.find(
-          (s) => s.name.toLowerCase() === schemaItem.name.toLowerCase()
-        );
-
-        const value = (() => {
-          const v = existing?.value;
-
-          if (schemaItem.multi) {
-            // Multi-value: always normalize to string[]
-            if (Array.isArray(v)) return v;
-            if (typeof v === 'string' && v.trim() !== '') return [v.trim()];
-            return [];
-          } else {
-            // Single-value: always normalize to string
-            if (Array.isArray(v)) return v[0] ?? '';
-            return String(v ?? '');
-          }
-        })();
-
-        return {
-          name: schemaItem.name,
-          value,
-          required: schemaItem.required,
-          options: schemaItem.values, // Map 'values' from schema to 'options' for specific
-          selectionOnly: schemaItem.selectionOnly,
-          multi: schemaItem.multi,
-          freeTextAllowed: schemaItem.freeTextAllowed,
-        };
-      });
-
-      // Keep custom specifics (ones the user added that aren't in the schema)
-      const schemaNames = new Set(
-        newSchema.map((s) => s.name.toLowerCase())
-      );
-      const customSpecifics = specifics.filter(
-        (s) => !schemaNames.has(s.name.toLowerCase())
-      );
-
-      setSpecifics([...merged, ...customSpecifics]);
-    }
-  }, [newSchema, category, specifics]);
-
   // --- Handlers ---
   const handleSpecificChange = (idx: number, val: string | string[]) => {
     const next = [...specifics];
