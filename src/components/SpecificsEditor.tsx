@@ -4,37 +4,33 @@ import type { ItemSpecific } from '../types';
 type Props = {
   specifics: ItemSpecific[];
   onChange: (idx: number, val: string | string[]) => void;
-  onRemove: (idx: number) => void; // still here in case you use it for custom fields
+  onRemove: (idx: number) => void; // still needed for custom fields
   onAdd: () => void;
   loading?: boolean;
 };
 
-type MultiSelectProps = {
+// ----------------------
+// MultiSelect Component
+// ----------------------
+const MultiSelectComponent: React.FC<{
   value: string[];
   options: string[];
   onChange: (val: string[]) => void;
   freeTextAllowed?: boolean;
-};
-
-const MultiSelect: React.FC<MultiSelectProps> = ({
-  value,
-  options,
-  onChange,
-  freeTextAllowed,
-}) => {
+}> = ({ value, options, onChange, freeTextAllowed }) => {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const ref = useRef<HTMLDivElement | null>(null);
 
-  // Close dropdown on outside click
+  // Close dropdown when clicking outside
   useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   const addValue = (val: string) => {
@@ -49,23 +45,13 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
     onChange(value.filter((v) => v !== val));
   };
 
-  const handleKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
-    if (e.key === 'Enter' && freeTextAllowed) {
-      e.preventDefault();
-      addValue(input);
-    } else if (e.key === 'Backspace' && !input && value.length > 0) {
-      // Backspace with empty input removes last chip
-      onChange(value.slice(0, -1));
-    }
-  };
-
-  const filteredOptions = options.filter((opt) =>
-    opt.toLowerCase().includes(input.toLowerCase())
+  const filtered = options.filter((o) =>
+    o.toLowerCase().includes(input.toLowerCase())
   );
 
   return (
-    <div className="relative" ref={containerRef}>
-      {/* Chip box + input */}
+    <div className="relative" ref={ref}>
+      {/* chip box */}
       <div
         className="flex flex-wrap items-center gap-1 px-2 py-1 border border-gray-300 rounded-md bg-white cursor-text focus-within:ring-2 focus-within:ring-teal-500"
         onClick={() => setOpen(true)}
@@ -88,26 +74,32 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
             </button>
           </span>
         ))}
+
         <input
-          className="flex-1 min-w-[60px] border-none outline-none text-sm py-1"
+          className="flex-1 min-w-[40px] border-none outline-none text-sm py-1"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
           onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && freeTextAllowed) {
+              e.preventDefault();
+              addValue(input);
+            }
+          }}
         />
       </div>
 
-      {/* Dropdown list (only when open) */}
+      {/* dropdown */}
       {open && (
         <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-300 rounded-md shadow-lg">
-          {filteredOptions.length === 0 ? (
+          {filtered.length === 0 ? (
             <div className="px-3 py-2 text-sm text-gray-500">
               {freeTextAllowed
-                ? 'Type and press Enter to add a custom value.'
-                : 'No matching options.'}
+                ? 'Press Enter to add custom value'
+                : 'No matching options'}
             </div>
           ) : (
-            filteredOptions.map((opt) => (
+            filtered.map((opt) => (
               <button
                 type="button"
                 key={opt}
@@ -124,10 +116,15 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
   );
 };
 
-export function SpecificsEditor({
+const MultiSelect = React.memo(MultiSelectComponent);
+
+// ----------------------
+// MAIN EDITOR COMPONENT
+// ----------------------
+function SpecificsEditorComponent({
   specifics,
   onChange,
-  onRemove, // currently unused visually, but kept for API compatibility
+  onRemove,
   onAdd,
   loading,
 }: Props) {
@@ -135,6 +132,7 @@ export function SpecificsEditor({
     <section className="card p-6 bg-white shadow rounded-lg space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-xl font-semibold">Item Specifics</h3>
+
         <button
           type="button"
           onClick={onAdd}
@@ -153,9 +151,8 @@ export function SpecificsEditor({
           const options = Array.isArray((spec as any).options)
             ? ((spec as any).options as string[])
             : [];
+          const isMulti = spec.multi || Array.isArray(spec.value);
           const hasOptions = options.length > 0;
-          const isSelect = (spec.selectionOnly || hasOptions) && hasOptions;
-          const isMulti = !!spec.multi || Array.isArray(spec.value);
 
           const singleValue = Array.isArray(spec.value)
             ? String(spec.value[0] ?? '')
@@ -173,30 +170,24 @@ export function SpecificsEditor({
               className="grid grid-cols-1 md:grid-cols-6 gap-3 items-start"
             >
               {/* Name */}
-              <div className="md:col-span-2">
-                <div className="text-sm font-medium text-gray-900 break-words">
-                  {spec.name || (
-                    <span className="italic text-gray-500">Custom Specific</span>
-                  )}
-                  {spec.required ? (
-                    <span className="text-red-500 ml-1">*</span>
-                  ) : null}
-                </div>
+              <div className="md:col-span-2 text-sm font-medium text-gray-900 break-words">
+                {spec.name || (
+                  <span className="italic text-gray-500">Custom Specific</span>
+                )}
+                {spec.required && <span className="text-red-500 ml-1">*</span>}
               </div>
 
-              {/* Value control */}
+              {/* Value Control */}
               <div className="md:col-span-4">
-                {isSelect ? (
+                {hasOptions ? (
                   isMulti ? (
-                    // MULTI + OPTIONS: chip + dropdown UI
                     <MultiSelect
                       value={multiValues}
                       options={options}
-                      onChange={(vals) => onChange(idx, vals)}
                       freeTextAllowed={spec.freeTextAllowed}
+                      onChange={(vals) => onChange(idx, vals)}
                     />
                   ) : (
-                    // SINGLE-SELECT
                     <select
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                       value={singleValue}
@@ -210,52 +201,14 @@ export function SpecificsEditor({
                       ))}
                     </select>
                   )
-                ) : // No options from schema — free-text path
-                isMulti ? (
-                  // MULTI free-text only (no options)
-                  <div>
-                    <div className="flex flex-wrap gap-2 mb-2">
-                      {multiValues.map((v) => (
-                        <span
-                          key={v}
-                          className="inline-flex items-center rounded-full border px-2 py-1 text-xs bg-gray-50"
-                        >
-                          {v}
-                          <button
-                            type="button"
-                            className="ml-2 text-gray-500 hover:text-gray-700"
-                            onClick={() =>
-                              onChange(
-                                idx,
-                                multiValues.filter((x) => x !== v)
-                              )
-                            }
-                            aria-label={`Remove ${v}`}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                    <input
-                      type="text"
-                      placeholder="Add value and press Enter"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const val = (e.currentTarget.value || '').trim();
-                          if (!val) return;
-                          if (!multiValues.includes(val)) {
-                            onChange(idx, [...multiValues, val]);
-                          }
-                          e.currentTarget.value = '';
-                        }
-                      }}
-                    />
-                  </div>
+                ) : isMulti ? (
+                  <MultiSelect
+                    value={multiValues}
+                    options={[]}
+                    freeTextAllowed={spec.freeTextAllowed}
+                    onChange={(vals) => onChange(idx, vals)}
+                  />
                 ) : (
-                  // SINGLE free-text
                   <input
                     type="text"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -271,3 +224,5 @@ export function SpecificsEditor({
     </section>
   );
 }
+
+export const SpecificsEditor = React.memo(SpecificsEditorComponent);
