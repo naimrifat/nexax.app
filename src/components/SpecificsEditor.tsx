@@ -1,5 +1,5 @@
 // src/components/SpecificsEditor.tsx
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ItemSpecific } from '../types';
 
 type Props = {
@@ -8,6 +8,121 @@ type Props = {
   onRemove: (idx: number) => void;
   onAdd: () => void;
   loading?: boolean;
+};
+
+type MultiSelectProps = {
+  value: string[];
+  options: string[];
+  onChange: (val: string[]) => void;
+  freeTextAllowed?: boolean;
+};
+
+const MultiSelect: React.FC<MultiSelectProps> = ({
+  value,
+  options,
+  onChange,
+  freeTextAllowed,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState('');
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const addValue = (val: string) => {
+    const trimmed = val.trim();
+    if (!trimmed) return;
+    if (value.includes(trimmed)) return;
+    onChange([...value, trimmed]);
+    setInput('');
+  };
+
+  const removeValue = (val: string) => {
+    onChange(value.filter((v) => v !== val));
+  };
+
+  const handleKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
+    if (e.key === 'Enter' && freeTextAllowed) {
+      e.preventDefault();
+      addValue(input);
+    } else if (e.key === 'Backspace' && !input && value.length > 0) {
+      // Backspace with empty input removes last chip
+      onChange(value.slice(0, -1));
+    }
+  };
+
+  const filteredOptions = options.filter((opt) =>
+    opt.toLowerCase().includes(input.toLowerCase())
+  );
+
+  return (
+    <div className="relative" ref={containerRef}>
+      {/* Chip box + input */}
+      <div
+        className="flex flex-wrap items-center gap-1 px-2 py-1 border border-gray-300 rounded-md bg-white cursor-text focus-within:ring-2 focus-within:ring-teal-500"
+        onClick={() => setOpen(true)}
+      >
+        {value.map((v) => (
+          <span
+            key={v}
+            className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs bg-gray-50"
+          >
+            {v}
+            <button
+              type="button"
+              className="ml-1 text-gray-500 hover:text-gray-700"
+              onClick={(e) => {
+                e.stopPropagation();
+                removeValue(v);
+              }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          className="flex-1 min-w-[60px] border-none outline-none text-sm py-1"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setOpen(true)}
+        />
+      </div>
+
+      {/* Dropdown list (only when open) */}
+      {open && (
+        <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-300 rounded-md shadow-lg">
+          {filteredOptions.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-gray-500">
+              {freeTextAllowed
+                ? 'Type and press Enter to add a custom value.'
+                : 'No matching options.'}
+            </div>
+          ) : (
+            filteredOptions.map((opt) => (
+              <button
+                type="button"
+                key={opt}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-teal-50"
+                onClick={() => addValue(opt)}
+              >
+                {opt}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 };
 
 export function SpecificsEditor({
@@ -36,16 +151,16 @@ export function SpecificsEditor({
 
       <div className="space-y-6">
         {specifics.map((spec, idx) => {
-          const options = Array.isArray(spec.options) ? spec.options : [];
+          const options = Array.isArray((spec as any).options)
+            ? ((spec as any).options as string[])
+            : [];
           const hasOptions = options.length > 0;
           const isSelect = (spec.selectionOnly || hasOptions) && hasOptions;
-
-          // Consider field multi if schema says so OR value is an array already
           const isMulti = !!spec.multi || Array.isArray(spec.value);
 
-          // Helpers for rendering values consistently
-          const singleValue =
-            Array.isArray(spec.value) ? String(spec.value[0] ?? '') : String(spec.value ?? '');
+          const singleValue = Array.isArray(spec.value)
+            ? String(spec.value[0] ?? '')
+            : String(spec.value ?? '');
 
           const multiValues: string[] = Array.isArray(spec.value)
             ? spec.value
@@ -61,13 +176,21 @@ export function SpecificsEditor({
               {/* Name / Meta */}
               <div className="md:col-span-2">
                 <div className="text-sm font-medium text-gray-900 break-words">
-                  {spec.name || <span className="italic text-gray-500">Custom Specific</span>}
-                  {spec.required ? <span className="text-red-500 ml-1">*</span> : null}
+                  {spec.name || (
+                    <span className="italic text-gray-500">Custom Specific</span>
+                  )}
+                  {spec.required ? (
+                    <span className="text-red-500 ml-1">*</span>
+                  ) : null}
                 </div>
                 <div className="text-xs text-gray-500 mt-1 space-x-2">
                   {isMulti && <span className="inline-block">Multi</span>}
-                  {spec.selectionOnly && <span className="inline-block">Options only</span>}
-                  {spec.freeTextAllowed && <span className="inline-block">Free text allowed</span>}
+                  {spec.selectionOnly && (
+                    <span className="inline-block">Options only</span>
+                  )}
+                  {spec.freeTextAllowed && (
+                    <span className="inline-block">Free text allowed</span>
+                  )}
                 </div>
               </div>
 
@@ -75,54 +198,15 @@ export function SpecificsEditor({
               <div className="md:col-span-4">
                 {isSelect ? (
                   isMulti ? (
-                    // MULTI-SELECT with allowed options
-                    <>
-                      <select
-                        multiple
-                        className="w-full min-h-[2.5rem] px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-                        value={multiValues}
-                        onChange={(e) => {
-                          const values = Array.from(e.target.selectedOptions).map((o) => o.value);
-                          onChange(idx, values); // string[]
-                        }}
-                      >
-                        {options.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-
-                      {/* Selected "chips" for clarity */}
-                      {multiValues.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-2">
-                          {multiValues.map((v) => (
-                            <span
-                              key={v}
-                              className="inline-flex items-center rounded-full border px-2 py-1 text-xs bg-gray-50"
-                            >
-                              {v}
-                              <button
-                                type="button"
-                                className="ml-2 text-gray-500 hover:text-gray-700"
-                                onClick={() =>
-                                  onChange(
-                                    idx,
-                                    multiValues.filter((x) => x !== v)
-                                  )
-                                }
-                                aria-label={`Remove ${v}`}
-                                title={`Remove ${v}`}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </>
+                    // MULTI + OPTIONS: chip + dropdown UI
+                    <MultiSelect
+                      value={multiValues}
+                      options={options}
+                      onChange={(vals) => onChange(idx, vals)}
+                      freeTextAllowed={spec.freeTextAllowed}
+                    />
                   ) : (
-                    // SINGLE-SELECT with allowed options
+                    // SINGLE-SELECT
                     <select
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                       value={singleValue}
@@ -136,9 +220,9 @@ export function SpecificsEditor({
                       ))}
                     </select>
                   )
-                ) : // Free-text path (no options in schema)
+                ) : // No options from schema — free-text path
                 isMulti ? (
-                  // MULTI free-text as a simple tag editor
+                  // MULTI free-text only (no options)
                   <div>
                     <div className="flex flex-wrap gap-2 mb-2">
                       {multiValues.map((v) => (
@@ -157,7 +241,6 @@ export function SpecificsEditor({
                               )
                             }
                             aria-label={`Remove ${v}`}
-                            title={`Remove ${v}`}
                           >
                             ×
                           </button>
@@ -173,7 +256,9 @@ export function SpecificsEditor({
                           e.preventDefault();
                           const val = (e.currentTarget.value || '').trim();
                           if (!val) return;
-                          if (!multiValues.includes(val)) onChange(idx, [...multiValues, val]);
+                          if (!multiValues.includes(val)) {
+                            onChange(idx, [...multiValues, val]);
+                          }
                           e.currentTarget.value = '';
                         }
                       }}
