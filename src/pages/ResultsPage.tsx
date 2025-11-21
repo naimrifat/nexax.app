@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useListingData } from '../hooks/useListingData';
 import { useCategorySpecifics } from '../hooks/useCategorySpecifics';
@@ -10,7 +10,6 @@ export default function ResultsPage() {
   const navigate = useNavigate();
 
   // 1. Fetch Data (From Session or Server)
-  // This hook automatically handles the "Refresh" bug by checking storage
   const { data: initialData, isLoading: isInitialLoading, isError } =
     useListingData();
 
@@ -24,7 +23,6 @@ export default function ResultsPage() {
   const [keywords, setKeywords] = useState('');
 
   // 3. Fetch Schema (Only runs when category ID exists)
-  // This hook uses TanStack Query to cache the response
   const { data: newSchema, isLoading: isSchemaLoading } =
     useCategorySpecifics(category?.id);
 
@@ -49,12 +47,8 @@ export default function ResultsPage() {
   }, [initialData]);
 
   // --- EFFECT: Merge Schema when Category Changes ---
-  // This ensures that if the category changes (or initially loads),
-  // the specific fields (dropdowns vs text) match eBay's rules.
   useEffect(() => {
     if (!newSchema || !category?.id) return;
-
-    console.log('Merging new schema for category:', category.id);
 
     setSpecifics((prevSpecifics) => {
       const previous = prevSpecifics || [];
@@ -103,23 +97,28 @@ export default function ResultsPage() {
     });
   }, [newSchema, category]);
 
-  // --- Handlers ---
-  const handleSpecificChange = (idx: number, val: string | string[]) => {
-    const next = [...specifics];
-    next[idx] = { ...next[idx], value: val };
-    setSpecifics(next);
-  };
+  // --- Handlers (memoized to avoid re-rendering SpecificsEditor on every keystroke) ---
+  const handleSpecificChange = useCallback(
+    (idx: number, val: string | string[]) => {
+      setSpecifics((prev) => {
+        const next = [...prev];
+        next[idx] = { ...next[idx], value: val };
+        return next;
+      });
+    },
+    []
+  );
 
-  const handleAddSpecific = () => {
-    setSpecifics([
-      ...specifics,
+  const handleAddSpecific = useCallback(() => {
+    setSpecifics((prev) => [
+      ...prev,
       { name: '', value: '', freeTextAllowed: true } as ItemSpecific,
     ]);
-  };
+  }, []);
 
-  const handleRemoveSpecific = (idx: number) => {
-    setSpecifics(specifics.filter((_, i) => i !== idx));
-  };
+  const handleRemoveSpecific = useCallback((idx: number) => {
+    setSpecifics((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
 
   const handlePublish = async () => {
     const payload = {
