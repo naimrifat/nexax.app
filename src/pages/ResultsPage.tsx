@@ -210,38 +210,48 @@ export default function ResultsPage() {
           </section>
 
           {/* Details */}
-          <section className="card p-6 bg-white shadow rounded-lg space-y-6">
+          <section className="card p-6 bg-white shadow rounded-lg space-y-4">
+            {/* Title Input */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Title
+              </label>
+              <input
+                type="text"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 text-lg font-medium"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={80}
+              />
+              <div className="text-right text-xs text-gray-500 mt-1">
+                {title.length} / 80
+              </div>
+            </div>
 
-  {/* Title Input */}
-  <div>
-    <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-    <input 
-      type="text" 
-      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 text-lg font-medium"
-      value={title} 
-      onChange={e => setTitle(e.target.value)} 
-      maxLength={80} 
-    />
-    <div className="text-right text-xs text-gray-500 mt-1">{title.length} / 80</div>
-  </div>
+            {/* Title display between Title and Description */}
+            <div className="mt-1 text-base font-semibold text-gray-900">
+              {title ? (
+                title
+              ) : (
+                <span className="text-gray-400">
+                  Your title will appear here…
+                </span>
+              )}
+            </div>
 
-  {/* ⭐ TITLE PREVIEW RIGHT HERE ⭐ */}
-  <div className="p-3 bg-gray-50 border border-gray-200 rounded-md text-gray-900 text-base font-medium">
-    {title || <span className="text-gray-400">Your title will appear here…</span>}
-  </div>
-
-  {/* Description */}
-  <div>
-    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-    <textarea 
-      rows={8} 
-      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
-      value={description} 
-      onChange={e => setDescription(e.target.value)} 
-    />
-  </div>
-
-</section>
+            {/* Description */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description
+              </label>
+              <textarea
+                rows={8}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </div>
+          </section>
 
           {/* Specifics Editor */}
           <SpecificsEditor
