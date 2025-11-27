@@ -712,7 +712,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     setIsLoading(false);
   }
 };
-    } catch (error: any) {
+    catch (error: any) {
       console.error('Error:', error);
       setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
     } finally {
