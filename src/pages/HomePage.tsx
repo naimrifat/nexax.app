@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
+import { useNavigate } from 'react-router-dom';
 
 /* -------------------------------------------------------
    Helper: snap an AI/free-text value to an allowed option
@@ -382,6 +383,7 @@ export default function HomePage() {
   const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const navigate = useNavigate();
 
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
@@ -604,83 +606,112 @@ export default function HomePage() {
     handlePhotoUpload(e.dataTransfer.files);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (photos.length === 0) {
-      setStatus('Please upload at least one image.');
-      return;
-    }
-    setIsLoading(true);
-    setResults(null);
-    setListingData(null);
-    setStatus('Uploading images to Cloudinary...');
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    try {
-      const uploadedUrls = await Promise.all(
-        photos.map(async (file) => {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('upload_preset', 'ebay_listings');
+  if (photos.length === 0) {
+    setStatus('Please upload at least one image.');
+    return;
+  }
 
-          const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
+  setIsLoading(true);
+  setResults(null);
+  setListingData(null);
+  setStatus('Uploading images to Cloudinary...');
+
+  try {
+    const uploadedUrls = await Promise.all(
+      photos.map(async (file) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('upload_preset', 'ebay_listings');
+
+        const res = await fetch(
+          'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
+          {
             method: 'POST',
             body: formData,
-          });
+          }
+        );
 
-          const data = await res.json();
-          if (!res.ok) throw new Error(data?.error?.message ?? 'Image upload failed');
-          return data.secure_url as string;
-        })
-      );
-
-      setStatus('Images uploaded! Analyzing with AI...');
-
-      const analysisResponse = await fetch('/api/analyze-listing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: Date.now().toString(),
-          images: uploadedUrls,
-        }),
-      });
-
-      if (!analysisResponse.ok) {
-        const errorData = await analysisResponse.json().catch(() => ({}));
-        throw new Error(errorData?.error ?? 'Failed to analyze images');
-      }
-
-      const analysisResult = await analysisResponse.json();
-      const aiData = analysisResult?.data || analysisResult?.analysis || analysisResult || {};
-      const normalized = normalizeAiToListing(aiData);
-
-      setStatus('Listing generated successfully!');
-      setResults(aiData);
-
-      let finalListingData = normalized;
-      if (!normalized?.category?.id) {
-        finalListingData = { ...normalized, item_specifics: [] };
-        setEbaySpecifics([]);
-      }
-      setListingData(finalListingData);
-
-      if (finalListingData?.category?.id) {
-        const catId = finalListingData.category.id;
-
-        if (specificsCacheRef.current.has(catId)) {
-          const cached = specificsCacheRef.current.get(catId)!;
-          const updatedSpecifics = cached.map((spec: any) => {
-            const aiSpec = normalized.item_specifics.find((s: any) => s.name === spec.name);
-            return aiSpec ? { ...spec, value: aiSpec.value } : spec;
-          });
-
-          startTransition(() => {
-            setEbaySpecifics(updatedSpecifics);
-            setListingData((prev: any) => ({ ...(prev ?? {}), item_specifics: updatedSpecifics }));
-          });
-        } else {
-          fetchEbaySpecifics(catId, normalized.item_specifics);
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error?.message ?? 'Image upload failed');
         }
+
+        return data.secure_url as string;
+      })
+    );
+
+    setStatus('Images uploaded! Analyzing with AI...');
+
+    const analysisResponse = await fetch('/api/analyze-listing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: Date.now().toString(),
+        images: uploadedUrls,
+      }),
+    });
+
+    if (!analysisResponse.ok) {
+      const errorData = await analysisResponse.json().catch(() => ({}));
+      throw new Error(errorData?.error ?? 'Failed to analyze images');
+    }
+
+    const analysisResult = await analysisResponse.json();
+    const aiData =
+      analysisResult?.data ||
+      analysisResult?.analysis ||
+      analysisResult ||
+      {};
+    const normalized = normalizeAiToListing(aiData);
+
+    setStatus('Listing generated successfully!');
+    setResults(aiData);
+
+    let finalListingData = normalized;
+    if (!normalized?.category?.id) {
+      finalListingData = { ...normalized, item_specifics: [] };
+      setEbaySpecifics([]);
+    }
+
+    setListingData(finalListingData);
+
+    if (finalListingData?.category?.id) {
+      const catId = finalListingData.category.id;
+
+      if (specificsCacheRef.current.has(catId)) {
+        const cached = specificsCacheRef.current.get(catId)!;
+        const updatedSpecifics = cached.map((spec: any) => {
+          const aiSpec = normalized.item_specifics.find(
+            (s: any) => s.name === spec.name
+          );
+          return aiSpec ? { ...spec, value: aiSpec.value } : spec;
+        });
+
+        startTransition(() => {
+          setEbaySpecifics(updatedSpecifics);
+          setListingData((prev: any) => ({
+            ...(prev ?? {}),
+            item_specifics: updatedSpecifics,
+          }));
+        });
+      } else {
+        fetchEbaySpecifics(catId, normalized.item_specifics);
       }
+    }
+
+    // 🔹 NEW: stash AI data and navigate to Results page
+    sessionStorage.setItem('aiListingData', JSON.stringify(aiData));
+    navigate('/results');
+  } catch (error: any) {
+    console.error('Error:', error);
+    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+  } finally {
+    setIsLoading(false);
+  }
+};
     } catch (error: any) {
       console.error('Error:', error);
       setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
