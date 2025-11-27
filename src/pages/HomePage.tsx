@@ -702,15 +702,14 @@ const handleSubmit = async (e: React.FormEvent) => {
       }
     }
 
-    // 🔹 NEW: stash AI data and navigate to Results page
-    sessionStorage.setItem('aiListingData', JSON.stringify(aiData));
-    navigate('/results');
-  } catch (error: any) {
-    console.error('Error:', error);
-    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-  } finally {
-    setIsLoading(false);
-  }
+sessionStorage.setItem('aiListingData', JSON.stringify(aiData));
+navigate('/results');
+} catch (error: any) {
+  console.error('Error:', error);
+  setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+} finally {
+  setIsLoading(false);
+}
 };
     catch (error: any) {
       console.error('Error:', error);
