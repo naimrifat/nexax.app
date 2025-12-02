@@ -606,112 +606,128 @@ export default function HomePage() {
     handlePhotoUpload(e.dataTransfer.files);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    if (photos.length === 0) {
-      setStatus('Please upload at least one image.');
-      return;
-    }
+  if (photos.length === 0) {
+    setStatus('Please upload at least one image.');
+    return;
+  }
 
-    setIsLoading(true);
-    setResults(null);
-    setListingData(null);
-    setStatus('Uploading images to Cloudinary...');
+  setIsLoading(true);
+  setResults(null);
+  setListingData(null);
+  setStatus('Uploading images to Cloudinary...');
 
-    try {
-      const uploadedUrls = await Promise.all(
-        photos.map(async (file) => {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('upload_preset', 'ebay_listings');
+  try {
+    // 1) Upload all images to Cloudinary
+    const uploadedUrls = await Promise.all(
+      photos.map(async (file) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('upload_preset', 'ebay_listings');
 
-          const res = await fetch(
-            'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
-            {
-              method: 'POST',
-              body: formData,
-            }
-          );
-
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data?.error?.message ?? 'Image upload failed');
+        const res = await fetch(
+          'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
+          {
+            method: 'POST',
+            body: formData,
           }
+        );
 
-          return data.secure_url as string;
-        })
-      );
-
-      setStatus('Images uploaded! Analyzing with AI...');
-
-      const analysisResponse = await fetch('/api/analyze-listing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: Date.now().toString(),
-          images: uploadedUrls,
-        }),
-      });
-
-      if (!analysisResponse.ok) {
-        const errorData = await analysisResponse.json().catch(() => ({}));
-        throw new Error(errorData?.error ?? 'Failed to analyze images');
-      }
-
-      const analysisResult = await analysisResponse.json();
-      const aiData =
-        analysisResult?.data ||
-        analysisResult?.analysis ||
-        analysisResult ||
-        {};
-      const normalized = normalizeAiToListing(aiData);
-
-      setStatus('Listing generated successfully!');
-      setResults(aiData);
-
-      let finalListingData = normalized;
-      if (!normalized?.category?.id) {
-        finalListingData = { ...normalized, item_specifics: [] };
-        setEbaySpecifics([]);
-      }
-
-      setListingData(finalListingData);
-
-      if (finalListingData?.category?.id) {
-        const catId = finalListingData.category.id;
-
-        if (specificsCacheRef.current.has(catId)) {
-          const cached = specificsCacheRef.current.get(catId)!;
-          const updatedSpecifics = cached.map((spec: any) => {
-            const aiSpec = normalized.item_specifics.find(
-              (s: any) => s.name === spec.name
-            );
-            return aiSpec ? { ...spec, value: aiSpec.value } : spec;
-          });
-
-          startTransition(() => {
-            setEbaySpecifics(updatedSpecifics);
-            setListingData((prev: any) => ({
-              ...(prev ?? {}),
-              item_specifics: updatedSpecifics,
-            }));
-          });
-        } else {
-          fetchEbaySpecifics(catId, normalized.item_specifics);
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error?.message ?? 'Image upload failed');
         }
-      }
 
-      // Save AI output for ResultsPage and navigate
-      sessionStorage.setItem('aiListingData', JSON.stringify(aiData));
-      navigate('/results');
-    } catch (error: any) {
-      console.error('Error:', error);
-      setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-    } finally {
-      setIsLoading(false);
+        return data.secure_url as string;
+      })
+    );
+
+    setStatus('Images uploaded! Analyzing with AI...');
+
+    // 2) Call analyze-listing
+    const analysisResponse = await fetch('/api/analyze-listing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: Date.now().toString(),
+        images: uploadedUrls,
+      }),
+    });
+
+    if (!analysisResponse.ok) {
+      const errorData = await analysisResponse.json().catch(() => ({}));
+      throw new Error(errorData?.error ?? 'Failed to analyze images');
     }
-  };
+
+    const analysisResult = await analysisResponse.json();
+    const aiData =
+      analysisResult?.data ||
+      analysisResult?.analysis ||
+      analysisResult ||
+      {};
+
+    const normalized = normalizeAiToListing(aiData);
+
+    setStatus('Listing generated successfully!');
+    setResults(aiData);
+
+    // 3) Listing data for the on-page form
+    let finalListingData = normalized;
+    if (!normalized?.category?.id) {
+      finalListingData = { ...normalized, item_specifics: [] };
+      setEbaySpecifics([]);
+    }
+
+    setListingData(finalListingData);
+
+    // 4) Fetch eBay specifics for the detected category
+    if (finalListingData?.category?.id) {
+      const catId = finalListingData.category.id;
+
+      if (specificsCacheRef.current.has(catId)) {
+        const cached = specificsCacheRef.current.get(catId)!;
+        const updatedSpecifics = cached.map((spec: any) => {
+          const aiSpec = normalized.item_specifics.find(
+            (s: any) => s.name === spec.name
+          );
+          return aiSpec ? { ...spec, value: aiSpec.value } : spec;
+        });
+
+        startTransition(() => {
+          setEbaySpecifics(updatedSpecifics);
+          setListingData((prev: any) => ({
+            ...(prev ?? {}),
+            item_specifics: updatedSpecifics,
+          }));
+        });
+      } else {
+        fetchEbaySpecifics(catId, normalized.item_specifics);
+      }
+    }
+
+    // 5) Save everything the Results page needs
+    const aiListingPayload = {
+      ...aiData,
+      // make sure these are present even if AI model shape changes
+      title: normalized.title,
+      description: normalized.description,
+      category: finalListingData.category,
+      item_specifics: normalized.item_specifics,
+      images: uploadedUrls,
+      image_urls: uploadedUrls,
+    };
+
+    sessionStorage.setItem('aiListingData', JSON.stringify(aiListingPayload));
+    navigate('/results'); // or '/create-listing' depending on your route
+  } catch (error: any) {
+    console.error('Error:', error);
+    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   /**
    * Validates the listing data before publishing
