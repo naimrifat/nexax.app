@@ -22,7 +22,7 @@ type CategoryWithPath = Category & {
 
 type ItemSpecific = {
   name: string;
-  value: string;
+  value: string | string[];
   required?: boolean;
   type?: string; // "dropdown" | "text"
   options?: string[];
@@ -57,10 +57,17 @@ type AiData = {
   detected?: AiDetected;
 };
 
+/* ---------- Helpers ---------- */
+
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
   if (Array.isArray(s)) {
-    return s.filter((x) => x && typeof x.name === 'string');
+    return s
+      .filter((x) => x && typeof x.name === 'string')
+      .map((x) => ({
+        ...x,
+        value: x.value ?? '',
+      }));
   }
   if (typeof s === 'object') {
     return Object.entries(s).map(([name, value]) => ({
@@ -70,6 +77,221 @@ function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   }
   return [];
 }
+
+/** Choose string value from string | string[] */
+function firstValue(v: string | string[] | undefined): string {
+  if (Array.isArray(v)) return v[0] ?? '';
+  return v ?? '';
+}
+
+/* ---------- Compact token selector used for dropdowns/multi ---------- */
+
+function TokenSelect({
+  value,
+  options,
+  placeholder,
+  multi = false,
+  disabled = false,
+  onChange,
+}: {
+  value: string | string[];
+  options: string[];
+  placeholder?: string;
+  multi?: boolean;
+  disabled?: boolean;
+  onChange: (v: string | string[]) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const selected = Array.isArray(value) ? value : value ? [value] : [];
+  const lowerQuery = query.trim().toLowerCase();
+
+  const filtered = options
+    .filter((o) => (multi ? !selected.includes(o) : true))
+    .filter((o) =>
+      lowerQuery ? o.toLowerCase().includes(lowerQuery) : true,
+    )
+    .slice(0, 80);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery('');
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const addOption = (opt: string) => {
+    if (multi) {
+      const next = Array.from(new Set([...selected, opt]));
+      onChange(next);
+    } else {
+      onChange(opt);
+      setOpen(false);
+    }
+    setQuery('');
+    inputRef.current?.focus();
+  };
+
+  const removeOption = (opt: string) => {
+    if (!multi) {
+      onChange('');
+      return;
+    }
+    onChange(selected.filter((s) => s !== opt));
+  };
+
+  const clearAll = () => {
+    onChange(multi ? [] : '');
+    setQuery('');
+    inputRef.current?.focus();
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div
+        className={`min-h-[38px] w-full flex flex-wrap items-center gap-1 rounded-md border bg-white px-2 py-1 text-sm transition focus-within:ring-2 focus-within:ring-teal-500 ${
+          disabled ? 'opacity-60 cursor-not-allowed border-gray-200' : 'border-gray-300'
+        }`}
+        onClick={() => {
+          if (disabled) return;
+          setOpen(true);
+          inputRef.current?.focus();
+        }}
+      >
+        {/* Chips */}
+        {multi &&
+          selected.map((s) => (
+            <span
+              key={s}
+              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
+            >
+              {s}
+              <button
+                type="button"
+                className="text-teal-700/70 hover:text-teal-900"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeOption(s);
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+
+        {/* Single pill */}
+        {!multi && selected[0] && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
+            {selected[0]}
+            <button
+              type="button"
+              className="text-teal-700/70 hover:text-teal-900"
+              onClick={(e) => {
+                e.stopPropagation();
+                removeOption(selected[0]);
+              }}
+            >
+              ×
+            </button>
+          </span>
+        )}
+
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => !disabled && setOpen(true)}
+          disabled={disabled}
+          placeholder={
+            selected.length ? '' : placeholder || 'Search & select...'
+          }
+          className="flex-1 min-w-[120px] border-0 outline-none text-sm py-1 placeholder-gray-400"
+        />
+
+        {(multi ? selected.length > 0 : !!selected[0]) &&
+          !query &&
+          !disabled && (
+            <button
+              type="button"
+              className="ml-auto text-gray-400 hover:text-gray-600"
+              onClick={(e) => {
+                e.stopPropagation();
+                clearAll();
+              }}
+              aria-label="Clear"
+            >
+              ×
+            </button>
+          )}
+      </div>
+
+      {open && !disabled && filtered.length > 0 && (
+        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-gray-200 bg-white shadow">
+          {filtered.map((o) => (
+            <button
+              type="button"
+              key={o}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-teal-50"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => addOption(o)}
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemSpecificControl({
+  spec,
+  onChange,
+}: {
+  spec: ItemSpecific;
+  onChange: (val: string | string[]) => void;
+}) {
+  const opts = Array.isArray(spec.options) ? spec.options : [];
+
+  // eBay "SelectionOnly" → token dropdown
+  if (opts.length > 0 || spec.type === 'dropdown') {
+    return (
+      <TokenSelect
+        multi={!!spec.multi}
+        value={spec.value ?? (spec.multi ? [] : '')}
+        options={opts}
+        disabled={spec.freeTextAllowed === false && opts.length === 0}
+        placeholder="Search & select..."
+        onChange={(val) => onChange(val)}
+      />
+    );
+  }
+
+  // Free text fallback
+  const valString = Array.isArray(spec.value)
+    ? spec.value.join(', ')
+    : spec.value ?? '';
+
+  return (
+    <input
+      type="text"
+      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm"
+      placeholder={`Enter ${spec.name}`}
+      value={valString}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+/* ---------- Page ---------- */
 
 export default function ResultsPage() {
   const navigate = useNavigate();
@@ -87,11 +309,9 @@ export default function ResultsPage() {
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
   const [publishing, setPublishing] = useState(false);
 
-  // images + main image index
   const [images, setImages] = useState<string[]>([]);
   const [mainImageIndex, setMainImageIndex] = useState(0);
 
-  // AI details stored in refs so they don't trigger re-renders
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
 
@@ -99,45 +319,69 @@ export default function ResultsPage() {
   const smartFillSpecifics = useCallback(
     (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
       return newSpecifics.map((field) => {
-        // keep any value we already have (from AI specifics)
-        let value = field.value || '';
-        const fieldLower = field.name.toLowerCase();
+        let current = field.value;
+        let currentStr = firstValue(
+          typeof current === 'string' || Array.isArray(current)
+            ? current
+            : '',
+        );
 
-        // only fill if still empty
-        if (!value) {
-          if (fieldLower.includes('brand')) {
-            value = aiData.brand || '';
-          } else if (fieldLower.includes('size type')) {
-            // leave for manual selection for now
-          } else if (fieldLower === 'size' || fieldLower.includes('size')) {
-            value = aiData.size || '';
-          } else if (
-            fieldLower.includes('color') ||
-            fieldLower.includes('colour')
-          ) {
-            value = aiData.color || '';
-          } else if (fieldLower.includes('condition')) {
-            value = aiData.condition || '';
-          } else if (fieldLower.includes('material')) {
-            value = aiData.material || '';
-          } else if (fieldLower.includes('style')) {
-            value = aiData.style || '';
-          } else if (fieldLower.includes('department')) {
-            value = aiData.department || '';
-          } else if (fieldLower === 'type' || fieldLower.includes('type')) {
-            value = aiData.type || '';
+        const lower = field.name.toLowerCase();
+
+        // Only fill if still empty
+        if (!currentStr) {
+          let candidate = '';
+
+          if (lower.includes('brand')) candidate = aiData.brand || '';
+          else if (lower.includes('size type'))
+            candidate = aiData.type || '';
+          else if (lower === 'size' || lower.includes('size'))
+            candidate = aiData.size || '';
+          else if (lower.includes('color') || lower.includes('colour'))
+            candidate = aiData.color || '';
+          else if (lower.includes('condition'))
+            candidate = aiData.condition || '';
+          else if (lower.includes('material'))
+            candidate = aiData.material || '';
+          else if (lower.includes('style')) candidate = aiData.style || '';
+          else if (lower.includes('department'))
+            candidate = aiData.department || '';
+          else if (lower === 'type' || lower.includes('type'))
+            candidate = aiData.type || '';
+
+          if (candidate) {
+            if (field.multi) {
+              current = [candidate];
+            } else {
+              current = candidate;
+            }
+            currentStr = candidate;
           }
         }
 
         // Snap to dropdown options if present
-        if (value && field.type === 'dropdown' && field.options?.length) {
-          const exact = field.options.find(
-            (opt) => opt.toLowerCase() === value.toLowerCase(),
-          );
-          value = exact || value;
+        if (field.type === 'dropdown' && field.options?.length) {
+          if (Array.isArray(current)) {
+            const snapped = current
+              .map((v) => {
+                const exact = field.options!.find(
+                  (opt) =>
+                    opt.toLowerCase() === String(v).toLowerCase(),
+                );
+                return exact || v;
+              })
+              .filter(Boolean) as string[];
+            current = snapped;
+          } else if (typeof current === 'string' && current) {
+            const exact = field.options.find(
+              (opt) =>
+                opt.toLowerCase() === String(current).toLowerCase(),
+            );
+            if (exact) current = exact;
+          }
         }
 
-        return { ...field, value };
+        return { ...field, value: current };
       });
     },
     [],
@@ -161,11 +405,10 @@ export default function ResultsPage() {
 
         const data = await response.json();
 
-        // base specifics from eBay aspects
         const baseSpecifics: ItemSpecific[] = (data.aspects || []).map(
           (aspect: any) => ({
             name: aspect.name,
-            value: '',
+            value: aspect.multi ? [] : '',
             required: !!aspect.required,
             type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
             options: aspect.values || [],
@@ -181,27 +424,56 @@ export default function ResultsPage() {
           aiSpecifics.map((s) => [s.name.toLowerCase(), s.value]),
         );
 
-        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map((field) => {
-          const lower = field.name.toLowerCase();
-          const aiVal = aiMap.get(lower);
-          if (!aiVal) return field;
+        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map(
+          (field) => {
+            const lower = field.name.toLowerCase();
+            const aiVal = aiMap.get(lower);
+            if (aiVal == null || aiVal === '') return field;
 
-          let value = String(aiVal);
-          if (field.type === 'dropdown' && field.options?.length) {
-            const exact = field.options.find(
-              (opt) => opt.toLowerCase() === value.toLowerCase(),
-            );
-            value = exact || value;
-          }
-          return { ...field, value };
-        });
+            let value: string | string[];
 
-        // then fill remaining blanks from detected facts
+            if (field.multi) {
+              if (Array.isArray(aiVal)) {
+                value = aiVal.map((v) => String(v));
+              } else {
+                value = String(aiVal)
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+              }
+            } else {
+              value = String(
+                Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal,
+              );
+            }
+
+            // snap to options if needed
+            if (field.type === 'dropdown' && field.options?.length) {
+              if (Array.isArray(value)) {
+                value = value.map((v) => {
+                  const exact = field.options!.find(
+                    (opt) =>
+                      opt.toLowerCase() === String(v).toLowerCase(),
+                  );
+                  return exact || v;
+                });
+              } else if (typeof value === 'string' && value) {
+                const exact = field.options.find(
+                  (opt) =>
+                    opt.toLowerCase() === value.toLowerCase(),
+                );
+                if (exact) value = exact;
+              }
+            }
+
+            return { ...field, value };
+          },
+        );
+
         const filledSpecifics = smartFillSpecifics(
           withAiSpecifics,
           aiDetectedRef.current || {},
         );
-
         setSpecifics(filledSpecifics);
       } catch (err) {
         console.error('Error fetching specifics:', err);
@@ -228,13 +500,11 @@ export default function ResultsPage() {
         let analysis: any = null;
 
         if (sessionId) {
-          // Preferred: server-stored listing data
           const res = await fetch(`/api/listing-data/${sessionId}`);
           if (!res.ok) throw new Error('Failed to fetch data from API');
           wrapper = await res.json();
           analysis = wrapper.data || wrapper.analysis || wrapper;
         } else {
-          // Fallback: sessionStorage
           const raw = sessionStorage.getItem('aiListingData');
           if (!raw) {
             navigate('/create-listing', { replace: true });
@@ -246,14 +516,12 @@ export default function ResultsPage() {
 
         if (!isMounted) return;
 
-        // keep AI specifics & detected in refs for specifics merge
         const normalizedAiSpecifics = normalizeSpecifics(
           analysis.item_specifics,
         );
         aiSpecificsRef.current = normalizedAiSpecifics;
         aiDetectedRef.current = analysis.detected || {};
 
-        // Core fields
         setTitle(analysis.title ?? '');
         setDescription(analysis.description ?? '');
 
@@ -264,7 +532,6 @@ export default function ResultsPage() {
             : String(optimal ?? '0.00'),
         );
 
-        // Images: prefer AI + wrapper images
         const imgs: string[] =
           analysis.images ||
           analysis.image_urls ||
@@ -309,14 +576,13 @@ export default function ResultsPage() {
     };
   }, [navigate, fetchCategorySpecifics]);
 
-  // Handle category change
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setCategory(newCategory);
     setShowCategoryModal(false);
     await fetchCategorySpecifics(newCategory.id);
   };
 
-  const updateSpecific = (idx: number, value: string) => {
+  const updateSpecific = (idx: number, value: string | string[]) => {
     setSpecifics((prev) => {
       const next = [...prev];
       next[idx] = { ...next[idx], value };
@@ -351,7 +617,6 @@ export default function ResultsPage() {
     try {
       setPublishing(true);
 
-      // Put chosen main image first in the array
       const orderedImages = [
         images[mainImageIndex],
         ...images.filter((_, idx) => idx !== mainImageIndex),
@@ -617,62 +882,36 @@ export default function ResultsPage() {
               </span>
             )}
           </h3>
+
           {specifics.length === 0 && !loadingSpecifics && (
             <div style={{ opacity: 0.7, marginTop: 8 }}>
               No specifics loaded. Select a category first.
             </div>
           )}
-          {specifics.map((spec, i) => (
-            <div key={i} style={{ marginTop: 12 }}>
-              <label
-                style={{
-                  display: 'block',
-                  marginBottom: 4,
-                  fontSize: 14,
-                  fontWeight: 500,
-                }}
+
+          <div
+            className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3"
+            style={{ marginTop: 12 }}
+          >
+            {specifics.map((spec, i) => (
+              <div
+                key={`${spec.name}-${i}`}
+                className="flex flex-col gap-1"
               >
-                {spec.name}
-                {spec.required && (
-                  <span style={{ color: 'red', marginLeft: 4 }}>*</span>
-                )}
-              </label>
-              {spec.type === 'dropdown' && spec.options?.length ? (
-                <select
-                  value={spec.value}
-                  onChange={(e) => updateSpecific(i, e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    fontSize: 14,
-                    borderRadius: 4,
-                    border: '1px solid #ddd',
-                  }}
-                >
-                  <option value="">Select {spec.name}</option>
-                  {spec.options.map((opt, idx) => (
-                    <option key={idx} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  placeholder={`Enter ${spec.name}`}
-                  value={spec.value}
-                  onChange={(e) => updateSpecific(i, e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    fontSize: 14,
-                    borderRadius: 4,
-                    border: '1px solid #ddd',
-                  }}
+                <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
+                  <span>{spec.name}</span>
+                  {spec.required && (
+                    <span className="ml-1 text-red-500">*</span>
+                  )}
+                </label>
+                <ItemSpecificControl
+                  spec={spec}
+                  onChange={(val) => updateSpecific(i, val)}
                 />
-              )}
-            </div>
-          ))}
+              </div>
+            ))}
+          </div>
+
           <button
             type="button"
             onClick={addSpecific}
@@ -849,6 +1088,8 @@ export default function ResultsPage() {
     </div>
   );
 }
+
+/* ---------- Category modal ---------- */
 
 function CategorySelectorModal({
   currentCategory,
