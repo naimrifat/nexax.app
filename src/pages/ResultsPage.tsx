@@ -55,7 +55,6 @@ type AiData = {
   detected?: AiDetected;
 };
 
-// Normalize item_specifics into our ItemSpecific[]
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
   if (Array.isArray(s)) {
@@ -103,7 +102,7 @@ export default function ResultsPage() {
         if (fieldLower.includes('brand')) {
           value = aiData.brand || '';
         } else if (fieldLower.includes('size type')) {
-          // leave for backend/AI, unless you want to map here later
+          // leave for backend/AI, unless you want to map here
         } else if (fieldLower === 'size' || fieldLower.includes('size')) {
           value = aiData.size || '';
         } else if (
@@ -178,62 +177,75 @@ export default function ResultsPage() {
     [smartFillSpecifics],
   );
 
-  // 🔹 Load initial data from sessionStorage only
+  // Unified loader: from /api/listing-data/:session OR sessionStorage
   useEffect(() => {
     let isMounted = true;
 
     const loadData = async () => {
       setLoading(true);
+      setError(null);
 
-      const raw = sessionStorage.getItem('aiListingData');
-      if (!raw) {
-        // Nothing to show; send user back to generator
-        setError('No listing data found. Please generate a listing first.');
-        setLoading(false);
-        return;
-      }
+      const urlParams = new URLSearchParams(window.location.search);
+      const sessionId = urlParams.get('session');
 
       try {
-        const data: AiData | any = JSON.parse(raw);
-        const analysis: any = data.data || data.analysis || data;
+        let wrapper: any = null;
+        let analysis: any = null;
+
+        if (sessionId) {
+          // Preferred: server-stored listing data
+          const res = await fetch(`/api/listing-data/${sessionId}`);
+          if (!res.ok) throw new Error('Failed to fetch data from API');
+          wrapper = await res.json();
+          analysis = wrapper.data || wrapper.analysis || wrapper;
+        } else {
+          // Fallback: sessionStorage
+          const raw = sessionStorage.getItem('aiListingData');
+          if (!raw) {
+            navigate('/create-listing', { replace: true });
+            return;
+          }
+          wrapper = JSON.parse(raw);
+          analysis = wrapper.data || wrapper.analysis || wrapper;
+        }
 
         if (!isMounted) return;
 
         // Core fields
         setTitle(analysis.title ?? '');
         setDescription(analysis.description ?? '');
+
+        const optimal = analysis.price_suggestion?.optimal;
         setPrice(
-          typeof analysis.price_suggestion?.optimal === 'number'
-            ? analysis.price_suggestion.optimal.toFixed(2)
-            : String(analysis.price_suggestion?.optimal ?? '0.00'),
+          typeof optimal === 'number'
+            ? optimal.toFixed(2)
+            : String(optimal ?? '0.00'),
         );
 
-        // Images (try several possible field names)
+        // Images: prefer analysis.images, but fall back to wrapper-level images
         const imgs: string[] =
           analysis.images ||
           analysis.image_urls ||
-          data.images ||
-          data.image_urls ||
+          wrapper.images ||
+          wrapper.image_urls ||
           (analysis.image_url ? [analysis.image_url] : []) ||
           [];
-        setImages(Array.isArray(imgs) ? imgs : []);
+        setImages(imgs);
         setMainImageIndex(0);
 
-        // Detected attributes (brand, size, etc.)
         aiDetectedRef.current = analysis.detected || {};
 
-        // Keywords
         const kw = Array.isArray(analysis.keywords)
           ? analysis.keywords.join(', ')
           : String(analysis.keywords ?? '');
         setKeywords(kw);
 
-        // Category + suggestions
         setCategorySuggestions(analysis.category_suggestions ?? []);
-        const initialCategory = analysis.category ?? null;
+
+        const initialCategory: CategoryWithPath | null =
+          analysis.category ?? null;
         setCategory(initialCategory);
 
-        // Item specifics: either from eBay specifics or from AI directly
         if (initialCategory && initialCategory.id) {
           await fetchCategorySpecifics(initialCategory.id);
         } else {
@@ -241,10 +253,10 @@ export default function ResultsPage() {
         }
 
         setLoading(false);
-      } catch (e: any) {
-        console.error('Failed to parse sessionStorage listing data:', e);
+      } catch (err: any) {
+        console.error('Error loading listing data:', err);
         if (isMounted) {
-          setError('Failed to load listing data');
+          setError(err?.message || 'Failed to load data');
           setLoading(false);
         }
       }
@@ -255,7 +267,7 @@ export default function ResultsPage() {
     return () => {
       isMounted = false;
     };
-  }, [fetchCategorySpecifics]);
+  }, [navigate, fetchCategorySpecifics]);
 
   // Handle category change
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
@@ -374,7 +386,7 @@ export default function ResultsPage() {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
         <h2 style={{ color: 'red' }}>{error}</h2>
-        <button onClick={() => navigate('/')}>Go Back</button>
+        <button onClick={() => navigate('/create-listing')}>Go Back</button>
       </div>
     );
   }
@@ -561,7 +573,7 @@ export default function ResultsPage() {
             Item Specifics{' '}
             {loadingSpecifics && (
               <span style={{ fontSize: 14, color: '#666' }}>
-                (Loading...)
+                (Loading…)
               </span>
             )}
           </h3>
@@ -653,4 +665,300 @@ export default function ResultsPage() {
 
         {/* KEYWORDS */}
         <section style={{ marginTop: 24 }}>
-          <
+          <h3>Keywords</h3>
+          <input
+            placeholder="e.g., vintage, designer, rare"
+            value={keywords}
+            onChange={(e) => setKeywords(e.target.value)}
+            style={{
+              width: '100%',
+              padding: 12,
+              marginTop: 8,
+              fontSize: 14,
+            }}
+          />
+        </section>
+
+        {/* PRICE */}
+        <section style={{ marginTop: 24 }}>
+          <h3>Price</h3>
+          <input
+            type="number"
+            step="0.01"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            style={{
+              width: 240,
+              padding: 12,
+              marginTop: 8,
+              fontSize: 14,
+            }}
+          />
+        </section>
+
+        {/* BUTTONS */}
+        <div style={{ marginTop: 32, display: 'flex', gap: 12 }}>
+          <button
+            onClick={handlePublish}
+            disabled={publishing}
+            style={{
+              padding: '12px 32px',
+              background: publishing ? '#999' : '#0064d2',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: publishing ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {publishing ? 'Publishing…' : 'Publish to eBay'}
+          </button>
+          <button
+            onClick={() => navigate('/create-listing')}
+            style={{
+              padding: '12px 32px',
+              background: '#f0f0f0',
+              color: '#333',
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 16,
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </main>
+
+      {/* PREVIEW SIDEBAR */}
+      <aside>
+        <div
+          style={{
+            border: '1px solid #ddd',
+            borderRadius: 8,
+            padding: 16,
+            position: 'sticky',
+            top: 24,
+          }}
+        >
+          <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
+          <div
+            style={{
+              height: 200,
+              background: '#f5f5f5',
+              display: 'grid',
+              placeItems: 'center',
+              marginBottom: 12,
+              borderRadius: 4,
+            }}
+          >
+            {mainImageUrl ? (
+              <img
+                src={mainImageUrl}
+                alt="preview"
+                style={{
+                  maxHeight: 200,
+                  maxWidth: '100%',
+                  borderRadius: 4,
+                  objectFit: 'contain',
+                }}
+              />
+            ) : (
+              <div style={{ color: '#999' }}>No image</div>
+            )}
+          </div>
+          <div
+            style={{
+              fontWeight: 600,
+              fontSize: 14,
+              marginBottom: 8,
+            }}
+          >
+            {title || 'Your Product Title'}
+          </div>
+          <div
+            style={{
+              color: '#c93',
+              fontWeight: 700,
+              fontSize: 20,
+            }}
+          >
+            US ${price || '0.00'}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: '#666',
+              marginTop: 8,
+            }}
+          >
+            Category: {category?.name || 'Not selected'}
+          </div>
+        </div>
+      </aside>
+
+      {showCategoryModal && (
+        <CategorySelectorModal
+          currentCategory={category}
+          suggestions={categorySuggestions}
+          onSelect={handleCategorySelect}
+          onClose={() => setShowCategoryModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function CategorySelectorModal({
+  currentCategory,
+  suggestions,
+  onSelect,
+  onClose,
+}: {
+  currentCategory: CategoryWithPath | null;
+  suggestions: Category[];
+  onSelect: (cat: CategoryWithPath) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'grid',
+        placeItems: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: 8,
+          padding: 24,
+          maxWidth: 600,
+          width: '90%',
+          maxHeight: '80vh',
+          overflow: 'auto',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 16,
+          }}
+        >
+          <h3 style={{ margin: 0 }}>Select Category</h3>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: 24,
+              cursor: 'pointer',
+              padding: 0,
+              width: 32,
+              height: 32,
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            background: '#f0f8ff',
+            borderRadius: 4,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              color: '#666',
+              marginBottom: 4,
+            }}
+          >
+            Current Category:
+          </div>
+          <div style={{ fontWeight: 600 }}>
+            {currentCategory
+              ? currentCategory.path || currentCategory.name
+              : 'None'}
+          </div>
+        </div>
+
+        <h4
+          style={{
+            marginTop: 24,
+            marginBottom: 12,
+          }}
+        >
+          Suggested Categories:
+        </h4>
+        {suggestions.length === 0 ? (
+          <div style={{ color: '#666', fontStyle: 'italic' }}>
+            No suggestions available
+          </div>
+        ) : (
+          <div>
+            {suggestions.map((cat) => (
+              <div
+                key={cat.id}
+                onClick={() => onSelect(cat as CategoryWithPath)}
+                style={{
+                  padding: 12,
+                  border: '1px solid #ddd',
+                  borderRadius: 4,
+                  marginBottom: 8,
+                  cursor: 'pointer',
+                  background:
+                    currentCategory?.id === cat.id ? '#e3f2fd' : 'white',
+                  transition: 'background 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#f5f5f5';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background =
+                    currentCategory?.id === cat.id ? '#e3f2fd' : 'white';
+                }}
+              >
+                <div style={{ fontWeight: 500 }}>{cat.name}</div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: '#666',
+                    marginTop: 4,
+                  }}
+                >
+                  ID: {cat.id}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div
+          style={{
+            marginTop: 24,
+            paddingTop: 16,
+            borderTop: '1px solid #ddd',
+            fontSize: 14,
+            color: '#666',
+          }}
+        >
+          💡 Tip: Selecting a category will automatically load its required item
+          specifics
+        </div>
+      </div>
+    </div>
+  );
+}
