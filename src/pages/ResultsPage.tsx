@@ -38,6 +38,8 @@ type AiDetected = {
   condition?: string;
   material?: string;
   style?: string;
+  department?: string;
+  type?: string;
   [key: string]: any;
 };
 
@@ -45,7 +47,7 @@ type AiData = {
   title?: string;
   description?: string;
   price_suggestion?: { optimal?: number | string };
-  image_url?: string; // legacy single-image field
+  image_url?: string;
   images?: string[];
   image_urls?: string[];
   category?: CategoryWithPath;
@@ -89,33 +91,42 @@ export default function ResultsPage() {
   const [images, setImages] = useState<string[]>([]);
   const [mainImageIndex, setMainImageIndex] = useState(0);
 
-  // AI-detected facts (ref so it doesn’t cause re-renders)
+  // AI details stored in refs so they don't trigger re-renders
   const aiDetectedRef = useRef<AiDetected>({});
+  const aiSpecificsRef = useRef<ItemSpecific[]>([]);
 
   // Smart mapper from detected facts → specifics
   const smartFillSpecifics = useCallback(
     (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
       return newSpecifics.map((field) => {
-        let value = '';
+        // keep any value we already have (from AI specifics)
+        let value = field.value || '';
         const fieldLower = field.name.toLowerCase();
 
-        if (fieldLower.includes('brand')) {
-          value = aiData.brand || '';
-        } else if (fieldLower.includes('size type')) {
-          // leave for backend/AI, unless you want to map here
-        } else if (fieldLower === 'size' || fieldLower.includes('size')) {
-          value = aiData.size || '';
-        } else if (
-          fieldLower.includes('color') ||
-          fieldLower.includes('colour')
-        ) {
-          value = aiData.color || '';
-        } else if (fieldLower.includes('condition')) {
-          value = aiData.condition || '';
-        } else if (fieldLower.includes('material')) {
-          value = aiData.material || '';
-        } else if (fieldLower.includes('style')) {
-          value = aiData.style || '';
+        // only fill if still empty
+        if (!value) {
+          if (fieldLower.includes('brand')) {
+            value = aiData.brand || '';
+          } else if (fieldLower.includes('size type')) {
+            // leave for manual selection for now
+          } else if (fieldLower === 'size' || fieldLower.includes('size')) {
+            value = aiData.size || '';
+          } else if (
+            fieldLower.includes('color') ||
+            fieldLower.includes('colour')
+          ) {
+            value = aiData.color || '';
+          } else if (fieldLower.includes('condition')) {
+            value = aiData.condition || '';
+          } else if (fieldLower.includes('material')) {
+            value = aiData.material || '';
+          } else if (fieldLower.includes('style')) {
+            value = aiData.style || '';
+          } else if (fieldLower.includes('department')) {
+            value = aiData.department || '';
+          } else if (fieldLower === 'type' || fieldLower.includes('type')) {
+            value = aiData.type || '';
+          }
         }
 
         // Snap to dropdown options if present
@@ -132,7 +143,7 @@ export default function ResultsPage() {
     [],
   );
 
-  // Fetch specifics for a category
+  // Fetch specifics for a category and merge AI specifics + detected
   const fetchCategorySpecifics = useCallback(
     async (categoryId: string) => {
       setLoadingSpecifics(true);
@@ -150,7 +161,8 @@ export default function ResultsPage() {
 
         const data = await response.json();
 
-        const newSpecifics: ItemSpecific[] = (data.aspects || []).map(
+        // base specifics from eBay aspects
+        const baseSpecifics: ItemSpecific[] = (data.aspects || []).map(
           (aspect: any) => ({
             name: aspect.name,
             value: '',
@@ -163,10 +175,33 @@ export default function ResultsPage() {
           }),
         );
 
+        // merge AI item_specifics first
+        const aiSpecifics = aiSpecificsRef.current || [];
+        const aiMap = new Map(
+          aiSpecifics.map((s) => [s.name.toLowerCase(), s.value]),
+        );
+
+        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map((field) => {
+          const lower = field.name.toLowerCase();
+          const aiVal = aiMap.get(lower);
+          if (!aiVal) return field;
+
+          let value = String(aiVal);
+          if (field.type === 'dropdown' && field.options?.length) {
+            const exact = field.options.find(
+              (opt) => opt.toLowerCase() === value.toLowerCase(),
+            );
+            value = exact || value;
+          }
+          return { ...field, value };
+        });
+
+        // then fill remaining blanks from detected facts
         const filledSpecifics = smartFillSpecifics(
-          newSpecifics,
+          withAiSpecifics,
           aiDetectedRef.current || {},
         );
+
         setSpecifics(filledSpecifics);
       } catch (err) {
         console.error('Error fetching specifics:', err);
@@ -211,6 +246,13 @@ export default function ResultsPage() {
 
         if (!isMounted) return;
 
+        // keep AI specifics & detected in refs for specifics merge
+        const normalizedAiSpecifics = normalizeSpecifics(
+          analysis.item_specifics,
+        );
+        aiSpecificsRef.current = normalizedAiSpecifics;
+        aiDetectedRef.current = analysis.detected || {};
+
         // Core fields
         setTitle(analysis.title ?? '');
         setDescription(analysis.description ?? '');
@@ -222,7 +264,7 @@ export default function ResultsPage() {
             : String(optimal ?? '0.00'),
         );
 
-        // Images: prefer analysis.images, but fall back to wrapper-level images
+        // Images: prefer AI + wrapper images
         const imgs: string[] =
           analysis.images ||
           analysis.image_urls ||
@@ -232,8 +274,6 @@ export default function ResultsPage() {
           [];
         setImages(imgs);
         setMainImageIndex(0);
-
-        aiDetectedRef.current = analysis.detected || {};
 
         const kw = Array.isArray(analysis.keywords)
           ? analysis.keywords.join(', ')
