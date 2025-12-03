@@ -84,6 +84,103 @@ function firstValue(v: string | string[] | undefined): string {
   return v ?? '';
 }
 
+/* ---------- Size / Size Type helpers ---------- */
+
+function isSizeAspectName(name: string): boolean {
+  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+}
+
+function parseFirstNumber(s: string): number | null {
+  const m = (s || '').match(/\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
+function isTallToken(v: string) {
+  return /(tall|long|\bLT\b|\bXLT\b|\b2XLT\b|\b3XLT\b|\b4XLT\b|\b5XLT\b)/i.test(v);
+}
+function isPetiteToken(v: string) {
+  return /(petite|\bP\b|\bPS\b|\bPM\b|\bPL\b|\bPXL\b|\bPetites?\b)/i.test(v);
+}
+function isJuniorToken(v: string) {
+  return /(junior|jr\b|juniors)/i.test(v);
+}
+function isMaternityToken(v: string) {
+  return /maternity/i.test(v);
+}
+function isBigToken(v: string) {
+  return /(husky|big|big & tall|b&t)/i.test(v);
+}
+function isPlusNumeric(v: string) {
+  // 1X, 2X, 3X etc.
+  return /\b[1-6]X(L|LT)?\b/i.test(v);
+}
+function isLargeNumeric(v: string) {
+  const n = parseFirstNumber(v);
+  if (n == null) return false;
+  return n >= 46;
+}
+function isJuniorsOddNumber(v: string) {
+  const n = parseFirstNumber(v);
+  if (n == null) return false;
+  return n % 2 === 1 && n <= 19;
+}
+
+/**
+ * Filter eBay size options based on Size Type.
+ */
+function filterSizeOptionsBySizeType(
+  sizeType: string,
+  allOptions: string[] = [],
+  _categoryPath: string = ''
+): string[] {
+  const st = (sizeType || '').toLowerCase();
+  if (!st) return allOptions;
+
+  const tallSet = (v: string) => isTallToken(v);
+  const petiteSet = (v: string) => isPetiteToken(v);
+  const juniorSet = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
+  const maternitySet = (v: string) => isMaternityToken(v);
+
+  const regularExclude = (v: string) =>
+    !isTallToken(v) &&
+    !isPetiteToken(v) &&
+    !isJuniorToken(v) &&
+    !isMaternityToken(v);
+
+  if (st.includes('big') || st.includes('tall') || st.includes('husky')) {
+    return allOptions.filter(
+      (v) =>
+        tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v)
+    );
+  }
+  if (st.includes('petite')) {
+    return allOptions.filter((v) => petiteSet(v));
+  }
+  if (st.includes('tall')) {
+    return allOptions.filter((v) => tallSet(v));
+  }
+  if (st.includes('junior')) {
+    return allOptions.filter((v) => juniorSet(v));
+  }
+  if (st.includes('maternity')) {
+    // many size options don't explicitly say "maternity" – don't over-filter
+    return allOptions;
+  }
+  if (st.includes('plus')) {
+    const filtered = allOptions.filter((v) => isPlusNumeric(v));
+    return filtered.length ? filtered : allOptions.filter(regularExclude);
+  }
+  // Regular / Misses / default
+  return allOptions.filter(regularExclude);
+}
+
+function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
+  const st = specs?.find((s) => /size type/i.test(s.name || ''));
+  const raw = st?.value;
+  if (Array.isArray(raw)) return raw[0] ?? '';
+  return raw ?? '';
+}
+
 /* ---------- Compact token selector used for dropdowns/multi ---------- */
 
 function TokenSelect({
@@ -582,10 +679,52 @@ export default function ResultsPage() {
     await fetchCategorySpecifics(newCategory.id);
   };
 
+  // NEW: updateSpecific with Size Type → Size logic
   const updateSpecific = (idx: number, value: string | string[]) => {
     setSpecifics((prev) => {
       const next = [...prev];
+      if (!next[idx]) return prev;
+
+      // update changed field
       next[idx] = { ...next[idx], value };
+
+      const changed = next[idx];
+
+      // if "Size Type" changed, adjust the "Size" aspect
+      if (/size type/i.test(changed.name || '')) {
+        const sizeIdx = next.findIndex((s) =>
+          isSizeAspectName(s.name || ''),
+        );
+        if (sizeIdx !== -1) {
+          const sizeSpec = next[sizeIdx];
+          const sizeTypeVal = getSizeTypeValueFromSpecifics(next);
+          const allOpts = Array.isArray(sizeSpec.options)
+            ? sizeSpec.options
+            : [];
+
+          const filtered = filterSizeOptionsBySizeType(
+            sizeTypeVal,
+            allOpts,
+            '',
+          );
+
+          const currentSizeVal = sizeSpec.value;
+          const currentStr = firstValue(
+            currentSizeVal as string | string[] | undefined,
+          );
+
+          const newSizeVal = filtered.includes(currentStr)
+            ? currentSizeVal
+            : '';
+
+          next[sizeIdx] = {
+            ...sizeSpec,
+            options: filtered,
+            value: newSizeVal,
+          };
+        }
+      }
+
       return next;
     });
   };
@@ -893,23 +1032,53 @@ export default function ResultsPage() {
             className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3"
             style={{ marginTop: 12 }}
           >
-            {specifics.map((spec, i) => (
-              <div
-                key={`${spec.name}-${i}`}
-                className="flex flex-col gap-1"
-              >
-                <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
-                  <span>{spec.name}</span>
-                  {spec.required && (
-                    <span className="ml-1 text-red-500">*</span>
-                  )}
-                </label>
-                <ItemSpecificControl
-                  spec={spec}
-                  onChange={(val) => updateSpecific(i, val)}
-                />
-              </div>
-            ))}
+            {specifics.map((spec, i) => {
+              let effectiveSpec = spec;
+
+              // If this is a "Size" aspect, filter options based on current "Size Type"
+              if (isSizeAspectName(spec.name || '')) {
+                const sizeTypeVal = getSizeTypeValueFromSpecifics(specifics);
+                const allOpts = Array.isArray(spec.options)
+                  ? spec.options
+                  : [];
+                const filteredOpts = filterSizeOptionsBySizeType(
+                  sizeTypeVal,
+                  allOpts,
+                  '',
+                );
+
+                const currentStr = firstValue(
+                  spec.value as string | string[] | undefined,
+                );
+                const safeValue = filteredOpts.includes(currentStr)
+                  ? spec.value
+                  : '';
+
+                effectiveSpec = {
+                  ...spec,
+                  options: filteredOpts,
+                  value: safeValue,
+                };
+              }
+
+              return (
+                <div
+                  key={`${spec.name}-${i}`}
+                  className="flex flex-col gap-1"
+                >
+                  <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
+                    <span>{spec.name}</span>
+                    {spec.required && (
+                      <span className="ml-1 text-red-500">*</span>
+                    )}
+                  </label>
+                  <ItemSpecificControl
+                    spec={effectiveSpec}
+                    onChange={(val) => updateSpecific(i, val)}
+                  />
+                </div>
+              );
+            })}
           </div>
 
           <button
