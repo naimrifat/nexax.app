@@ -26,6 +26,7 @@ type ItemSpecific = {
   required?: boolean;
   type?: string; // "dropdown" | "text"
   options?: string[];
+  originalOptions?: string[]; // full eBay options, used for Size filtering
   multi?: boolean;
   selectionOnly?: boolean;
   freeTextAllowed?: boolean;
@@ -67,6 +68,7 @@ function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
       .map((x) => ({
         ...x,
         value: x.value ?? '',
+        originalOptions: Array.isArray(x.options) ? x.options : [],
       }));
   }
   if (typeof s === 'object') {
@@ -86,8 +88,10 @@ function firstValue(v: string | string[] | undefined): string {
 
 /* ---------- Size / Size Type helpers ---------- */
 
+// Any "Size" aspect, but NOT "Size Type"
 function isSizeAspectName(name: string): boolean {
-  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+  const n = name || '';
+  return /size/i.test(n) && !/size type/i.test(n);
 }
 
 function parseFirstNumber(s: string): number | null {
@@ -96,7 +100,9 @@ function parseFirstNumber(s: string): number | null {
 }
 
 function isTallToken(v: string) {
-  return /(tall|long|\bLT\b|\bXLT\b|\b2XLT\b|\b3XLT\b|\b4XLT\b|\b5XLT\b)/i.test(v);
+  return /(tall|long|\bLT\b|\bXLT\b|\b2XLT\b|\b3XLT\b|\b4XLT\b|\b5XLT\b)/i.test(
+    v,
+  );
 }
 function isPetiteToken(v: string) {
   return /(petite|\bP\b|\bPS\b|\bPM\b|\bPL\b|\bPXL\b|\bPetites?\b)/i.test(v);
@@ -111,8 +117,7 @@ function isBigToken(v: string) {
   return /(husky|big|big & tall|b&t)/i.test(v);
 }
 function isPlusNumeric(v: string) {
-  // 1X, 2X, 3X etc.
-  return /\b[1-6]X(L|LT)?\b/i.test(v);
+  return /\b[1-6]X(L|LT)?\b/i.test(v); // 1X, 2X, 3X...
 }
 function isLargeNumeric(v: string) {
   const n = parseFirstNumber(v);
@@ -131,7 +136,7 @@ function isJuniorsOddNumber(v: string) {
 function filterSizeOptionsBySizeType(
   sizeType: string,
   allOptions: string[] = [],
-  _categoryPath: string = ''
+  _categoryPath: string = '',
 ): string[] {
   const st = (sizeType || '').toLowerCase();
   if (!st) return allOptions;
@@ -150,7 +155,7 @@ function filterSizeOptionsBySizeType(
   if (st.includes('big') || st.includes('tall') || st.includes('husky')) {
     return allOptions.filter(
       (v) =>
-        tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v)
+        tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v),
     );
   }
   if (st.includes('petite')) {
@@ -163,8 +168,7 @@ function filterSizeOptionsBySizeType(
     return allOptions.filter((v) => juniorSet(v));
   }
   if (st.includes('maternity')) {
-    // many size options don't explicitly say "maternity" – don't over-filter
-    return allOptions;
+    return allOptions; // don’t over-filter; many categories don’t mark maternity explicitly
   }
   if (st.includes('plus')) {
     const filtered = allOptions.filter((v) => isPlusNumeric(v));
@@ -208,9 +212,7 @@ function TokenSelect({
 
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
-    .filter((o) =>
-      lowerQuery ? o.toLowerCase().includes(lowerQuery) : true,
-    )
+    .filter((o) => (lowerQuery ? o.toLowerCase().includes(lowerQuery) : true))
     .slice(0, 80);
 
   useEffect(() => {
@@ -255,7 +257,9 @@ function TokenSelect({
     <div ref={containerRef} className="relative">
       <div
         className={`min-h-[38px] w-full flex flex-wrap items-center gap-1 rounded-md border bg-white px-2 py-1 text-sm transition focus-within:ring-2 focus-within:ring-teal-500 ${
-          disabled ? 'opacity-60 cursor-not-allowed border-gray-200' : 'border-gray-300'
+          disabled
+            ? 'opacity-60 cursor-not-allowed border-gray-200'
+            : 'border-gray-300'
         }`}
         onClick={() => {
           if (disabled) return;
@@ -358,7 +362,6 @@ function ItemSpecificControl({
 }) {
   const opts = Array.isArray(spec.options) ? spec.options : [];
 
-  // eBay "SelectionOnly" → token dropdown
   if (opts.length > 0 || spec.type === 'dropdown') {
     return (
       <TokenSelect
@@ -372,7 +375,6 @@ function ItemSpecificControl({
     );
   }
 
-  // Free text fallback
   const valString = Array.isArray(spec.value)
     ? spec.value.join(', ')
     : spec.value ?? '';
@@ -430,8 +432,7 @@ export default function ResultsPage() {
           let candidate = '';
 
           if (lower.includes('brand')) candidate = aiData.brand || '';
-          else if (lower.includes('size type'))
-            candidate = aiData.type || '';
+          else if (lower.includes('size type')) candidate = aiData.type || '';
           else if (lower === 'size' || lower.includes('size'))
             candidate = aiData.size || '';
           else if (lower.includes('color') || lower.includes('colour'))
@@ -447,11 +448,8 @@ export default function ResultsPage() {
             candidate = aiData.type || '';
 
           if (candidate) {
-            if (field.multi) {
-              current = [candidate];
-            } else {
-              current = candidate;
-            }
+            if (field.multi) current = [candidate];
+            else current = candidate;
             currentStr = candidate;
           }
         }
@@ -509,6 +507,7 @@ export default function ResultsPage() {
             required: !!aspect.required,
             type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
             options: aspect.values || [],
+            originalOptions: aspect.values || [],
             multi: !!aspect.multi,
             selectionOnly: aspect.type === 'SelectionOnly',
             freeTextAllowed: aspect.type !== 'SelectionOnly',
@@ -521,51 +520,45 @@ export default function ResultsPage() {
           aiSpecifics.map((s) => [s.name.toLowerCase(), s.value]),
         );
 
-        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map(
-          (field) => {
-            const lower = field.name.toLowerCase();
-            const aiVal = aiMap.get(lower);
-            if (aiVal == null || aiVal === '') return field;
+        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map((field) => {
+          const lower = field.name.toLowerCase();
+          const aiVal = aiMap.get(lower);
+          if (aiVal == null || aiVal === '') return field;
 
-            let value: string | string[];
+          let value: string | string[];
 
-            if (field.multi) {
-              if (Array.isArray(aiVal)) {
-                value = aiVal.map((v) => String(v));
-              } else {
-                value = String(aiVal)
-                  .split(',')
-                  .map((s) => s.trim())
-                  .filter(Boolean);
-              }
+          if (field.multi) {
+            if (Array.isArray(aiVal)) {
+              value = aiVal.map((v) => String(v));
             } else {
-              value = String(
-                Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal,
-              );
+              value = String(aiVal)
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
             }
+          } else {
+            value = String(Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal);
+          }
 
-            // snap to options if needed
-            if (field.type === 'dropdown' && field.options?.length) {
-              if (Array.isArray(value)) {
-                value = value.map((v) => {
-                  const exact = field.options!.find(
-                    (opt) =>
-                      opt.toLowerCase() === String(v).toLowerCase(),
-                  );
-                  return exact || v;
-                });
-              } else if (typeof value === 'string' && value) {
-                const exact = field.options.find(
+          if (field.type === 'dropdown' && field.options?.length) {
+            if (Array.isArray(value)) {
+              value = value.map((v) => {
+                const exact = field.options!.find(
                   (opt) =>
-                    opt.toLowerCase() === value.toLowerCase(),
+                    opt.toLowerCase() === String(v).toLowerCase(),
                 );
-                if (exact) value = exact;
-              }
+                return exact || v;
+              });
+            } else if (typeof value === 'string' && value) {
+              const exact = field.options.find(
+                (opt) => opt.toLowerCase() === value.toLowerCase(),
+              );
+              if (exact) value = exact;
             }
+          }
 
-            return { ...field, value };
-          },
-        );
+          return { ...field, value };
+        });
 
         const filledSpecifics = smartFillSpecifics(
           withAiSpecifics,
@@ -679,43 +672,37 @@ export default function ResultsPage() {
     await fetchCategorySpecifics(newCategory.id);
   };
 
-  // NEW: updateSpecific with Size Type → Size logic
+  // NEW: updateSpecific with Size Type → Size logic using originalOptions
   const updateSpecific = (idx: number, value: string | string[]) => {
     setSpecifics((prev) => {
       const next = [...prev];
       if (!next[idx]) return prev;
 
-      // update changed field
       next[idx] = { ...next[idx], value };
-
       const changed = next[idx];
 
-      // if "Size Type" changed, adjust the "Size" aspect
       if (/size type/i.test(changed.name || '')) {
-        const sizeIdx = next.findIndex((s) =>
-          isSizeAspectName(s.name || ''),
-        );
+        const sizeIdx = next.findIndex((s) => isSizeAspectName(s.name || ''));
         if (sizeIdx !== -1) {
           const sizeSpec = next[sizeIdx];
           const sizeTypeVal = getSizeTypeValueFromSpecifics(next);
-          const allOpts = Array.isArray(sizeSpec.options)
+
+          const baseOptions = Array.isArray(sizeSpec.originalOptions)
+            ? sizeSpec.originalOptions
+            : Array.isArray(sizeSpec.options)
             ? sizeSpec.options
             : [];
 
           const filtered = filterSizeOptionsBySizeType(
             sizeTypeVal,
-            allOpts,
+            baseOptions,
             '',
           );
 
-          const currentSizeVal = sizeSpec.value;
           const currentStr = firstValue(
-            currentSizeVal as string | string[] | undefined,
+            sizeSpec.value as string | string[] | undefined,
           );
-
-          const newSizeVal = filtered.includes(currentStr)
-            ? currentSizeVal
-            : '';
+          const newSizeVal = filtered.includes(currentStr) ? sizeSpec.value : '';
 
           next[sizeIdx] = {
             ...sizeSpec,
@@ -774,7 +761,7 @@ export default function ResultsPage() {
           freeTextAllowed: s.freeTextAllowed !== false,
           options: s.options || [],
         })),
-        keywords: keywords
+      keywords: keywords
           .split(',')
           .map((k) => k.trim())
           .filter(Boolean),
@@ -795,13 +782,7 @@ export default function ResultsPage() {
       const data = await res.json();
       if (!res.ok) {
         console.error('Publish error:', data);
-        alert(
-          `An error occurred: ${JSON.stringify(
-            data,
-            null,
-            2,
-          )}`,
-        );
+        alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
         return;
       }
 
@@ -1035,15 +1016,17 @@ export default function ResultsPage() {
             {specifics.map((spec, i) => {
               let effectiveSpec = spec;
 
-              // If this is a "Size" aspect, filter options based on current "Size Type"
               if (isSizeAspectName(spec.name || '')) {
                 const sizeTypeVal = getSizeTypeValueFromSpecifics(specifics);
-                const allOpts = Array.isArray(spec.options)
+                const baseOptions = Array.isArray(spec.originalOptions)
+                  ? spec.originalOptions
+                  : Array.isArray(spec.options)
                   ? spec.options
                   : [];
+
                 const filteredOpts = filterSizeOptionsBySizeType(
                   sizeTypeVal,
-                  allOpts,
+                  baseOptions,
                   '',
                 );
 
