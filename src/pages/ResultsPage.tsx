@@ -820,9 +820,6 @@ export default function ResultsPage() {
     <div
       style={{
         padding: 24,
-        display: 'grid',
-        gridTemplateColumns: '1fr 360px',
-        gap: 24,
       }}
     >
       <main>
@@ -1161,73 +1158,6 @@ export default function ResultsPage() {
           </button>
         </div>
       </main>
-
-      {/* PREVIEW SIDEBAR */}
-      <aside>
-        <div
-          style={{
-            border: '1px solid #ddd',
-            borderRadius: 8,
-            padding: 16,
-            position: 'sticky',
-            top: 24,
-          }}
-        >
-          <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
-          <div
-            style={{
-              height: 200,
-              background: '#f5f5f5',
-              display: 'grid',
-              placeItems: 'center',
-              marginBottom: 12,
-              borderRadius: 4,
-            }}
-          >
-            {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="preview"
-                style={{
-                  maxHeight: 200,
-                  maxWidth: '100%',
-                  borderRadius: 4,
-                  objectFit: 'contain',
-                }}
-              />
-            ) : (
-              <div style={{ color: '#999' }}>No image</div>
-            )}
-          </div>
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: 14,
-              marginBottom: 8,
-            }}
-          >
-            {title || 'Your Product Title'}
-          </div>
-          <div
-            style={{
-              color: '#c93',
-              fontWeight: 700,
-              fontSize: 20,
-            }}
-          >
-            US ${price || '0.00'}
-          </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginTop: 8,
-            }}
-          >
-            Category: {category?.name || 'Not selected'}
-          </div>
-        </div>
-      </aside>
 
       {showCategoryModal && (
         <CategorySelectorModal
