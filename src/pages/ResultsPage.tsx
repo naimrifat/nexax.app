@@ -1010,7 +1010,7 @@ export default function ResultsPage() {
           )}
 
           <div
-            className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))] gap-4 mt-3"
             style={{ marginTop: 12 }}
           >
             {specifics.map((spec, i) => {
