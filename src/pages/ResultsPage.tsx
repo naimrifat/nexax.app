@@ -26,10 +26,12 @@ type ItemSpecific = {
   required?: boolean;
   type?: string; // "dropdown" | "text"
   options?: string[];
-  originalOptions?: string[]; // full eBay options, used for Size filtering
   multi?: boolean;
   selectionOnly?: boolean;
   freeTextAllowed?: boolean;
+  // we’ll stash the full, unfiltered eBay list here so we can
+  // re-filter correctly when Size Type changes
+  allOptions?: string[];
 };
 
 type AiDetected = {
@@ -58,7 +60,7 @@ type AiData = {
   detected?: AiDetected;
 };
 
-/* ---------- Helpers ---------- */
+/* ---------- Generic helpers ---------- */
 
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
@@ -68,7 +70,6 @@ function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
       .map((x) => ({
         ...x,
         value: x.value ?? '',
-        originalOptions: Array.isArray(x.options) ? x.options : [],
       }));
   }
   if (typeof s === 'object') {
@@ -86,14 +87,21 @@ function firstValue(v: string | string[] | undefined): string {
   return v ?? '';
 }
 
-/* ---------- Size / Size Type helpers ---------- */
+/* ---------- Size / Size Type helpers (same logic as HomePage) ---------- */
 
-// Any "Size" aspect, but NOT "Size Type"
-function isSizeAspectName(name: string): boolean {
-  const n = name || '';
-  return /size/i.test(n) && !/size type/i.test(n);
+// detect the current "Size Type" value from specifics
+function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
+  const st = specs.find((s) => /size type/i.test(s.name || ''));
+  if (!st) return '';
+  return firstValue(st.value);
 }
 
+// recognize size-like aspect names that should be filtered by Size Type
+function isSizeAspectName(name: string): boolean {
+  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+}
+
+// numeric helper
 function parseFirstNumber(s: string): number | null {
   const m = (s || '').match(/\d+(?:\.\d+)?/);
   return m ? Number(m[0]) : null;
@@ -117,7 +125,8 @@ function isBigToken(v: string) {
   return /(husky|big|big & tall|b&t)/i.test(v);
 }
 function isPlusNumeric(v: string) {
-  return /\b[1-6]X(L|LT)?\b/i.test(v); // 1X, 2X, 3X...
+  // 1X 2X 3X etc are usually "Plus" or Big sets
+  return /\b[1-6]X(L|LT)?\b/i.test(v);
 }
 function isLargeNumeric(v: string) {
   const n = parseFirstNumber(v);
@@ -131,12 +140,13 @@ function isJuniorsOddNumber(v: string) {
 }
 
 /**
- * Filter eBay size options based on Size Type.
+ * Filter the size options based on Size Type selection.
+ * If no type chosen -> return full set.
+ * These heuristics match what we used on HomePage.
  */
 function filterSizeOptionsBySizeType(
   sizeType: string,
   allOptions: string[] = [],
-  _categoryPath: string = '',
 ): string[] {
   const st = (sizeType || '').toLowerCase();
   if (!st) return allOptions;
@@ -144,48 +154,91 @@ function filterSizeOptionsBySizeType(
   const tallSet = (v: string) => isTallToken(v);
   const petiteSet = (v: string) => isPetiteToken(v);
   const juniorSet = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
-  const maternitySet = (v: string) => isMaternityToken(v);
 
   const regularExclude = (v: string) =>
     !isTallToken(v) &&
     !isPetiteToken(v) &&
     !isJuniorToken(v) &&
-    !isMaternityToken(v);
+    !isMaternityToken(v) &&
+    !isBigToken(v) &&
+    !isPlusNumeric(v);
 
-  if (st.includes('big') || st.includes('tall') || st.includes('husky')) {
+  // Big & Tall / Husky
+  if (st.includes('big') || st.includes('husky') || st.includes('tall')) {
     return allOptions.filter(
       (v) =>
         tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v),
     );
   }
+
+  // Petites
   if (st.includes('petite')) {
-    return allOptions.filter((v) => petiteSet(v));
+    const filtered = allOptions.filter((v) => petiteSet(v));
+    return filtered.length ? filtered : allOptions;
   }
-  if (st.includes('tall')) {
-    return allOptions.filter((v) => tallSet(v));
-  }
+
+  // Juniors
   if (st.includes('junior')) {
-    return allOptions.filter((v) => juniorSet(v));
-  }
-  if (st.includes('maternity')) {
-    return allOptions; // don’t over-filter; many categories don’t mark maternity explicitly
-  }
-  if (st.includes('plus')) {
-    const filtered = allOptions.filter((v) => isPlusNumeric(v));
+    const filtered = allOptions.filter((v) => juniorSet(v));
     return filtered.length ? filtered : allOptions.filter(regularExclude);
   }
+
+  // Maternity – keep all; eBay often doesn’t encode it in the size
+  if (st.includes('maternity')) {
+    return allOptions;
+  }
+
+  // Plus
+  if (st.includes('plus')) {
+    const plusLike = allOptions.filter(
+      (v) => isPlusNumeric(v) || isBigToken(v),
+    );
+    if (plusLike.length) return plusLike;
+    return allOptions.filter(regularExclude);
+  }
+
   // Regular / Misses / default
   return allOptions.filter(regularExclude);
 }
 
-function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
-  const st = specs?.find((s) => /size type/i.test(s.name || ''));
-  const raw = st?.value;
-  if (Array.isArray(raw)) return raw[0] ?? '';
-  return raw ?? '';
+/**
+ * Apply Size Type filter to the "Size" aspect in a list of specifics.
+ * - Reads the Size Type from the specifics
+ * - Filters the Size options from the original eBay set (`allOptions`)
+ * - Clears Size value if it’s incompatible with the new type
+ */
+function applySizeTypeFilterToSpecifics(
+  specs: ItemSpecific[],
+): ItemSpecific[] {
+  const sizeTypeVal = getSizeTypeValueFromSpecifics(specs);
+  if (!sizeTypeVal) return specs;
+
+  return specs.map((spec) => {
+    if (!isSizeAspectName(spec.name)) return spec;
+
+    const fullOptions = spec.allOptions ?? spec.options ?? [];
+    const filtered = filterSizeOptionsBySizeType(sizeTypeVal, fullOptions);
+
+    let value = spec.value;
+    const valueStr = firstValue(
+      typeof value === 'string' || Array.isArray(value) ? value : '',
+    );
+
+    if (valueStr && !filtered.includes(valueStr)) {
+      // current size is not valid for this Size Type -> clear it
+      value = spec.multi ? [] : '';
+    }
+
+    return {
+      ...spec,
+      options: filtered,
+      allOptions: fullOptions,
+      value,
+    };
+  });
 }
 
-/* ---------- Compact token selector used for dropdowns/multi ---------- */
+/* ---------- Compact token selector ---------- */
 
 function TokenSelect({
   value,
@@ -212,7 +265,9 @@ function TokenSelect({
 
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
-    .filter((o) => (lowerQuery ? o.toLowerCase().includes(lowerQuery) : true))
+    .filter((o) =>
+      lowerQuery ? o.toLowerCase().includes(lowerQuery) : true,
+    )
     .slice(0, 80);
 
   useEffect(() => {
@@ -418,7 +473,7 @@ export default function ResultsPage() {
   const smartFillSpecifics = useCallback(
     (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
       return newSpecifics.map((field) => {
-        let current = field.value;
+        let current: string | string[] = field.value;
         let currentStr = firstValue(
           typeof current === 'string' || Array.isArray(current)
             ? current
@@ -482,7 +537,7 @@ export default function ResultsPage() {
     [],
   );
 
-  // Fetch specifics for a category and merge AI specifics + detected
+  // Fetch specifics for a category and merge AI specifics + detected, then apply size filter
   const fetchCategorySpecifics = useCallback(
     async (categoryId: string) => {
       setLoadingSpecifics(true);
@@ -507,64 +562,70 @@ export default function ResultsPage() {
             required: !!aspect.required,
             type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
             options: aspect.values || [],
-            originalOptions: aspect.values || [],
+            allOptions: aspect.values || [],
             multi: !!aspect.multi,
             selectionOnly: aspect.type === 'SelectionOnly',
             freeTextAllowed: aspect.type !== 'SelectionOnly',
           }),
         );
 
-        // merge AI item_specifics first
         const aiSpecifics = aiSpecificsRef.current || [];
         const aiMap = new Map(
           aiSpecifics.map((s) => [s.name.toLowerCase(), s.value]),
         );
 
-        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map((field) => {
-          const lower = field.name.toLowerCase();
-          const aiVal = aiMap.get(lower);
-          if (aiVal == null || aiVal === '') return field;
+        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map(
+          (field) => {
+            const lower = field.name.toLowerCase();
+            const aiVal = aiMap.get(lower);
+            if (aiVal == null || aiVal === '') return field;
 
-          let value: string | string[];
+            let value: string | string[];
 
-          if (field.multi) {
-            if (Array.isArray(aiVal)) {
-              value = aiVal.map((v) => String(v));
+            if (field.multi) {
+              if (Array.isArray(aiVal)) {
+                value = aiVal.map((v) => String(v));
+              } else {
+                value = String(aiVal)
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+              }
             } else {
-              value = String(aiVal)
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-            }
-          } else {
-            value = String(Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal);
-          }
-
-          if (field.type === 'dropdown' && field.options?.length) {
-            if (Array.isArray(value)) {
-              value = value.map((v) => {
-                const exact = field.options!.find(
-                  (opt) =>
-                    opt.toLowerCase() === String(v).toLowerCase(),
-                );
-                return exact || v;
-              });
-            } else if (typeof value === 'string' && value) {
-              const exact = field.options.find(
-                (opt) => opt.toLowerCase() === value.toLowerCase(),
+              value = String(
+                Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal,
               );
-              if (exact) value = exact;
             }
-          }
 
-          return { ...field, value };
-        });
+            if (field.type === 'dropdown' && field.options?.length) {
+              if (Array.isArray(value)) {
+                value = value.map((v) => {
+                  const exact = field.options!.find(
+                    (opt) =>
+                      opt.toLowerCase() === String(v).toLowerCase(),
+                  );
+                  return exact || v;
+                });
+              } else if (typeof value === 'string' && value) {
+                const exact = field.options.find(
+                  (opt) =>
+                    opt.toLowerCase() === value.toLowerCase(),
+                );
+                if (exact) value = exact;
+              }
+            }
+
+            return { ...field, value };
+          },
+        );
 
         const filledSpecifics = smartFillSpecifics(
           withAiSpecifics,
           aiDetectedRef.current || {},
         );
-        setSpecifics(filledSpecifics);
+
+        const sizeFiltered = applySizeTypeFilterToSpecifics(filledSpecifics);
+        setSpecifics(sizeFiltered);
       } catch (err) {
         console.error('Error fetching specifics:', err);
       } finally {
@@ -646,7 +707,13 @@ export default function ResultsPage() {
         if (initialCategory && initialCategory.id) {
           await fetchCategorySpecifics(initialCategory.id);
         } else {
-          setSpecifics(normalizeSpecifics(analysis.item_specifics));
+          const base = normalizeSpecifics(analysis.item_specifics);
+          const filled = smartFillSpecifics(
+            base,
+            aiDetectedRef.current || {},
+          );
+          const sizeFiltered = applySizeTypeFilterToSpecifics(filled);
+          setSpecifics(sizeFiltered);
         }
 
         setLoading(false);
@@ -664,7 +731,7 @@ export default function ResultsPage() {
     return () => {
       isMounted = false;
     };
-  }, [navigate, fetchCategorySpecifics]);
+  }, [navigate, fetchCategorySpecifics, smartFillSpecifics]);
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setCategory(newCategory);
@@ -672,44 +739,14 @@ export default function ResultsPage() {
     await fetchCategorySpecifics(newCategory.id);
   };
 
-  // NEW: updateSpecific with Size Type → Size logic using originalOptions
   const updateSpecific = (idx: number, value: string | string[]) => {
     setSpecifics((prev) => {
-      const next = [...prev];
-      if (!next[idx]) return prev;
-
+      let next = [...prev];
       next[idx] = { ...next[idx], value };
-      const changed = next[idx];
 
-      if (/size type/i.test(changed.name || '')) {
-        const sizeIdx = next.findIndex((s) => isSizeAspectName(s.name || ''));
-        if (sizeIdx !== -1) {
-          const sizeSpec = next[sizeIdx];
-          const sizeTypeVal = getSizeTypeValueFromSpecifics(next);
-
-          const baseOptions = Array.isArray(sizeSpec.originalOptions)
-            ? sizeSpec.originalOptions
-            : Array.isArray(sizeSpec.options)
-            ? sizeSpec.options
-            : [];
-
-          const filtered = filterSizeOptionsBySizeType(
-            sizeTypeVal,
-            baseOptions,
-            '',
-          );
-
-          const currentStr = firstValue(
-            sizeSpec.value as string | string[] | undefined,
-          );
-          const newSizeVal = filtered.includes(currentStr) ? sizeSpec.value : '';
-
-          next[sizeIdx] = {
-            ...sizeSpec,
-            options: filtered,
-            value: newSizeVal,
-          };
-        }
+      // If this is the Size Type field, re-apply Size filter
+      if (/size type/i.test(next[idx].name || '')) {
+        next = applySizeTypeFilterToSpecifics(next);
       }
 
       return next;
@@ -761,7 +798,7 @@ export default function ResultsPage() {
           freeTextAllowed: s.freeTextAllowed !== false,
           options: s.options || [],
         })),
-      keywords: keywords
+        keywords: keywords
           .split(',')
           .map((k) => k.trim())
           .filter(Boolean),
@@ -782,7 +819,13 @@ export default function ResultsPage() {
       const data = await res.json();
       if (!res.ok) {
         console.error('Publish error:', data);
-        alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
+        alert(
+          `An error occurred: ${JSON.stringify(
+            data,
+            null,
+            2,
+          )}`,
+        );
         return;
       }
 
@@ -820,6 +863,9 @@ export default function ResultsPage() {
     <div
       style={{
         padding: 24,
+        display: 'grid',
+        gridTemplateColumns: '1fr 360px',
+        gap: 24,
       }}
     >
       <main>
@@ -1007,58 +1053,26 @@ export default function ResultsPage() {
           )}
 
           <div
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))] gap-4 mt-3"
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-3"
             style={{ marginTop: 12 }}
           >
-            {specifics.map((spec, i) => {
-              let effectiveSpec = spec;
-
-              if (isSizeAspectName(spec.name || '')) {
-                const sizeTypeVal = getSizeTypeValueFromSpecifics(specifics);
-                const baseOptions = Array.isArray(spec.originalOptions)
-                  ? spec.originalOptions
-                  : Array.isArray(spec.options)
-                  ? spec.options
-                  : [];
-
-                const filteredOpts = filterSizeOptionsBySizeType(
-                  sizeTypeVal,
-                  baseOptions,
-                  '',
-                );
-
-                const currentStr = firstValue(
-                  spec.value as string | string[] | undefined,
-                );
-                const safeValue = filteredOpts.includes(currentStr)
-                  ? spec.value
-                  : '';
-
-                effectiveSpec = {
-                  ...spec,
-                  options: filteredOpts,
-                  value: safeValue,
-                };
-              }
-
-              return (
-                <div
-                  key={`${spec.name}-${i}`}
-                  className="flex flex-col gap-1"
-                >
-                  <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
-                    <span>{spec.name}</span>
-                    {spec.required && (
-                      <span className="ml-1 text-red-500">*</span>
-                    )}
-                  </label>
-                  <ItemSpecificControl
-                    spec={effectiveSpec}
-                    onChange={(val) => updateSpecific(i, val)}
-                  />
-                </div>
-              );
-            })}
+            {specifics.map((spec, i) => (
+              <div
+                key={`${spec.name}-${i}`}
+                className="flex flex-col gap-1"
+              >
+                <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
+                  <span>{spec.name}</span>
+                  {spec.required && (
+                    <span className="ml-1 text-red-500">*</span>
+                  )}
+                </label>
+                <ItemSpecificControl
+                  spec={spec}
+                  onChange={(val) => updateSpecific(i, val)}
+                />
+              </div>
+            ))}
           </div>
 
           <button
@@ -1158,6 +1172,73 @@ export default function ResultsPage() {
           </button>
         </div>
       </main>
+
+      {/* PREVIEW SIDEBAR */}
+      <aside>
+        <div
+          style={{
+            border: '1px solid #ddd',
+            borderRadius: 8,
+            padding: 16,
+            position: 'sticky',
+            top: 24,
+          }}
+        >
+          <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
+          <div
+            style={{
+              height: 200,
+              background: '#f5f5f5',
+              display: 'grid',
+              placeItems: 'center',
+              marginBottom: 12,
+              borderRadius: 4,
+            }}
+          >
+            {mainImageUrl ? (
+              <img
+                src={mainImageUrl}
+                alt="preview"
+                style={{
+                  maxHeight: 200,
+                  maxWidth: '100%',
+                  borderRadius: 4,
+                  objectFit: 'contain',
+                }}
+              />
+            ) : (
+              <div style={{ color: '#999' }}>No image</div>
+            )}
+          </div>
+          <div
+            style={{
+              fontWeight: 600,
+              fontSize: 14,
+              marginBottom: 8,
+            }}
+          >
+            {title || 'Your Product Title'}
+          </div>
+          <div
+            style={{
+              color: '#c93',
+              fontWeight: 700,
+              fontSize: 20,
+            }}
+          >
+            US ${price || '0.00'}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: '#666',
+              marginTop: 8,
+            }}
+          >
+            Category: {category?.name || 'Not selected'}
+          </div>
+        </div>
+      </aside>
 
       {showCategoryModal && (
         <CategorySelectorModal
