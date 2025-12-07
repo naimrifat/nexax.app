@@ -467,7 +467,36 @@ export default function ResultsPage() {
 
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
+  
+  const removePreviewPane = useCallback(() => {
+    const heading = Array.from(
+      document.querySelectorAll('h1, h2, h3, h4')
+    ).find((el) => {
+      const text = el.textContent?.trim().toLowerCase();
+      return text === 'listing preview' || text === 'preview';
+    });
 
+    if (!heading) return;
+
+    const previewCard =
+      heading.closest('.card') ||
+      heading.closest('aside') ||
+      heading.closest('section') ||
+      heading.parentElement;
+
+    previewCard?.remove();
+  }, []);
+
+  useEffect(() => {
+    removePreviewPane();
+
+    const observer = new MutationObserver(() => removePreviewPane());
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => observer.disconnect();
+  }, [removePreviewPane]);
+  
   // Smart mapper from detected facts → specifics
   const smartFillSpecifics = useCallback(
     (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
