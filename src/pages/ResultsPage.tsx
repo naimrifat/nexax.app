@@ -467,10 +467,10 @@ export default function ResultsPage() {
 
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
-  
+
   const removePreviewPane = useCallback(() => {
     const heading = Array.from(
-      document.querySelectorAll('h1, h2, h3, h4')
+      document.querySelectorAll('h1, h2, h3, h4'),
     ).find((el) => {
       const text = el.textContent?.trim().toLowerCase();
       return text === 'listing preview' || text === 'preview';
@@ -496,7 +496,7 @@ export default function ResultsPage() {
 
     return () => observer.disconnect();
   }, [removePreviewPane]);
-  
+
   // Smart mapper from detected facts → specifics
   const smartFillSpecifics = useCallback(
     (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
@@ -788,10 +788,22 @@ export default function ResultsPage() {
   const removeSpecific = (idx: number) =>
     setSpecifics((prev) => prev.filter((_, i) => i !== idx));
 
+  // 🔑 Prefer eBay-style breadcrumbs, then normalized path
   const categoryBreadcrumb = useMemo(() => {
     if (!category) return 'No category selected';
-    if (category.path) return category.path;
-    if (category.breadcrumbs) return category.breadcrumbs.join(' > ');
+
+    if (category.breadcrumbs && category.breadcrumbs.length) {
+      return category.breadcrumbs.join(' > ');
+    }
+
+    if (category.path) {
+      const parts = category.path
+        .split('>')
+        .map((p) => p.trim())
+        .filter(Boolean);
+      return parts.join(' > ');
+    }
+
     return category.name;
   }, [category]);
 
@@ -888,6 +900,19 @@ export default function ResultsPage() {
       </div>
     );
   }
+
+  // Normalized path passed into CategorySelector so its header matches eBay order
+  const normalizedCategoryPathForSelector =
+    (category?.breadcrumbs && category.breadcrumbs.length
+      ? category.breadcrumbs.join(' > ')
+      : '') ||
+    (category?.path
+      ? category.path
+          .split('>')
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .join(' > ')
+      : '');
 
   return (
     <div
@@ -1274,7 +1299,7 @@ export default function ResultsPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
             <CategorySelector
-              initialCategoryPath={category?.path || ''}
+              initialCategoryPath={normalizedCategoryPathForSelector}
               initialCategoryId={category?.id || ''}
               onCategorySelect={handleCategorySelect}
               onClose={() => setShowCategoryModal(false)}
