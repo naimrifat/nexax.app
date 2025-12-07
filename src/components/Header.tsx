@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, ChevronDown, Upload, LayoutDashboard, Home, LogOut, TrendingUp, Camera } from 'lucide-react';
+import AuthModal, { AuthMode } from './AuthModal';
+import { useAuth } from '../context/AuthContext';
 
 const Header: React.FC = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const location = useLocation();
+  const { user, logout } = useAuth();
+  
 
   // Track scroll position to change header style
   useEffect(() => {
@@ -22,6 +27,9 @@ const Header: React.FC = () => {
     setMobileMenuOpen(false);
   }, [location]);
 
+  const closeAuth = () => setAuthMode(null);
+  const openAuth = (mode: AuthMode) => setAuthMode(mode);
+  
   return (
     <header 
       className={`sticky top-0 z-50 w-full transition-all duration-300 ${
@@ -50,8 +58,24 @@ const Header: React.FC = () => {
             <NavLink to="/pricing" label="Pricing" active={location.pathname === '/pricing'} />
             
             <div className="ml-4 flex items-center space-x-3">
-              <button className="btn btn-outline">Log In</button>
-              <button className="btn btn-primary">Sign Up</button>
+             {user ? (
+                <>
+                  <span className="text-sm text-gray-700">Hi, {user.email}</span>
+                  <button className="btn btn-outline" onClick={logout}>
+                    <LogOut className="w-4 h-4 mr-1" />
+                    Log Out
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="btn btn-outline" onClick={() => openAuth('login')}>
+                    Log In
+                  </button>
+                  <button className="btn btn-primary" onClick={() => openAuth('signup')}>
+                    Sign Up
+                  </button>
+                </>
+              )}
             </div>
           </nav>
 
@@ -79,12 +103,29 @@ const Header: React.FC = () => {
             <MobileNavLink to="/pricing" label="Pricing" active={location.pathname === '/pricing'} />
             <hr className="border-gray-200" />
             <div className="flex flex-col space-y-3 pt-2">
-              <button className="btn btn-outline w-full">Log In</button>
-              <button className="btn btn-primary w-full">Sign Up</button>
+              {user ? (
+                <>
+                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">Signed in as {user.email}</div>
+                  <button className="btn btn-outline w-full" onClick={logout}>
+                    <LogOut className="w-4 h-4 mr-1" />
+                    Log Out
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="btn btn-outline w-full" onClick={() => openAuth('login')}>
+                    Log In
+                  </button>
+                  <button className="btn btn-primary w-full" onClick={() => openAuth('signup')}>
+                    Sign Up
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
       )}
+      <AuthModal open={!!authMode} initialMode={authMode || 'login'} onClose={closeAuth} onModeChange={setAuthMode} />
     </header>
   );
 };
