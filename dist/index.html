@@ -8,10 +8,39 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/assets/index-Dd8RRfvB.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DIvAMCNv.css">
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (() => {
+        const stripPreview = () => {
+          const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+          const previewHeadings = headings.filter((heading) => /preview/i.test(heading.textContent || ''));
+
+          previewHeadings.forEach((heading) => {
+            const container = heading.closest('aside, section, article, div, .card');
+            if (container && container.parentElement) {
+              container.remove();
+            }
+          });
+        };
+
+        document.addEventListener('DOMContentLoaded', stripPreview);
+
+        const observer = new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+              stripPreview();
+              break;
+            }
+          }
+        });
+
+        if (document.body) {
+          observer.observe(document.body, { childList: true, subtree: true });
+        }
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
