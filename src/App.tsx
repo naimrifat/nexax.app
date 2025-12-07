@@ -7,6 +7,7 @@ import ResultsPage from './pages/ResultsPage'; // keep as default export
 import PricingPage from './pages/PricingPage';
 import { ListingProvider } from './context/ListingContext';
 import { AuthProvider } from './context/AuthContext';
+import ListingStyleSettingsPage from './pages/ListingStyleSettingsPage';
 import './App.css';
 
 function App() {
@@ -21,6 +22,7 @@ function App() {
               {/* Make :id optional so one component handles /results and /results/:id */}
               <Route path="/results/:id?" element={<ResultsPage />} />
               <Route path="/pricing" element={<PricingPage />} />
+              <Route path="/settings/listing-style" element={<ListingStyleSettingsPage />} />
               {/* Removed UploadPage import, use HomePage instead */}
               <Route path="/create-listing" element={<HomePage />} />
 {/* Simple 404 fallback */}
