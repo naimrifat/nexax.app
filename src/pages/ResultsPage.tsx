@@ -29,8 +29,7 @@ type ItemSpecific = {
   multi?: boolean;
   selectionOnly?: boolean;
   freeTextAllowed?: boolean;
-  // we’ll stash the full, unfiltered eBay list here so we can
-  // re-filter correctly when Size Type changes
+  // Stash full, unfiltered eBay list so we can re-filter when Size Type changes
   allOptions?: string[];
 };
 
@@ -87,7 +86,7 @@ function firstValue(v: string | string[] | undefined): string {
   return v ?? '';
 }
 
-/* ---------- Size / Size Type helpers (same logic as HomePage) ---------- */
+/* ---------- Size / Size Type helpers ---------- */
 
 // detect the current "Size Type" value from specifics
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
@@ -98,7 +97,11 @@ function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
 
 // recognize size-like aspect names that should be filtered by Size Type
 function isSizeAspectName(name: string): boolean {
-  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+  const n = (name || '').toLowerCase();
+  if (!n.includes('size')) return false;
+  // avoid matching "Size Type"
+  if (n.includes('type')) return false;
+  return true;
 }
 
 // numeric helper
@@ -128,6 +131,10 @@ function isPlusNumeric(v: string) {
   // 1X 2X 3X etc are usually "Plus" or Big sets
   return /\b[1-6]X(L|LT)?\b/i.test(v);
 }
+function isPlusToken(v: string) {
+  // typical plus markers: 16W, 18W, 20W, 1X, 2X, 3X, etc.
+  return /\b\d{1,2}W\b/i.test(v) || /\b[1-6]X(L|LT)?\b/i.test(v);
+}
 function isLargeNumeric(v: string) {
   const n = parseFirstNumber(v);
   if (n == null) return false;
@@ -142,7 +149,7 @@ function isJuniorsOddNumber(v: string) {
 /**
  * Filter the size options based on Size Type selection.
  * If no type chosen -> return full set.
- * These heuristics match what we used on HomePage.
+ * These heuristics try to mimic how eBay separates Regular / Plus / Petites / Juniors.
  */
 function filterSizeOptionsBySizeType(
   sizeType: string,
@@ -153,65 +160,84 @@ function filterSizeOptionsBySizeType(
 
   const tallSet = (v: string) => isTallToken(v);
   const petiteSet = (v: string) => isPetiteToken(v);
-  const juniorSet = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
+  const juniorCore = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
 
+  // Regular should avoid anything clearly tagged as Plus / Tall / Petite / Juniors / Maternity
   const regularExclude = (v: string) =>
     !isTallToken(v) &&
     !isPetiteToken(v) &&
     !isJuniorToken(v) &&
     !isMaternityToken(v) &&
     !isBigToken(v) &&
-    !isPlusNumeric(v);
+    !isPlusNumeric(v) &&
+    !isPlusToken(v);
 
   // Big & Tall / Husky
   if (st.includes('big') || st.includes('husky') || st.includes('tall')) {
     return allOptions.filter(
       (v) =>
-        tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v),
+        tallSet(v) ||
+        isBigToken(v) ||
+        isPlusNumeric(v) ||
+        isPlusToken(v) ||
+        isLargeNumeric(v),
     );
   }
 
-  // Petites
+  // Petites – prioritize explicit petite markers
   if (st.includes('petite')) {
     const filtered = allOptions.filter((v) => petiteSet(v));
     return filtered.length ? filtered : allOptions;
   }
 
-  // Juniors
+  // Juniors – odd-number sizes or juniors tokens, but exclude obvious plus tokens
   if (st.includes('junior')) {
-    const filtered = allOptions.filter((v) => juniorSet(v));
-    return filtered.length ? filtered : allOptions.filter(regularExclude);
+    const juniorsLike = allOptions.filter(
+      (v) => juniorCore(v) && !isPlusToken(v) && !isPlusNumeric(v),
+    );
+    if (juniorsLike.length) return juniorsLike;
+
+    const oddOnly = allOptions.filter(
+      (v) => isJuniorsOddNumber(v) && !isPlusToken(v) && !isPlusNumeric(v),
+    );
+    return oddOnly.length ? oddOnly : allOptions.filter(regularExclude);
   }
 
-  // Maternity – keep all; eBay often doesn’t encode it in the size
+  // Maternity – eBay often doesn’t encode this in the size string, so keep all
   if (st.includes('maternity')) {
     return allOptions;
   }
 
-  // Plus
+  // Plus – aggressively prefer plus tokens; fall back to non-junior-ish sizes
   if (st.includes('plus')) {
     const plusLike = allOptions.filter(
-      (v) => isPlusNumeric(v) || isBigToken(v),
+      (v) => isPlusToken(v) || isBigToken(v) || isPlusNumeric(v),
     );
-    if (plusLike.length) return plusLike;
-    return allOptions.filter(regularExclude);
+    return plusLike.length ? plusLike : allOptions.filter((v) => !juniorCore(v));
   }
 
-  // Regular / Misses / default
+  // Regular / Misses / default – strip out all clearly plus/petite/junior/tall markers
   return allOptions.filter(regularExclude);
 }
 
 /**
  * Apply Size Type filter to the "Size" aspect in a list of specifics.
- * - Reads the Size Type from the specifics
- * - Filters the Size options from the original eBay set (`allOptions`)
+ * - Reads Size Type from specifics
+ * - Filters Size options from the original eBay set (`allOptions`)
  * - Clears Size value if it’s incompatible with the new type
  */
 function applySizeTypeFilterToSpecifics(
   specs: ItemSpecific[],
 ): ItemSpecific[] {
   const sizeTypeVal = getSizeTypeValueFromSpecifics(specs);
-  if (!sizeTypeVal) return specs;
+  if (!sizeTypeVal) {
+    // no size type chosen → keep original options
+    return specs.map((spec) =>
+      isSizeAspectName(spec.name)
+        ? { ...spec, options: spec.allOptions ?? spec.options ?? [] }
+        : spec,
+    );
+  }
 
   return specs.map((spec) => {
     if (!isSizeAspectName(spec.name)) return spec;
