@@ -7,6 +7,7 @@ import React, {
   useRef,
 } from 'react';
 import { useNavigate } from 'react-router-dom';
+import CategorySelector from '../components/CategorySelector';
 
 type Category = {
   id: string;
@@ -29,7 +30,7 @@ type ItemSpecific = {
   multi?: boolean;
   selectionOnly?: boolean;
   freeTextAllowed?: boolean;
-  // Stash full, unfiltered eBay list so we can re-filter when Size Type changes
+  // full, unfiltered eBay list so we can re-filter when Size Type changes
   allOptions?: string[];
 };
 
@@ -97,11 +98,7 @@ function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
 
 // recognize size-like aspect names that should be filtered by Size Type
 function isSizeAspectName(name: string): boolean {
-  const n = (name || '').toLowerCase();
-  if (!n.includes('size')) return false;
-  // avoid matching "Size Type"
-  if (n.includes('type')) return false;
-  return true;
+  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
 
 // numeric helper
@@ -131,10 +128,6 @@ function isPlusNumeric(v: string) {
   // 1X 2X 3X etc are usually "Plus" or Big sets
   return /\b[1-6]X(L|LT)?\b/i.test(v);
 }
-function isPlusToken(v: string) {
-  // typical plus markers: 16W, 18W, 20W, 1X, 2X, 3X, etc.
-  return /\b\d{1,2}W\b/i.test(v) || /\b[1-6]X(L|LT)?\b/i.test(v);
-}
 function isLargeNumeric(v: string) {
   const n = parseFirstNumber(v);
   if (n == null) return false;
@@ -149,7 +142,6 @@ function isJuniorsOddNumber(v: string) {
 /**
  * Filter the size options based on Size Type selection.
  * If no type chosen -> return full set.
- * These heuristics try to mimic how eBay separates Regular / Plus / Petites / Juniors.
  */
 function filterSizeOptionsBySizeType(
   sizeType: string,
@@ -160,84 +152,65 @@ function filterSizeOptionsBySizeType(
 
   const tallSet = (v: string) => isTallToken(v);
   const petiteSet = (v: string) => isPetiteToken(v);
-  const juniorCore = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
+  const juniorSet = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
 
-  // Regular should avoid anything clearly tagged as Plus / Tall / Petite / Juniors / Maternity
   const regularExclude = (v: string) =>
     !isTallToken(v) &&
     !isPetiteToken(v) &&
     !isJuniorToken(v) &&
     !isMaternityToken(v) &&
     !isBigToken(v) &&
-    !isPlusNumeric(v) &&
-    !isPlusToken(v);
+    !isPlusNumeric(v);
 
   // Big & Tall / Husky
   if (st.includes('big') || st.includes('husky') || st.includes('tall')) {
     return allOptions.filter(
       (v) =>
-        tallSet(v) ||
-        isBigToken(v) ||
-        isPlusNumeric(v) ||
-        isPlusToken(v) ||
-        isLargeNumeric(v),
+        tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v),
     );
   }
 
-  // Petites – prioritize explicit petite markers
+  // Petites
   if (st.includes('petite')) {
     const filtered = allOptions.filter((v) => petiteSet(v));
     return filtered.length ? filtered : allOptions;
   }
 
-  // Juniors – odd-number sizes or juniors tokens, but exclude obvious plus tokens
+  // Juniors
   if (st.includes('junior')) {
-    const juniorsLike = allOptions.filter(
-      (v) => juniorCore(v) && !isPlusToken(v) && !isPlusNumeric(v),
-    );
-    if (juniorsLike.length) return juniorsLike;
-
-    const oddOnly = allOptions.filter(
-      (v) => isJuniorsOddNumber(v) && !isPlusToken(v) && !isPlusNumeric(v),
-    );
-    return oddOnly.length ? oddOnly : allOptions.filter(regularExclude);
+    const filtered = allOptions.filter((v) => juniorSet(v));
+    return filtered.length ? filtered : allOptions.filter(regularExclude);
   }
 
-  // Maternity – eBay often doesn’t encode this in the size string, so keep all
+  // Maternity – keep all; eBay often doesn’t encode it in the size
   if (st.includes('maternity')) {
     return allOptions;
   }
 
-  // Plus – aggressively prefer plus tokens; fall back to non-junior-ish sizes
+  // Plus
   if (st.includes('plus')) {
     const plusLike = allOptions.filter(
-      (v) => isPlusToken(v) || isBigToken(v) || isPlusNumeric(v),
+      (v) => isPlusNumeric(v) || isBigToken(v),
     );
-    return plusLike.length ? plusLike : allOptions.filter((v) => !juniorCore(v));
+    if (plusLike.length) return plusLike;
+    return allOptions.filter(regularExclude);
   }
 
-  // Regular / Misses / default – strip out all clearly plus/petite/junior/tall markers
+  // Regular / Misses / default
   return allOptions.filter(regularExclude);
 }
 
 /**
  * Apply Size Type filter to the "Size" aspect in a list of specifics.
- * - Reads Size Type from specifics
- * - Filters Size options from the original eBay set (`allOptions`)
+ * - Reads the Size Type from the specifics
+ * - Filters the Size options from the original eBay set (`allOptions`)
  * - Clears Size value if it’s incompatible with the new type
  */
 function applySizeTypeFilterToSpecifics(
   specs: ItemSpecific[],
 ): ItemSpecific[] {
   const sizeTypeVal = getSizeTypeValueFromSpecifics(specs);
-  if (!sizeTypeVal) {
-    // no size type chosen → keep original options
-    return specs.map((spec) =>
-      isSizeAspectName(spec.name)
-        ? { ...spec, options: spec.allOptions ?? spec.options ?? [] }
-        : spec,
-    );
-  }
+  if (!sizeTypeVal) return specs;
 
   return specs.map((spec) => {
     if (!isSizeAspectName(spec.name)) return spec;
@@ -760,6 +733,8 @@ export default function ResultsPage() {
   }, [navigate, fetchCategorySpecifics, smartFillSpecifics]);
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
+    // If the selector only returns id + path, this still works;
+    // name can be derived later from path on the backend if needed.
     setCategory(newCategory);
     setShowCategoryModal(false);
     await fetchCategorySpecifics(newCategory.id);
@@ -1267,168 +1242,17 @@ export default function ResultsPage() {
       </aside>
 
       {showCategoryModal && (
-        <CategorySelectorModal
-          currentCategory={category}
-          suggestions={categorySuggestions}
-          onSelect={handleCategorySelect}
-          onClose={() => setShowCategoryModal(false)}
-        />
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
+            <CategorySelector
+              initialCategoryPath={category?.path || ''}
+              initialCategoryId={category?.id || ''}
+              onCategorySelect={handleCategorySelect}
+              onClose={() => setShowCategoryModal(false)}
+            />
+          </div>
+        </div>
       )}
-    </div>
-  );
-}
-
-/* ---------- Category modal ---------- */
-
-function CategorySelectorModal({
-  currentCategory,
-  suggestions,
-  onSelect,
-  onClose,
-}: {
-  currentCategory: CategoryWithPath | null;
-  suggestions: Category[];
-  onSelect: (cat: CategoryWithPath) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'grid',
-        placeItems: 'center',
-        zIndex: 1000,
-      }}
-    >
-      <div
-        style={{
-          background: 'white',
-          borderRadius: 8,
-          padding: 24,
-          maxWidth: 600,
-          width: '90%',
-          maxHeight: '80vh',
-          overflow: 'auto',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 16,
-          }}
-        >
-          <h3 style={{ margin: 0 }}>Select Category</h3>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: 24,
-              cursor: 'pointer',
-              padding: 0,
-              width: 32,
-              height: 32,
-            }}
-          >
-            ×
-          </button>
-        </div>
-
-        <div
-          style={{
-            marginBottom: 16,
-            padding: 12,
-            background: '#f0f8ff',
-            borderRadius: 4,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginBottom: 4,
-            }}
-          >
-            Current Category:
-          </div>
-          <div style={{ fontWeight: 600 }}>
-            {currentCategory
-              ? currentCategory.path || currentCategory.name
-              : 'None'}
-          </div>
-        </div>
-
-        <h4
-          style={{
-            marginTop: 24,
-            marginBottom: 12,
-          }}
-        >
-          Suggested Categories:
-        </h4>
-        {suggestions.length === 0 ? (
-          <div style={{ color: '#666', fontStyle: 'italic' }}>
-            No suggestions available
-          </div>
-        ) : (
-          <div>
-            {suggestions.map((cat) => (
-              <div
-                key={cat.id}
-                onClick={() => onSelect(cat as CategoryWithPath)}
-                style={{
-                  padding: 12,
-                  border: '1px solid #ddd',
-                  borderRadius: 4,
-                  marginBottom: 8,
-                  cursor: 'pointer',
-                  background:
-                    currentCategory?.id === cat.id ? '#e3f2fd' : 'white',
-                  transition: 'background 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = '#f5f5f5';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background =
-                    currentCategory?.id === cat.id ? '#e3f2fd' : 'white';
-                }}
-              >
-                <div style={{ fontWeight: 500 }}>{cat.name}</div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: '#666',
-                    marginTop: 4,
-                  }}
-                >
-                  ID: {cat.id}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div
-          style={{
-            marginTop: 24,
-            paddingTop: 16,
-            borderTop: '1px solid #ddd',
-            fontSize: 14,
-            color: '#666',
-          }}
-        >
-          💡 Tip: Selecting a category will automatically load its required item
-          specifics
-        </div>
-      </div>
     </div>
   );
 }
