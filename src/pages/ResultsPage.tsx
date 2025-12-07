@@ -1027,7 +1027,24 @@ export default function ResultsPage() {
             {title.length}/80 characters
           </div>
         </section>
-
+        
+{/* DESCRIPTION */}
+        <section style={{ marginTop: 24 }}>
+          <h3>Description</h3>
+          <textarea
+            placeholder="Enter description..."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            style={{
+              width: '100%',
+              padding: 12,
+              marginTop: 8,
+              fontSize: 14,
+            }}
+          />
+        </section>
+        
         {/* CATEGORY */}
         <section style={{ marginTop: 24 }}>
           <h3>Category</h3>
@@ -1142,24 +1159,7 @@ export default function ResultsPage() {
             + Add Custom Specific
           </button>
         </section>
-
-        {/* DESCRIPTION */}
-        <section style={{ marginTop: 24 }}>
-          <h3>Description</h3>
-          <textarea
-            placeholder="Enter description..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={8}
-            style={{
-              width: '100%',
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
-          />
-        </section>
-
+        
         {/* KEYWORDS */}
         <section style={{ marginTop: 24 }}>
           <h3>Keywords</h3>
