@@ -40,7 +40,7 @@ export default function CategorySelector({
   const parentId = crumbs.length ? crumbs[crumbs.length - 1].id : '0';
   const breadcrumbText = useMemo(
     () => (crumbs.length ? crumbs.map((c) => c.name).join(' > ') : 'All'),
-    [crumbs]
+    [crumbs],
   );
 
   // ---------------- API helpers ----------------
@@ -62,13 +62,18 @@ export default function CategorySelector({
       if (!r.ok) throw new Error(await r.text());
       const data = await r.json();
       const cats: ApiCategory[] = data?.categories ?? [];
-      cacheRef.current.set(
-        pid,
-        cats.map((c) => ({ id: String(c.id), name: c.name, hasChildren: !!c.hasChildren }))
-      );
-      setItems(
-        cats.map((c) => ({ id: String(c.id), name: c.name, hasChildren: !!c.hasChildren }))
-      );
+
+      const mapped: CategoryNode[] = cats.map((c) => ({
+        id: String(c.id),
+        name: c.name,
+        hasChildren: !!c.hasChildren,
+      }));
+
+      // sort alphabetically by name
+      mapped.sort((a, b) => a.name.localeCompare(b.name));
+
+      cacheRef.current.set(pid, mapped);
+      setItems(mapped);
     } catch (e: any) {
       setError(e?.message || 'Failed to load categories');
       setItems([]);
@@ -92,7 +97,14 @@ export default function CategorySelector({
       });
       if (!r.ok) throw new Error(await r.text());
       const data = await r.json();
-      setResults((data?.categories ?? []) as ApiCategory[]);
+      const cats = (data?.categories ?? []) as ApiCategory[];
+
+      // sort alphabetically by full path (or name fallback)
+      cats.sort((a, b) =>
+        (a.path || a.name).localeCompare(b.path || b.name),
+      );
+
+      setResults(cats);
     } catch (e: any) {
       setError(e?.message || 'Search failed');
       setResults([]);
@@ -171,7 +183,10 @@ export default function CategorySelector({
           </div>
           {initialCategoryPath && (
             <div className="mt-1 text-xs text-gray-500">
-              Current: <span className="font-medium text-gray-700">{initialCategoryPath}</span>
+              Current:{' '}
+              <span className="font-medium text-gray-700">
+                {initialCategoryPath}
+              </span>
             </div>
           )}
         </div>
@@ -218,7 +233,7 @@ export default function CategorySelector({
             ) : (
               results.map((r) => (
                 <button
-                  key={`${r.id}-${r.path}`}
+                  key={`${r.id}-${r.path || r.name}`}
                   className="w-full text-left px-3 py-2 hover:bg-gray-50"
                   onClick={() =>
                     onCategorySelect({
@@ -227,8 +242,9 @@ export default function CategorySelector({
                     })
                   }
                 >
-                  <div className="text-sm text-gray-900">{r.path || r.name}</div>
-                  <div className="text-xs text-gray-500">ID: {r.id}</div>
+                  <div className="text-sm text-gray-900">
+                    {r.path || r.name}
+                  </div>
                 </button>
               ))
             )}
@@ -259,8 +275,9 @@ export default function CategorySelector({
                   onClick={() => handleChoose(node)}
                 >
                   <div className="min-w-0 pr-3">
-                    <div className="text-sm text-gray-900 truncate">{node.name}</div>
-                    <div className="text-xs text-gray-500">ID: {node.id}</div>
+                    <div className="text-sm text-gray-900 truncate">
+                      {node.name}
+                    </div>
                   </div>
                   {node.hasChildren ? (
                     <ChevronRight className="w-4 h-4 text-gray-400" />
@@ -277,8 +294,8 @@ export default function CategorySelector({
       {/* Footer */}
       <div className="flex items-center justify-between">
         <div className="text-xs text-gray-500">
-          {initialCategoryId
-            ? `Current: ${initialCategoryPath || initialCategoryId}`
+          {initialCategoryPath
+            ? `Current: ${initialCategoryPath}`
             : 'No category selected'}
         </div>
         <div className="flex gap-2">
@@ -287,7 +304,9 @@ export default function CategorySelector({
           </button>
           <button
             className={`btn ${
-              active ? 'bg-teal-600 text-white hover:bg-teal-700' : 'opacity-50 cursor-not-allowed'
+              active
+                ? 'bg-teal-600 text-white hover:bg-teal-700'
+                : 'opacity-50 cursor-not-allowed'
             }`}
             onClick={handlePickActive}
             disabled={!active}
