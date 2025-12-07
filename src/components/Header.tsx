@@ -52,10 +52,30 @@ const Header: React.FC = () => {
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center space-x-6">
-            <NavLink to="/" label="Home" icon={<Home className="w-4 h-4" />} active={location.pathname === '/'} />
+            <NavLink
+              to="/"
+              label="Home"
+              icon={<Home className="w-4 h-4" />}
+              active={location.pathname === '/'}
+            />
             {/* Removed Create Listing link */}
-            <NavLink to="/dashboard" label="Dashboard" icon={<LayoutDashboard className="w-4 h-4" />} active={location.pathname === '/dashboard'} />
-            <NavLink to="/pricing" label="Pricing" active={location.pathname === '/pricing'} />
+            <NavLink
+              to="/dashboard"
+              label="Dashboard"
+              icon={<LayoutDashboard className="w-4 h-4" />}
+              active={location.pathname === '/dashboard'}
+            />
+            <NavLink
+              to="/pricing"
+              label="Pricing"
+              active={location.pathname === '/pricing'}
+            />
+            {/* 🔹 New: Listing Style settings link */}
+            <NavLink
+              to="/settings/listing-style"
+              label="Listing Style"
+              active={location.pathname === '/settings/listing-style'}
+            />
             
             <div className="ml-4 flex items-center space-x-3">
              {user ? (
@@ -97,15 +117,38 @@ const Header: React.FC = () => {
       {mobileMenuOpen && (
         <div className="md:hidden bg-white absolute top-full left-0 w-full shadow-md animate-fade-in">
           <div className="container mx-auto px-4 py-4 flex flex-col space-y-4">
-            <MobileNavLink to="/" label="Home" icon={<Home className="w-5 h-5" />} active={location.pathname === '/'} />
+            <MobileNavLink
+              to="/"
+              label="Home"
+              icon={<Home className="w-5 h-5" />}
+              active={location.pathname === '/'}
+            />
             {/* Removed Create Listing link */}
-            <MobileNavLink to="/dashboard" label="Dashboard" icon={<LayoutDashboard className="w-5 h-5" />} active={location.pathname === '/dashboard'} />
-            <MobileNavLink to="/pricing" label="Pricing" active={location.pathname === '/pricing'} />
+            <MobileNavLink
+              to="/dashboard"
+              label="Dashboard"
+              icon={<LayoutDashboard className="w-5 h-5" />}
+              active={location.pathname === '/dashboard'}
+            />
+            <MobileNavLink
+              to="/pricing"
+              label="Pricing"
+              active={location.pathname === '/pricing'}
+            />
+            {/* 🔹 New: Listing Style settings link (mobile) */}
+            <MobileNavLink
+              to="/settings/listing-style"
+              label="Listing Style"
+              active={location.pathname === '/settings/listing-style'}
+            />
+
             <hr className="border-gray-200" />
             <div className="flex flex-col space-y-3 pt-2">
               {user ? (
                 <>
-                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">Signed in as {user.email}</div>
+                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                    Signed in as {user.email}
+                  </div>
                   <button className="btn btn-outline w-full" onClick={logout}>
                     <LogOut className="w-4 h-4 mr-1" />
                     Log Out
@@ -125,7 +168,12 @@ const Header: React.FC = () => {
           </div>
         </div>
       )}
-      <AuthModal open={!!authMode} initialMode={authMode || 'login'} onClose={closeAuth} onModeChange={setAuthMode} />
+      <AuthModal
+        open={!!authMode}
+        initialMode={authMode || 'login'}
+        onClose={closeAuth}
+        onModeChange={setAuthMode}
+      />
     </header>
   );
 };
