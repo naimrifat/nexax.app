@@ -32,7 +32,7 @@ function chooseOptionValue(
 }
 
 /* -------------------------------------------------------
-   Size / Size Type dependency helpers (robust heuristics)
+   Size / Size Type helpers (solid, category-based)
    ------------------------------------------------------- */
 
 // detect the current "Size Type" selected value from item specifics
@@ -46,115 +46,100 @@ function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
 
-// numeric grabber for big/tall heuristics
-function parseFirstNumber(s: string): number | null {
-  const m = (s || '').match(/\d+(?:\.\d+)?/);
-  return m ? Number(m[0]) : null;
+type NormalizedSizeTypeKey =
+  | 'regular'
+  | 'petite'
+  | 'plus'
+  | 'tall'
+  | 'junior'
+  | 'maternity'
+  | 'unknown';
+
+type SizeGroups = {
+  regular: string[];
+  petite: string[];
+  plus: string[];
+  tall: string[];
+  junior: string[];
+  maternity: string[];
+  unknown: string[];
+};
+
+function normalizeSizeTypeLabel(raw: string): NormalizedSizeTypeKey {
+  const s = (raw || '').toLowerCase();
+
+  if (!s) return 'regular';
+  if (s.includes('petite')) return 'petite';
+  if (s.includes('plus')) return 'plus';
+  if (s.includes('maternity')) return 'maternity';
+  if (s.includes('junior')) return 'junior';
+  if (s.includes('tall') || s.includes('long')) return 'tall';
+  if (s.includes('big & tall') || s.includes('big and tall') || s.includes('husky')) return 'plus';
+
+  // Default bucket if nothing else matches
+  return 'regular';
 }
 
-// Big & Tall / Petite / Plus / etc tokens
-function isTallToken(v: string) {
-  return /(tall|long|\bLT\b|\bXLT\b|\b2XLT\b|\b3XLT\b|\b4XLT\b|\b5XLT\b)/i.test(v);
-}
+function classifySizeOptionLabel(opt: string): NormalizedSizeTypeKey {
+  const s = opt.toLowerCase().trim();
+  if (!s) return 'unknown';
 
-function isPetiteToken(v: string) {
-  // NOTE: now also matches sizes ending in "P" like 0P, 2P, 4P, etc.
-  return /(petite|petites|\bP\b|\bPS\b|\bPM\b|\bPL\b|\bPXL\b|P$)/i.test(v);
-}
+  // Explicit maternity
+  if (s.includes('maternity') || s.includes('pregnan')) return 'maternity';
 
-function isJuniorToken(v: string) {
-  return /(junior|jr\b|juniors)/i.test(v);
-}
+  // Petite markers: "Petite", "Petites", "PS/PM/PL/PXL", numeric + P
+  if (/\bpetite\b|\bpetites\b/.test(s)) return 'petite';
+  if (/\bps\b|\bpm\b|\bpl\b|\bpxl\b/.test(s)) return 'petite';
+  if (/^\d{1,2}p\b/.test(s) || /\d{1,2}\s*p$/.test(s)) return 'petite';
 
-function isMaternityToken(v: string) {
-  return /maternity/i.test(v);
-}
+  // Plus markers
+  if (/\bplus\b/.test(s)) return 'plus';
+  if (/\d{1,2}w\b/.test(s)) return 'plus'; // 14W, 16W, etc
+  if (/\b[0-6]x(?!lt)\b/.test(s) || /\b0x\b/.test(s) || /\box\b/.test(s)) return 'plus'; // 1X,2X,OX
 
-function isBigToken(v: string) {
-  return /(husky|big|big & tall|b&t)/i.test(v);
-}
+  // Big & Tall often mixed with plus
+  if (s.includes('big & tall') || s.includes('big and tall') || s.includes('husky')) return 'plus';
 
-function isPlusNumeric(v: string) {
-  // 0X–6X, 1XLT, 14W, 18W, "Plus" text, etc.
-  return (
-    /\b[0-6]X(L|LT)?\b/i.test(v) || // 0X, 1X, 2X, 3XLT, etc.
-    /\d{1,2}\s*W\b/i.test(v) || // 12W, 14W, 20W, etc.
-    /plus/i.test(v)
-  );
-}
+  // Tall markers
+  if (s.includes('tall') || /\bxlt\b/.test(s) || /\blt\b/.test(s)) return 'tall';
 
-function isLargeNumeric(v: string) {
-  // heuristic: if numeric looks large (waist 46+, neck/chest high)
-  const n = parseFirstNumber(v);
-  if (n == null) return false;
-  return n >= 46;
-}
-
-// juniors numeric heuristic (odd numbers 1,3,5,7,... common in juniors pants/dresses)
-function isJuniorsOddNumber(v: string) {
-  const n = parseFirstNumber(v);
-  if (n == null) return false;
-  return n % 2 === 1 && n <= 19; // 1..19 odd
-}
-
-/**
- * Filter the size options based on Size Type selection.
- * If no type chosen -> return full set.
- * Each size is assigned to exactly one bucket so there’s no cross-contamination.
- */
-function filterSizeOptionsBySizeType(
-  sizeType: string,
-  allOptions: string[] = [],
-  categoryPath: string = ''
-): string[] {
-  const st = (sizeType || '').toLowerCase();
-  if (!st) return allOptions;
-
-  const tallSet = (v: string) => isTallToken(v);
-  const petiteSet = (v: string) => isPetiteToken(v);
-  const juniorSet = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
-  const maternitySet = (v: string) => isMaternityToken(v);
-  const plusSet = (v: string) => isPlusNumeric(v);
-  const bigSet = (v: string) => isBigToken(v) || isLargeNumeric(v);
-
-  // Anything that matches one of these should NOT appear in Regular
-  const regularExclude = (v: string) =>
-    !tallSet(v) &&
-    !petiteSet(v) &&
-    !juniorSet(v) &&
-    !maternitySet(v) &&
-    !plusSet(v) &&
-    !bigSet(v);
-
-  if (st.includes('big') || st.includes('tall') || st.includes('husky')) {
-    return allOptions.filter((v) => tallSet(v) || bigSet(v));
-  }
-  if (st.includes('petite')) {
-    return allOptions.filter((v) => petiteSet(v));
-  }
-  if (st.includes('junior')) {
-    return allOptions.filter((v) => juniorSet(v));
-  }
-  if (st.includes('maternity')) {
-    return allOptions.filter((v) => maternitySet(v));
-  }
-  if (st.includes('plus')) {
-    return allOptions.filter((v) => plusSet(v));
+  // Juniors
+  if (s.includes('junior') || /\bjr\b/.test(s)) return 'junior';
+  const numericMatch = s.match(/^\d{1,2}$/);
+  if (numericMatch) {
+    const n = Number(numericMatch[0]);
+    if (!Number.isNaN(n) && n <= 19 && n % 2 === 1) {
+      // odd 1..19 -> common juniors pattern
+      return 'junior';
+    }
   }
 
-  // Regular / default: show only sizes that are *not* Petite/Plus/Juniors/Maternity/Big & Tall
-  return allOptions.filter((v) => regularExclude(v));
+  // Default regular
+  return 'regular';
 }
 
-// convenience: ensure that current Size still valid for the chosen Size Type
-function normalizeSizeAgainstSizeType(
-  sizeTypeVal: string,
-  sizeValue: string,
-  sizeOptions: string[],
-  categoryPath: string
-): string {
-  const filtered = filterSizeOptionsBySizeType(sizeTypeVal, sizeOptions, categoryPath);
-  return filtered.includes(sizeValue) ? sizeValue : '';
+function buildSizeGroups(sizeOptions: string[] = []): SizeGroups {
+  const groups: SizeGroups = {
+    regular: [],
+    petite: [],
+    plus: [],
+    tall: [],
+    junior: [],
+    maternity: [],
+    unknown: [],
+  };
+
+  const pushUnique = (arr: string[], val: string) => {
+    if (!arr.includes(val)) arr.push(val);
+  };
+
+  for (const raw of sizeOptions) {
+    const opt = String(raw);
+    const key = classifySizeOptionLabel(opt);
+    pushUnique(groups[key], opt);
+  }
+
+  return groups;
 }
 
 /* -------------------------------------------------------
@@ -180,7 +165,7 @@ function TokenSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
-  const selected = Array.isArray(value) ? value : value ? [value] : [];
+  const selected = Array.isArray(value) ? value : (value ? [value] : []);
   const lowerQuery = query.trim().toLowerCase();
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
@@ -437,7 +422,7 @@ export default function HomePage() {
         ])
       );
 
-      const mergedSpecificsFromCache = cachedAspects.map((aspect) => {
+      const mergedSpecificsFromCache = cachedAspects.map((aspect: any) => {
         const key = String(aspect.name ?? '').toLowerCase();
         const previousValue = aiSpecificsMap.get(key);
         const value = chooseOptionValue(
@@ -490,6 +475,12 @@ export default function HomePage() {
 
         const value = chooseOptionValue(previous, aspect.values ?? [], isSelectionOnly);
 
+        // NEW: build per-size-type groups for Size aspect
+        let sizeGroups: SizeGroups | undefined;
+        if (isSizeAspectName(aspect.name || '')) {
+          sizeGroups = buildSizeGroups(aspect.values ?? []);
+        }
+
         return {
           name: aspect.name,
           required: Boolean(aspect.required),
@@ -498,6 +489,7 @@ export default function HomePage() {
           freeTextAllowed: allowsFreeText,
           options: aspect.values ?? [],
           value,
+          sizeGroups,
         };
       });
 
@@ -557,19 +549,18 @@ export default function HomePage() {
         };
       }
 
-      // if "Size Type" changed, normalize any "Size"-like aspect
+      // if "Size Type" changed, ensure Size is still valid for that group
       if (/size type/i.test(next[index].name || '')) {
         const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
         if (sizeIdx !== -1) {
           const sizeSpec = next[sizeIdx];
-          const newSizeTypeVal = String(next[index].value || '');
-          const filtered = filterSizeOptionsBySizeType(
-            newSizeTypeVal,
-            sizeSpec?.options || [],
-            prev?.category?.path || ''
-          );
-          if (!filtered.includes(sizeSpec?.value)) {
-            next[sizeIdx] = { ...sizeSpec, value: '' };
+          const groups: SizeGroups | undefined = sizeSpec.sizeGroups;
+          if (groups) {
+            const key = normalizeSizeTypeLabel(String(next[index].value || ''));
+            const allowed = groups[key] || [];
+            if (!allowed.includes(sizeSpec.value)) {
+              next[sizeIdx] = { ...sizeSpec, value: '' };
+            }
           }
         }
       }
@@ -653,20 +644,14 @@ export default function HomePage() {
 
       setStatus('Images uploaded! Analyzing with AI...');
 
-      // 2) Read listing style settings from localStorage (if any)
+      // 2) Read listing-style settings from localStorage (if any and turned on)
       let listingStyleSettings: any = null;
       try {
         const raw = window.localStorage.getItem('listingStyleSettings');
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (parsed.useCustomStyle) {
-            // Only send when the user explicitly turned it ON
-            listingStyleSettings = {
-              useCustomStyle: true,
-              titleInstructions: parsed.titleInstructions || '',
-              descriptionInstructions: parsed.descriptionInstructions || '',
-              extraNotes: parsed.extraNotes || '',
-            };
+          if (parsed?.useCustomStyle) {
+            listingStyleSettings = parsed;
           }
         }
       } catch (err) {
@@ -675,14 +660,18 @@ export default function HomePage() {
       }
 
       // 3) Call analyze-listing with optional listingStyleSettings
+      const body: any = {
+        session_id: Date.now().toString(),
+        images: uploadedUrls,
+      };
+      if (listingStyleSettings) {
+        body.listingStyleSettings = listingStyleSettings;
+      }
+
       const analysisResponse = await fetch('/api/analyze-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: Date.now().toString(),
-          images: uploadedUrls,
-          listingStyleSettings, // object or null
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!analysisResponse.ok) {
@@ -775,7 +764,8 @@ export default function HomePage() {
       if (!spec.required) continue;
       const value = spec.value;
       if (Array.isArray(value)) {
-        if (value.length === 0) errors.push(`${spec.name} is required (select at least one option)`);
+        if (value.length === 0)
+          errors.push(`${spec.name} is required (select at least one option)`);
       } else {
         if (!String(value ?? '').trim()) errors.push(`${spec.name} is required`);
       }
@@ -828,13 +818,14 @@ export default function HomePage() {
 
     if (isSizeAspectName(spec?.name || '')) {
       const sizeTypeVal = getSizeTypeValue(listingData?.item_specifics || []);
-      const filteredOpts = filterSizeOptionsBySizeType(
-        sizeTypeVal,
-        Array.isArray(spec?.options) ? spec.options : [],
-        listingData?.category?.path || ''
-      );
+      const key = normalizeSizeTypeLabel(sizeTypeVal);
+      const groups: SizeGroups | undefined = spec.sizeGroups;
 
-      // If current value is now invalid, clear it (safety on first render after AI)
+      const baseOptions = Array.isArray(spec?.options) ? spec.options : [];
+      const filteredOpts =
+        groups && groups[key] && groups[key].length ? groups[key] : baseOptions;
+
+      // If current value is now invalid, clear it
       if (spec?.value && !filteredOpts.includes(spec.value)) {
         effectiveSpec = { ...spec, options: filteredOpts, value: '' };
       } else {
@@ -843,7 +834,7 @@ export default function HomePage() {
     }
 
     return (
-      <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
+      <div key={`${spec?.name ?? 'specific'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
         <div className="flex items-center">
           <span className="text-sm text-gray-700">{spec?.name || 'Specific'}</span>
           {spec?.required ? <span className="ml-1 text-red-500">*</span> : null}
@@ -867,13 +858,16 @@ export default function HomePage() {
                 Try It Now - Free Demo
               </h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                Upload up to 12 photos and see how our AI creates professional listings instantly
+                Upload up to 12 photos and see how our AI creates professional listings
+                instantly
               </p>
             </div>
 
             {validationErrors.length > 0 && (
               <div className="mb-6 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
-                <p className="font-semibold mb-2">Please fix the following before publishing:</p>
+                <p className="font-semibold mb-2">
+                  Please fix the following before publishing:
+                </p>
                 <ul className="list-disc ml-5">
                   {validationErrors.map((e, i) => (
                     <li key={i}>{e}</li>
@@ -883,7 +877,10 @@ export default function HomePage() {
             )}
 
             {!listingData ? (
-              <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <form
+                onSubmit={handleSubmit}
+                className="grid grid-cols-1 lg:grid-cols-2 gap-8"
+              >
                 {/* Upload */}
                 <div className="card p-6">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
@@ -893,7 +890,9 @@ export default function HomePage() {
 
                   <div
                     className={`border-2 border-dashed rounded-lg p-6 text-center mb-4 transition-all cursor-pointer ${
-                      isDragging ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-400'
+                      isDragging
+                        ? 'border-teal-500 bg-teal-50'
+                        : 'border-gray-300 hover:border-teal-400'
                     }`}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
@@ -909,7 +908,9 @@ export default function HomePage() {
                       onChange={handleFileInputChange}
                     />
                     <Upload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                    <p className="text-gray-700 font-medium">Drag and drop your photos here</p>
+                    <p className="text-gray-700 font-medium">
+                      Drag and drop your photos here
+                    </p>
                     <p className="text-gray-500 text-sm">or click to browse</p>
                   </div>
 
@@ -1005,7 +1006,9 @@ export default function HomePage() {
 
                 <div className="lg:col-span-2 space-y-6">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
+                    <h2 className="text-2xl font-bold text-gray-900">
+                      Your Generated Listing
+                    </h2>
                     <div className="flex items-center gap-3">
                       <button
                         onClick={handlePublishToEbay}
@@ -1025,6 +1028,7 @@ export default function HomePage() {
                           setPhotos([]);
                           setPhotoPreviewUrls([]);
                           setStatus('');
+                          setValidationErrors([]);
                         }}
                         className="btn btn-outline"
                       >
@@ -1060,7 +1064,8 @@ export default function HomePage() {
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
                       >
                         <span>
-                          {listingData?.category?.path || 'Click to select a category...'}
+                          {listingData?.category?.path ||
+                            'Click to select a category...'}
                         </span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
