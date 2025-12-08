@@ -1231,8 +1231,8 @@ export default function HomePage() {
                     {!!(listingData?.item_specifics?.length) && (
                       <div>
                         <label className="block text-sm font-semibold text-gray-600 mb-2">
-                          Item Specifics
-                        </label>
+  Item Specifics (HOME TEST)
+</label>
 
                         {listingData.item_specifics.map((spec: any, index: number) =>
                           renderSpecificRow(spec, index)
