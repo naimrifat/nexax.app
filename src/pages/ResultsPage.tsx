@@ -808,6 +808,7 @@ export default function ResultsPage() {
   }, [category]);
 
   const mainImageUrl = images[mainImageIndex] || '';
+    const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
