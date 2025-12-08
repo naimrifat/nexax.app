@@ -725,28 +725,36 @@ const handleSubmit = async (e: React.FormEvent) => {
 
     setStatus('Images uploaded! Analyzing with AI...');
 
-    // 🔹 NEW: load seller listing style from localStorage
-    let listingStyle: any = null;
+    // 2) Read listing style settings from localStorage (if any)
+    let listingStyleSettings: any = null;
     try {
-      const raw =
-        localStorage.getItem('snapline_listing_style_v1') ||
-        localStorage.getItem('snapline_listing_style');
+      const raw = window.localStorage.getItem('listingStyleSettings');
       if (raw) {
-        listingStyle = JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (parsed.useCustomStyle) {
+          // Only send when the user explicitly turned it ON
+          listingStyleSettings = {
+            useCustomStyle: true,
+            titleInstructions: parsed.titleInstructions || '',
+            descriptionInstructions: parsed.descriptionInstructions || '',
+            extraNotes: parsed.extraNotes || '',
+          };
+        }
       }
-    } catch {
-      // ignore parse errors, just fall back to null
-      listingStyle = null;
+    } catch (err) {
+      console.error('Failed to load listing style settings:', err);
+      // If anything goes wrong, we just fall back to default behavior
+      listingStyleSettings = null;
     }
 
-    // 2) Call analyze-listing WITH listing_style
+    // 3) Call analyze-listing with optional listingStyleSettings
     const analysisResponse = await fetch('/api/analyze-listing', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: Date.now().toString(),
         images: uploadedUrls,
-        listing_style: listingStyle, // 🔹 send seller instructions to backend
+        listingStyleSettings, // can be an object or null
       }),
     });
 
@@ -767,7 +775,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     setStatus('Listing generated successfully!');
     setResults(aiData);
 
-    // 3) Listing data for the on-page form
+    // 4) Listing data for the on-page form
     let finalListingData = normalized;
     if (!normalized?.category?.id) {
       finalListingData = { ...normalized, item_specifics: [] };
@@ -776,7 +784,7 @@ const handleSubmit = async (e: React.FormEvent) => {
 
     setListingData(finalListingData);
 
-    // 4) Fetch eBay specifics for the detected category
+    // 5) Fetch eBay specifics for the detected category
     if (finalListingData?.category?.id) {
       const catId = finalListingData.category.id;
 
@@ -801,7 +809,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       }
     }
 
-    // 5) Save everything the Results page needs
+    // 6) Save everything the Results page needs
     const aiListingPayload = {
       ...aiData,
       // make sure these are present even if AI model shape changes
