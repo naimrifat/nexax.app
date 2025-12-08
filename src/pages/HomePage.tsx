@@ -32,7 +32,7 @@ function chooseOptionValue(
 }
 
 /* -------------------------------------------------------
-   Size / Size Type helpers (solid, category-based)
+   Size / Size Type helpers — HARD partitioning
    ------------------------------------------------------- */
 
 // detect the current "Size Type" selected value from item specifics
@@ -43,30 +43,60 @@ function getSizeTypeValue(specs: any[]): string {
 
 // recognize size-like aspect names that should be filtered by Size Type
 function isSizeAspectName(name: string): boolean {
-  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+  if (!name) return false;
+  const n = name.toLowerCase();
+  // eBay uses lots of variants like "Size (Women's)", "Size Type", etc.
+  return /^size\b/.test(n) || /\bwaist size\b|\bneck size\b|\bchest size\b|\binseam\b/.test(n);
 }
 
-type NormalizedSizeTypeKey =
-  | 'regular'
-  | 'petite'
-  | 'plus'
-  | 'tall'
-  | 'junior'
-  | 'maternity'
-  | 'unknown';
+type SizeBucket = 'regular' | 'plus' | 'petite' | 'tall' | 'junior' | 'maternity';
 
-type SizeGroups = {
-  regular: string[];
-  petite: string[];
-  plus: string[];
-  tall: string[];
-  junior: string[];
-  maternity: string[];
-  unknown: string[];
-};
+/**
+ * Decide which bucket a single SIZE OPTION belongs to, based ONLY on its label.
+ * Each option goes to exactly ONE bucket.
+ */
+function detectSizeBucketFromLabel(label: string): SizeBucket {
+  const s = (label || '').toLowerCase().trim();
+  if (!s) return 'regular';
 
-function normalizeSizeTypeLabel(raw: string): NormalizedSizeTypeKey {
-  const s = (raw || '').toLowerCase();
+  // --- Maternity ---
+  if (s.includes('maternity') || s.includes('pregnan')) return 'maternity';
+
+  // --- Petite ---
+  if (s.includes('petite') || s.includes('petites')) return 'petite';
+  // PS, PM, PL, PXL, etc
+  if (/\bps\b|\bpm\b|\bpl\b|\bpxl\b/.test(s)) return 'petite';
+  // 4P, 6P, 10P, etc
+  if (/\b\d{1,2}p\b/.test(s)) return 'petite';
+
+  // --- Plus ---
+  if (s.includes('plus')) return 'plus';
+  // 14W, 18W, etc
+  if (/\b\d{1,2}w\b/.test(s)) return 'plus';
+  // 0X, OX, 1X–6X, 1XL–6XL
+  if (/\b[0-6]x\b/.test(s) || /\b[0-6]xl\b/.test(s) || /\box\b/.test(s)) return 'plus';
+  // some brands use "Womens Plus" text
+  if (s.includes('womens plus')) return 'plus';
+
+  // --- Tall ---
+  if (s.includes('tall')) return 'tall';
+  // LT, XLT, 2XLT, 3XLT etc
+  if (/\b[0-6]?x?lt\b/.test(s)) return 'tall';
+  // 34T, 36T, etc
+  if (/\b\d{2}t\b/.test(s)) return 'tall';
+
+  // --- Juniors ---
+  if (s.includes('junior') || s.includes('juniors') || /\bjr\b/.test(s)) return 'junior';
+
+  // Default: treat as Regular
+  return 'regular';
+}
+
+/**
+ * Normalize what the user selected in "Size Type" into one of our buckets.
+ */
+function normalizeSizeTypeSelection(sizeType: string): SizeBucket {
+  const s = (sizeType || '').toLowerCase();
 
   if (!s) return 'regular';
   if (s.includes('petite')) return 'petite';
@@ -76,70 +106,22 @@ function normalizeSizeTypeLabel(raw: string): NormalizedSizeTypeKey {
   if (s.includes('tall') || s.includes('long')) return 'tall';
   if (s.includes('big & tall') || s.includes('big and tall') || s.includes('husky')) return 'plus';
 
-  // Default bucket if nothing else matches
   return 'regular';
 }
 
-function classifySizeOptionLabel(opt: string): NormalizedSizeTypeKey {
-  const s = opt.toLowerCase().trim();
-  if (!s) return 'unknown';
+/**
+ * The main filter: given a selected Size Type + all size options,
+ * return ONLY the options that belong to that bucket.
+ */
+function filterSizeOptionsBySizeType(
+  sizeType: string,
+  allOptions: string[] = []
+): string[] {
+  // If user hasn't picked a Size Type yet, show everything.
+  if (!sizeType) return allOptions;
 
-  // Explicit maternity
-  if (s.includes('maternity') || s.includes('pregnan')) return 'maternity';
-
-  // Petite markers: "Petite", "Petites", "PS/PM/PL/PXL", numeric + P
-  if (/\bpetite\b|\bpetites\b/.test(s)) return 'petite';
-  if (/\bps\b|\bpm\b|\bpl\b|\bpxl\b/.test(s)) return 'petite';
-  if (/^\d{1,2}p\b/.test(s) || /\d{1,2}\s*p$/.test(s)) return 'petite';
-
-  // Plus markers
-  if (/\bplus\b/.test(s)) return 'plus';
-  if (/\d{1,2}w\b/.test(s)) return 'plus'; // 14W, 16W, etc
-  if (/\b[0-6]x(?!lt)\b/.test(s) || /\b0x\b/.test(s) || /\box\b/.test(s)) return 'plus'; // 1X,2X,OX
-
-  // Big & Tall often mixed with plus
-  if (s.includes('big & tall') || s.includes('big and tall') || s.includes('husky')) return 'plus';
-
-  // Tall markers
-  if (s.includes('tall') || /\bxlt\b/.test(s) || /\blt\b/.test(s)) return 'tall';
-
-  // Juniors
-  if (s.includes('junior') || /\bjr\b/.test(s)) return 'junior';
-  const numericMatch = s.match(/^\d{1,2}$/);
-  if (numericMatch) {
-    const n = Number(numericMatch[0]);
-    if (!Number.isNaN(n) && n <= 19 && n % 2 === 1) {
-      // odd 1..19 -> common juniors pattern
-      return 'junior';
-    }
-  }
-
-  // Default regular
-  return 'regular';
-}
-
-function buildSizeGroups(sizeOptions: string[] = []): SizeGroups {
-  const groups: SizeGroups = {
-    regular: [],
-    petite: [],
-    plus: [],
-    tall: [],
-    junior: [],
-    maternity: [],
-    unknown: [],
-  };
-
-  const pushUnique = (arr: string[], val: string) => {
-    if (!arr.includes(val)) arr.push(val);
-  };
-
-  for (const raw of sizeOptions) {
-    const opt = String(raw);
-    const key = classifySizeOptionLabel(opt);
-    pushUnique(groups[key], opt);
-  }
-
-  return groups;
+  const bucket = normalizeSizeTypeSelection(sizeType);
+  return allOptions.filter((opt) => detectSizeBucketFromLabel(opt) === bucket);
 }
 
 /* -------------------------------------------------------
@@ -286,7 +268,7 @@ function TokenSelect({
       </div>
 
       {open && !disabled && filtered.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-gray-200 bg-white shadow">
+        <div className="absolute z-20 mt-1 w-full max-height-56 overflow-auto rounded-md border border-gray-200 bg-white shadow">
           {filtered.map((o) => (
             <button
               type="button"
@@ -422,7 +404,7 @@ export default function HomePage() {
         ])
       );
 
-      const mergedSpecificsFromCache = cachedAspects.map((aspect: any) => {
+      const mergedSpecificsFromCache = cachedAspects.map((aspect) => {
         const key = String(aspect.name ?? '').toLowerCase();
         const previousValue = aiSpecificsMap.get(key);
         const value = chooseOptionValue(
@@ -475,12 +457,6 @@ export default function HomePage() {
 
         const value = chooseOptionValue(previous, aspect.values ?? [], isSelectionOnly);
 
-        // NEW: build per-size-type groups for Size aspect
-        let sizeGroups: SizeGroups | undefined;
-        if (isSizeAspectName(aspect.name || '')) {
-          sizeGroups = buildSizeGroups(aspect.values ?? []);
-        }
-
         return {
           name: aspect.name,
           required: Boolean(aspect.required),
@@ -489,7 +465,6 @@ export default function HomePage() {
           freeTextAllowed: allowsFreeText,
           options: aspect.values ?? [],
           value,
-          sizeGroups,
         };
       });
 
@@ -549,18 +524,18 @@ export default function HomePage() {
         };
       }
 
-      // if "Size Type" changed, ensure Size is still valid for that group
+      // if "Size Type" changed, normalize any "Size"-like aspect
       if (/size type/i.test(next[index].name || '')) {
         const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
         if (sizeIdx !== -1) {
           const sizeSpec = next[sizeIdx];
-          const groups: SizeGroups | undefined = sizeSpec.sizeGroups;
-          if (groups) {
-            const key = normalizeSizeTypeLabel(String(next[index].value || ''));
-            const allowed = groups[key] || [];
-            if (!allowed.includes(sizeSpec.value)) {
-              next[sizeIdx] = { ...sizeSpec, value: '' };
-            }
+          const newSizeTypeVal = String(next[index].value || '');
+          const filtered = filterSizeOptionsBySizeType(
+            newSizeTypeVal,
+            sizeSpec?.options || []
+          );
+          if (!filtered.includes(sizeSpec?.value)) {
+            next[sizeIdx] = { ...sizeSpec, value: '' };
           }
         }
       }
@@ -818,14 +793,12 @@ export default function HomePage() {
 
     if (isSizeAspectName(spec?.name || '')) {
       const sizeTypeVal = getSizeTypeValue(listingData?.item_specifics || []);
-      const key = normalizeSizeTypeLabel(sizeTypeVal);
-      const groups: SizeGroups | undefined = spec.sizeGroups;
+      const filteredOpts = filterSizeOptionsBySizeType(
+        sizeTypeVal,
+        Array.isArray(spec?.options) ? spec.options : []
+      );
 
-      const baseOptions = Array.isArray(spec?.options) ? spec.options : [];
-      const filteredOpts =
-        groups && groups[key] && groups[key].length ? groups[key] : baseOptions;
-
-      // If current value is now invalid, clear it
+      // If current value is now invalid, clear it (safety on first render after AI / after changing Size Type)
       if (spec?.value && !filteredOpts.includes(spec.value)) {
         effectiveSpec = { ...spec, options: filteredOpts, value: '' };
       } else {
@@ -858,16 +831,13 @@ export default function HomePage() {
                 Try It Now - Free Demo
               </h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                Upload up to 12 photos and see how our AI creates professional listings
-                instantly
+                Upload up to 12 photos and see how our AI creates professional listings instantly
               </p>
             </div>
 
             {validationErrors.length > 0 && (
               <div className="mb-6 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
-                <p className="font-semibold mb-2">
-                  Please fix the following before publishing:
-                </p>
+                <p className="font-semibold mb-2">Please fix the following before publishing:</p>
                 <ul className="list-disc ml-5">
                   {validationErrors.map((e, i) => (
                     <li key={i}>{e}</li>
@@ -908,9 +878,7 @@ export default function HomePage() {
                       onChange={handleFileInputChange}
                     />
                     <Upload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                    <p className="text-gray-700 font-medium">
-                      Drag and drop your photos here
-                    </p>
+                    <p className="text-gray-700 font-medium">Drag and drop your photos here</p>
                     <p className="text-gray-500 text-sm">or click to browse</p>
                   </div>
 
@@ -1006,9 +974,7 @@ export default function HomePage() {
 
                 <div className="lg:col-span-2 space-y-6">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      Your Generated Listing
-                    </h2>
+                    <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
                     <div className="flex items-center gap-3">
                       <button
                         onClick={handlePublishToEbay}
@@ -1064,8 +1030,7 @@ export default function HomePage() {
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
                       >
                         <span>
-                          {listingData?.category?.path ||
-                            'Click to select a category...'}
+                          {listingData?.category?.path || 'Click to select a category...'}
                         </span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
