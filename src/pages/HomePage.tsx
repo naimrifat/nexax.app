@@ -52,34 +52,42 @@ function parseFirstNumber(s: string): number | null {
   return m ? Number(m[0]) : null;
 }
 
-// word detectors
-const hasWord = (w: string, s: string) => new RegExp(`(^|\\b)${w}(\\b|$)`, 'i').test(s);
-
-// Big & Tall tokens (covers many eBay option patterns)
+// Big & Tall / Petite / Plus / etc tokens
 function isTallToken(v: string) {
   return /(tall|long|\bLT\b|\bXLT\b|\b2XLT\b|\b3XLT\b|\b4XLT\b|\b5XLT\b)/i.test(v);
 }
+
 function isPetiteToken(v: string) {
-  return /(petite|\bP\b|\bPS\b|\bPM\b|\bPL\b|\bPXL\b|\bPetites?\b)/i.test(v);
+  // NOTE: now also matches sizes ending in "P" like 0P, 2P, 4P, etc.
+  return /(petite|petites|\bP\b|\bPS\b|\bPM\b|\bPL\b|\bPXL\b|P$)/i.test(v);
 }
+
 function isJuniorToken(v: string) {
   return /(junior|jr\b|juniors)/i.test(v);
 }
+
 function isMaternityToken(v: string) {
   return /maternity/i.test(v);
 }
+
 function isBigToken(v: string) {
   return /(husky|big|big & tall|b&t)/i.test(v);
 }
+
 function isPlusNumeric(v: string) {
-  // 1X 2X 3X etc are usually "Plus" or Big sets
-  return /\b[1-6]X(L|LT)?\b/i.test(v);
+  // 0X–6X, 1XLT, 14W, 18W, "Plus" text, etc.
+  return (
+    /\b[0-6]X(L|LT)?\b/i.test(v) || // 0X, 1X, 2X, 3XLT, etc.
+    /\d{1,2}\s*W\b/i.test(v) || // 12W, 14W, 20W, etc.
+    /plus/i.test(v)
+  );
 }
+
 function isLargeNumeric(v: string) {
   // heuristic: if numeric looks large (waist 46+, neck/chest high)
   const n = parseFirstNumber(v);
   if (n == null) return false;
-  return n >= 46; // conservative split point that works broadly
+  return n >= 46;
 }
 
 // juniors numeric heuristic (odd numbers 1,3,5,7,... common in juniors pants/dresses)
@@ -92,7 +100,7 @@ function isJuniorsOddNumber(v: string) {
 /**
  * Filter the size options based on Size Type selection.
  * If no type chosen -> return full set.
- * These heuristics are intentionally permissive to cover eBay’s breadth.
+ * Each size is assigned to exactly one bucket so there’s no cross-contamination.
  */
 function filterSizeOptionsBySizeType(
   sizeType: string,
@@ -102,44 +110,40 @@ function filterSizeOptionsBySizeType(
   const st = (sizeType || '').toLowerCase();
   if (!st) return allOptions;
 
-  // base sets
   const tallSet = (v: string) => isTallToken(v);
   const petiteSet = (v: string) => isPetiteToken(v);
   const juniorSet = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
   const maternitySet = (v: string) => isMaternityToken(v);
+  const plusSet = (v: string) => isPlusNumeric(v);
+  const bigSet = (v: string) => isBigToken(v) || isLargeNumeric(v);
 
+  // Anything that matches one of these should NOT appear in Regular
   const regularExclude = (v: string) =>
-    !isTallToken(v) &&
-    !isPetiteToken(v) &&
-    !isJuniorToken(v) &&
-    !isMaternityToken(v);
+    !tallSet(v) &&
+    !petiteSet(v) &&
+    !juniorSet(v) &&
+    !maternitySet(v) &&
+    !plusSet(v) &&
+    !bigSet(v);
 
   if (st.includes('big') || st.includes('tall') || st.includes('husky')) {
-    return allOptions.filter(
-      (v) =>
-        tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v)
-    );
+    return allOptions.filter((v) => tallSet(v) || bigSet(v));
   }
   if (st.includes('petite')) {
     return allOptions.filter((v) => petiteSet(v));
-  }
-  if (st.includes('tall')) {
-    return allOptions.filter((v) => tallSet(v));
   }
   if (st.includes('junior')) {
     return allOptions.filter((v) => juniorSet(v));
   }
   if (st.includes('maternity')) {
-    // many categories don’t flag maternity in size options; show all
-    return allOptions;
+    return allOptions.filter((v) => maternitySet(v));
   }
   if (st.includes('plus')) {
-    // try to prefer plus-like tokens; fallback to all if none
-    const filtered = allOptions.filter((v) => isPlusNumeric(v));
-    return filtered.length ? filtered : allOptions.filter(regularExclude);
+    return allOptions.filter((v) => plusSet(v));
   }
-  // Regular/Misses/Default
-  return allOptions.filter(regularExclude);
+
+  // Regular / default: show only sizes that are *not* Petite/Plus/Juniors/Maternity/Big & Tall
+  return allOptions.filter((v) => regularExclude(v));
 }
 
 // convenience: ensure that current Size still valid for the chosen Size Type
@@ -176,7 +180,7 @@ function TokenSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
-  const selected = Array.isArray(value) ? value : (value ? [value] : []);
+  const selected = Array.isArray(value) ? value : value ? [value] : [];
   const lowerQuery = query.trim().toLowerCase();
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
@@ -383,27 +387,10 @@ export default function HomePage() {
   const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [isCustomStyleActive, setIsCustomStyleActive] = useState(false);
   const navigate = useNavigate();
 
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
-
-  // Read "useCustomStyle" flag on mount so we can show status to the user
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem('listingStyleSettings');
-      if (!raw) {
-        setIsCustomStyleActive(false);
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      setIsCustomStyleActive(Boolean(parsed.useCustomStyle));
-    } catch (err) {
-      console.error('Failed to read listingStyleSettings from localStorage:', err);
-      setIsCustomStyleActive(false);
-    }
-  }, []);
 
   const normalizeAiToListing = (raw: any) => {
     const categoryId =
@@ -564,7 +551,10 @@ export default function HomePage() {
         const arr = Array.isArray(value) ? value : value ? [String(value)] : [];
         next[index] = { ...next[index], value: arr };
       } else {
-        next[index] = { ...next[index], value: String(Array.isArray(value) ? value[0] ?? '' : value) };
+        next[index] = {
+          ...next[index],
+          value: String(Array.isArray(value) ? value[0] ?? '' : value),
+        };
       }
 
       // if "Size Type" changed, normalize any "Size"-like aspect
@@ -675,7 +665,6 @@ export default function HomePage() {
               useCustomStyle: true,
               titleInstructions: parsed.titleInstructions || '',
               descriptionInstructions: parsed.descriptionInstructions || '',
-              keywordsInstructions: parsed.keywordsInstructions || '',
               extraNotes: parsed.extraNotes || '',
             };
           }
@@ -692,7 +681,7 @@ export default function HomePage() {
         body: JSON.stringify({
           session_id: Date.now().toString(),
           images: uploadedUrls,
-          listingStyleSettings, // object when custom style is ON, null/undefined otherwise
+          listingStyleSettings, // object or null
         }),
       });
 
@@ -750,7 +739,6 @@ export default function HomePage() {
       // 6) Save everything the Results page needs
       const aiListingPayload = {
         ...aiData,
-        // make sure these are present even if AI model shape changes
         title: normalized.title,
         description: normalized.description,
         category: finalListingData.category,
@@ -760,7 +748,7 @@ export default function HomePage() {
       };
 
       sessionStorage.setItem('aiListingData', JSON.stringify(aiListingPayload));
-      navigate('/results'); // or '/create-listing' depending on your route
+      navigate('/results');
     } catch (error: any) {
       console.error('Error:', error);
       setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
@@ -875,7 +863,9 @@ export default function HomePage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Try It Now - Free Demo</h2>
+              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+                Try It Now - Free Demo
+              </h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
                 Upload up to 12 photos and see how our AI creates professional listings instantly
               </p>
@@ -927,7 +917,11 @@ export default function HomePage() {
                     <div className="grid grid-cols-4 gap-3 mb-4">
                       {photoPreviewUrls.map((url, index) => (
                         <div key={index} className="relative group aspect-square">
-                          <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover rounded-lg" />
+                          <img
+                            src={url}
+                            alt={`Product ${index + 1}`}
+                            className="w-full h-full object-cover rounded-lg"
+                          />
                           <button
                             type="button"
                             onClick={(e) => {
@@ -948,26 +942,16 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
+                  <p className="text-sm text-gray-500 text-center">
+                    {photos.length}/12 photos uploaded
+                  </p>
                 </div>
 
                 {/* AI Generation */}
                 <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
-                  <h3 className="text-xl font-semibold mb-2 flex items-center">
+                  <h3 className="text-xl font-semibold mb-4 flex items-center">
                     <Sparkles className="w-5 h-5 mr-2" /> AI-Powered Generation
                   </h3>
-
-                  {isCustomStyleActive ? (
-                    <div className="mb-4 text-xs rounded-full bg-teal-700/60 px-3 py-1 inline-flex items-center">
-                      <Sparkles className="w-3 h-3 mr-1" />
-                      <span>Using your custom listing style</span>
-                    </div>
-                  ) : (
-                    <div className="mb-4 text-xs rounded-full bg-white/10 px-3 py-1 inline-flex items-center">
-                      <span>Using SnapLine default style</span>
-                    </div>
-                  )}
-
                   <div className="space-y-4 mb-6">
                     <div className="flex items-center">
                       <CheckCircle className="w-5 h-5 mr-3 text-teal-200" />
@@ -1011,7 +995,11 @@ export default function HomePage() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1">
                   <div className="card overflow-hidden">
-                    <img src={photoPreviewUrls[0]} alt="Main product" className="w-full h-auto object-cover" />
+                    <img
+                      src={photoPreviewUrls[0]}
+                      alt="Main product"
+                      className="w-full h-auto object-cover"
+                    />
                   </div>
                 </div>
 
@@ -1048,7 +1036,9 @@ export default function HomePage() {
                   {/* Editable form */}
                   <div className="bg-white rounded-lg shadow p-6 space-y-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Title</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Title
+                      </label>
                       <input
                         type="text"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -1062,12 +1052,16 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Category</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Category
+                      </label>
                       <div
                         onClick={() => setShowCategorySelector(true)}
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
                       >
-                        <span>{listingData?.category?.path || 'Click to select a category...'}</span>
+                        <span>
+                          {listingData?.category?.path || 'Click to select a category...'}
+                        </span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
                           width="20"
@@ -1086,7 +1080,9 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Description</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Description
+                      </label>
                       <textarea
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                         rows={5}
