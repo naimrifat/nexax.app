@@ -4,8 +4,37 @@ import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
 
 /* -------------------------------------------------------
+   Listing style settings helper (if user enabled custom style)
+------------------------------------------------------- */
+type ListingStyleSettings = {
+  useCustomStyle?: boolean;
+  titleInstructions?: string;
+  descriptionInstructions?: string;
+  extraNotes?: string;
+};
+
+function loadListingStyleSettingsFromStorage(): ListingStyleSettings | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem('listingStyleSettings');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.useCustomStyle) return null;
+    return {
+      useCustomStyle: true,
+      titleInstructions: parsed.titleInstructions || '',
+      descriptionInstructions: parsed.descriptionInstructions || '',
+      extraNotes: parsed.extraNotes || '',
+    };
+  } catch (err) {
+    console.error('Failed to load listing style settings:', err);
+    return null;
+  }
+}
+
+/* -------------------------------------------------------
    Helper: snap an AI/free-text value to an allowed option
-   ------------------------------------------------------- */
+------------------------------------------------------- */
 function chooseOptionValue(
   aiValue: string | string[] | undefined,
   options: string[] = [],
@@ -32,101 +61,138 @@ function chooseOptionValue(
 }
 
 /* -------------------------------------------------------
-   Size / Size Type helpers — HARD partitioning
-   ------------------------------------------------------- */
+   Size / Size Type dependency helpers (rock-solid version)
+------------------------------------------------------- */
 
-// detect the current "Size Type" selected value from item specifics
+// numeric grabber
+function parseFirstNumber(s: string): number | null {
+  const m = (s || '').match(/\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
+// Name check: which aspects are "size-like"
+function isSizeAspectName(name: string): boolean {
+  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+}
+
+// Canonical group labels
+type SizeGroup = 'regular' | 'petite' | 'plus' | 'tall' | 'juniors' | 'maternity' | 'unknown';
+
+/**
+ * Classify a single size option into exactly ONE group.
+ * No overlaps – this is what makes filtering rock solid.
+ */
+function classifySizeOption(label: string, categoryPath: string = ''): SizeGroup {
+  const raw = label || '';
+  const s = raw.toLowerCase().trim();
+  const cat = (categoryPath || '').toLowerCase();
+
+  if (!s) return 'unknown';
+
+  // ----- Maternity -----
+  if (s.includes('maternity') || cat.includes('maternity')) {
+    return 'maternity';
+  }
+
+  // ----- Plus (W, X, "Plus") -----
+  const hasPlusWord = /\bplus\b/.test(s) || cat.includes('plus');
+  const hasXSize = /\b[0-6]x(t|tall|short)?\b/.test(s);   // 0X, 1X, 2X, 3X, ...
+  const hasWSize = /\d+\s*w\b/.test(s) || /\d+w\b/.test(s); // 14W, 16W, etc
+  if (hasPlusWord || hasXSize || hasWSize) {
+    return 'plus';
+  }
+
+  // ----- Petite (P suffix, P-sizes, "Petite") -----
+  const hasPetiteWord = /\bpetite(s)?\b/.test(s) || cat.includes('petite');
+  const hasPetitePrefixSize = /\bp(xxs|xs|s|m|l|xl|xxl|2xl)\b/.test(s); // PXS, PS, PM, PL, PXL...
+  const hasPetiteNumericSuffix = /\d{1,2}p\b/.test(s); // 0P, 2P, 4P, 6P...
+  if (hasPetiteWord || hasPetitePrefixSize || hasPetiteNumericSuffix) {
+    return 'petite';
+  }
+
+  // ----- Tall (T suffix, "Tall", LT/XLT) -----
+  const hasTallWord = /\btall\b/.test(s) || cat.includes('tall');
+  const hasLTToken = /\b(?:lt|xlt|2xlt|3xlt|4xlt)\b/.test(s);
+  const hasTallNumericSuffix = /\d{1,2}t\b/.test(s); // 8T, 10T...
+  const hasTallNamedSize =
+    /\b(xs|s|m|l|xl|xxl|2xl)\s*tall\b/.test(s) || /\b(xs|s|m|l|xl|xxl|2xl)t\b/.test(s);
+  if (hasTallWord || hasLTToken || hasTallNumericSuffix || hasTallNamedSize) {
+    return 'tall';
+  }
+
+  // ----- Juniors (explicit word, or odd numeric <= 19) -----
+  const hasJuniorsWord = /\bjunior'?s\b/.test(s) || /\bjrs?\b/.test(s) || /\bjuniors\b/.test(s);
+  if (hasJuniorsWord) {
+    return 'juniors';
+  }
+  const n = parseFirstNumber(raw);
+  if (n != null && n <= 19 && n >= 0) {
+    // If it's a small odd number and hasn't already been classified as plus/petite/tall,
+    // treat it as Juniors.
+    if (n % 2 === 1) {
+      return 'juniors';
+    }
+  }
+
+  // ----- Default / Regular -----
+  return 'regular';
+}
+
+/**
+ * Filter the size options based on the selected Size Type.
+ * Each size option is assigned to one group; we then keep only those
+ * groups that match the Size Type choice.
+ */
+function filterSizeOptionsBySizeType(
+  sizeType: string,
+  allOptions: string[] = [],
+  categoryPath: string = ''
+): string[] {
+  const st = (sizeType || '').toLowerCase().trim();
+  if (!st) return allOptions;
+
+  const groupsToKeep = new Set<SizeGroup>();
+
+  if (st.includes('petite')) {
+    groupsToKeep.add('petite');
+  } else if (st.includes('plus')) {
+    groupsToKeep.add('plus');
+  } else if (st.includes('junior')) {
+    groupsToKeep.add('juniors');
+  } else if (st.includes('maternity')) {
+    groupsToKeep.add('maternity');
+  } else if (st.includes('big') && st.includes('tall')) {
+    // Big & Tall: keep both plus + tall
+    groupsToKeep.add('plus');
+    groupsToKeep.add('tall');
+  } else if (st.includes('tall')) {
+    groupsToKeep.add('tall');
+  } else {
+    // Regular / Misses / anything else → treat as regular bucket
+    groupsToKeep.add('regular');
+  }
+
+  return allOptions.filter((opt) => {
+    const group = classifySizeOption(opt, categoryPath);
+
+    if (groupsToKeep.has(group)) return true;
+
+    // For regular size type, also allow "unknown" values
+    if (group === 'unknown' && groupsToKeep.has('regular')) return true;
+
+    return false;
+  });
+}
+
+// convenience: detect "Size Type" current value
 function getSizeTypeValue(specs: any[]): string {
   const st = specs?.find((s: any) => /size type/i.test(s?.name || ''));
   return st?.value || '';
 }
 
-// recognize size-like aspect names that should be filtered by Size Type
-function isSizeAspectName(name: string): boolean {
-  if (!name) return false;
-  const n = name.toLowerCase();
-  // eBay uses lots of variants like "Size (Women's)", "Size Type", etc.
-  return /^size\b/.test(n) || /\bwaist size\b|\bneck size\b|\bchest size\b|\binseam\b/.test(n);
-}
-
-type SizeBucket = 'regular' | 'plus' | 'petite' | 'tall' | 'junior' | 'maternity';
-
-/**
- * Decide which bucket a single SIZE OPTION belongs to, based ONLY on its label.
- * Each option goes to exactly ONE bucket.
- */
-function detectSizeBucketFromLabel(label: string): SizeBucket {
-  const s = (label || '').toLowerCase().trim();
-  if (!s) return 'regular';
-
-  // --- Maternity ---
-  if (s.includes('maternity') || s.includes('pregnan')) return 'maternity';
-
-  // --- Petite ---
-  if (s.includes('petite') || s.includes('petites')) return 'petite';
-  // PS, PM, PL, PXL, etc
-  if (/\bps\b|\bpm\b|\bpl\b|\bpxl\b/.test(s)) return 'petite';
-  // 4P, 6P, 10P, etc
-  if (/\b\d{1,2}p\b/.test(s)) return 'petite';
-
-  // --- Plus ---
-  if (s.includes('plus')) return 'plus';
-  // 14W, 18W, etc
-  if (/\b\d{1,2}w\b/.test(s)) return 'plus';
-  // 0X, OX, 1X–6X, 1XL–6XL
-  if (/\b[0-6]x\b/.test(s) || /\b[0-6]xl\b/.test(s) || /\box\b/.test(s)) return 'plus';
-  // some brands use "Womens Plus" text
-  if (s.includes('womens plus')) return 'plus';
-
-  // --- Tall ---
-  if (s.includes('tall')) return 'tall';
-  // LT, XLT, 2XLT, 3XLT etc
-  if (/\b[0-6]?x?lt\b/.test(s)) return 'tall';
-  // 34T, 36T, etc
-  if (/\b\d{2}t\b/.test(s)) return 'tall';
-
-  // --- Juniors ---
-  if (s.includes('junior') || s.includes('juniors') || /\bjr\b/.test(s)) return 'junior';
-
-  // Default: treat as Regular
-  return 'regular';
-}
-
-/**
- * Normalize what the user selected in "Size Type" into one of our buckets.
- */
-function normalizeSizeTypeSelection(sizeType: string): SizeBucket {
-  const s = (sizeType || '').toLowerCase();
-
-  if (!s) return 'regular';
-  if (s.includes('petite')) return 'petite';
-  if (s.includes('plus')) return 'plus';
-  if (s.includes('maternity')) return 'maternity';
-  if (s.includes('junior')) return 'junior';
-  if (s.includes('tall') || s.includes('long')) return 'tall';
-  if (s.includes('big & tall') || s.includes('big and tall') || s.includes('husky')) return 'plus';
-
-  return 'regular';
-}
-
-/**
- * The main filter: given a selected Size Type + all size options,
- * return ONLY the options that belong to that bucket.
- */
-function filterSizeOptionsBySizeType(
-  sizeType: string,
-  allOptions: string[] = []
-): string[] {
-  // If user hasn't picked a Size Type yet, show everything.
-  if (!sizeType) return allOptions;
-
-  const bucket = normalizeSizeTypeSelection(sizeType);
-  return allOptions.filter((opt) => detectSizeBucketFromLabel(opt) === bucket);
-}
-
 /* -------------------------------------------------------
    Compact, searchable token selector for item specifics
-   ------------------------------------------------------- */
+------------------------------------------------------- */
 function TokenSelect({
   value,
   options,
@@ -147,7 +213,7 @@ function TokenSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
-  const selected = Array.isArray(value) ? value : (value ? [value] : []);
+  const selected = Array.isArray(value) ? value : value ? [value] : [];
   const lowerQuery = query.trim().toLowerCase();
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
@@ -204,7 +270,6 @@ function TokenSelect({
           inputRef.current?.focus();
         }}
       >
-        {/* Chips */}
         {multi &&
           selected.map((s) => (
             <span
@@ -225,7 +290,6 @@ function TokenSelect({
             </span>
           ))}
 
-        {/* Single pill */}
         {!multi && selected[0] && (
           <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
             {selected[0]}
@@ -268,7 +332,7 @@ function TokenSelect({
       </div>
 
       {open && !disabled && filtered.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full max-height-56 overflow-auto rounded-md border border-gray-200 bg-white shadow">
+        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-gray-200 bg-white shadow">
           {filtered.map((o) => (
             <button
               type="button"
@@ -288,7 +352,7 @@ function TokenSelect({
 
 /* -------------------------------------------------------
    Wrapper control deciding between token select / text
-   ------------------------------------------------------- */
+------------------------------------------------------- */
 function ItemSpecificControl({
   spec,
   onChange,
@@ -307,7 +371,7 @@ function ItemSpecificControl({
   const opts = Array.isArray(spec.options) ? spec.options : [];
 
   if (opts.length > 0) {
-    return (
+    return
       <TokenSelect
         multi={!!spec.multi}
         value={spec.value ?? (spec.multi ? [] : '')}
@@ -315,11 +379,9 @@ function ItemSpecificControl({
         disabled={spec.freeTextAllowed === false && opts.length === 0}
         placeholder="Search & select..."
         onChange={(val) => onChange(val)}
-      />
-    );
+      />;
   }
 
-  // Free text fallback
   return (
     <input
       type="text"
@@ -340,7 +402,7 @@ function ItemSpecificControl({
 
 /* -------------------------------------------------------
    Page
-   ------------------------------------------------------- */
+------------------------------------------------------- */
 export default function HomePage() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
@@ -507,24 +569,18 @@ export default function HomePage() {
     }));
   };
 
-  // main change handler with dependency logic between Size Type and Size
   const handleItemSpecificsChange = (index: number, value: string | string[]) => {
     setListingData((prev: any) => {
       const next = [...(prev?.item_specifics ?? [])];
       if (!next[index]) return prev;
 
-      // update field
       if (next[index]?.multi) {
         const arr = Array.isArray(value) ? value : value ? [String(value)] : [];
         next[index] = { ...next[index], value: arr };
       } else {
-        next[index] = {
-          ...next[index],
-          value: String(Array.isArray(value) ? value[0] ?? '' : value),
-        };
+        next[index] = { ...next[index], value: String(Array.isArray(value) ? value[0] ?? '' : value) };
       }
 
-      // if "Size Type" changed, normalize any "Size"-like aspect
       if (/size type/i.test(next[index].name || '')) {
         const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
         if (sizeIdx !== -1) {
@@ -532,10 +588,13 @@ export default function HomePage() {
           const newSizeTypeVal = String(next[index].value || '');
           const filtered = filterSizeOptionsBySizeType(
             newSizeTypeVal,
-            sizeSpec?.options || []
+            sizeSpec?.options || [],
+            prev?.category?.path || ''
           );
           if (!filtered.includes(sizeSpec?.value)) {
-            next[sizeIdx] = { ...sizeSpec, value: '' };
+            next[sizeIdx] = { ...sizeSpec, options: filtered, value: '' };
+          } else {
+            next[sizeIdx] = { ...sizeSpec, options: filtered };
           }
         }
       }
@@ -593,20 +652,16 @@ export default function HomePage() {
     setStatus('Uploading images to Cloudinary...');
 
     try {
-      // 1) Upload all images to Cloudinary
       const uploadedUrls = await Promise.all(
         photos.map(async (file) => {
           const formData = new FormData();
           formData.append('file', file);
           formData.append('upload_preset', 'ebay_listings');
 
-          const res = await fetch(
-            'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
-            {
-              method: 'POST',
-              body: formData,
-            }
-          );
+          const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
+            method: 'POST',
+            body: formData,
+          });
 
           const data = await res.json();
           if (!res.ok) {
@@ -619,34 +674,16 @@ export default function HomePage() {
 
       setStatus('Images uploaded! Analyzing with AI...');
 
-      // 2) Read listing-style settings from localStorage (if any and turned on)
-      let listingStyleSettings: any = null;
-      try {
-        const raw = window.localStorage.getItem('listingStyleSettings');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed?.useCustomStyle) {
-            listingStyleSettings = parsed;
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load listing style settings:', err);
-        listingStyleSettings = null;
-      }
-
-      // 3) Call analyze-listing with optional listingStyleSettings
-      const body: any = {
-        session_id: Date.now().toString(),
-        images: uploadedUrls,
-      };
-      if (listingStyleSettings) {
-        body.listingStyleSettings = listingStyleSettings;
-      }
+      const listingStyleSettings = loadListingStyleSettingsFromStorage();
 
       const analysisResponse = await fetch('/api/analyze-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          session_id: Date.now().toString(),
+          images: uploadedUrls,
+          listingStyleSettings,
+        }),
       });
 
       if (!analysisResponse.ok) {
@@ -666,7 +703,6 @@ export default function HomePage() {
       setStatus('Listing generated successfully!');
       setResults(aiData);
 
-      // 4) Listing data for the on-page form
       let finalListingData = normalized;
       if (!normalized?.category?.id) {
         finalListingData = { ...normalized, item_specifics: [] };
@@ -675,7 +711,6 @@ export default function HomePage() {
 
       setListingData(finalListingData);
 
-      // 5) Fetch eBay specifics for the detected category
       if (finalListingData?.category?.id) {
         const catId = finalListingData.category.id;
 
@@ -700,7 +735,6 @@ export default function HomePage() {
         }
       }
 
-      // 6) Save everything the Results page needs
       const aiListingPayload = {
         ...aiData,
         title: normalized.title,
@@ -721,9 +755,6 @@ export default function HomePage() {
     }
   };
 
-  /**
-   * Validates the listing data before publishing
-   */
   const validateListing = (): { valid: boolean; errors: string[] } => {
     const errors: string[] = [];
 
@@ -739,8 +770,7 @@ export default function HomePage() {
       if (!spec.required) continue;
       const value = spec.value;
       if (Array.isArray(value)) {
-        if (value.length === 0)
-          errors.push(`${spec.name} is required (select at least one option)`);
+        if (value.length === 0) errors.push(`${spec.name} is required (select at least one option)`);
       } else {
         if (!String(value ?? '').trim()) errors.push(`${spec.name} is required`);
       }
@@ -787,7 +817,6 @@ export default function HomePage() {
     }
   };
 
-  // Build UI rows; for "Size" rows, filter options dynamically using current Size Type
   const renderSpecificRow = (spec: any, index: number) => {
     let effectiveSpec = spec;
 
@@ -795,10 +824,10 @@ export default function HomePage() {
       const sizeTypeVal = getSizeTypeValue(listingData?.item_specifics || []);
       const filteredOpts = filterSizeOptionsBySizeType(
         sizeTypeVal,
-        Array.isArray(spec?.options) ? spec.options : []
+        Array.isArray(spec?.options) ? spec.options : [],
+        listingData?.category?.path || ''
       );
 
-      // If current value is now invalid, clear it (safety on first render after AI / after changing Size Type)
       if (spec?.value && !filteredOpts.includes(spec.value)) {
         effectiveSpec = { ...spec, options: filteredOpts, value: '' };
       } else {
@@ -807,7 +836,7 @@ export default function HomePage() {
     }
 
     return (
-      <div key={`${spec?.name ?? 'specific'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
+      <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
         <div className="flex items-center">
           <span className="text-sm text-gray-700">{spec?.name || 'Specific'}</span>
           {spec?.required ? <span className="ml-1 text-red-500">*</span> : null}
@@ -827,9 +856,7 @@ export default function HomePage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-                Try It Now - Free Demo
-              </h2>
+              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Try It Now - Free Demo</h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
                 Upload up to 12 photos and see how our AI creates professional listings instantly
               </p>
@@ -847,11 +874,7 @@ export default function HomePage() {
             )}
 
             {!listingData ? (
-              <form
-                onSubmit={handleSubmit}
-                className="grid grid-cols-1 lg:grid-cols-2 gap-8"
-              >
-                {/* Upload */}
+              <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="card p-6">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
                     <ImageIcon className="w-5 h-5 mr-2 text-teal-600" />
@@ -860,9 +883,7 @@ export default function HomePage() {
 
                   <div
                     className={`border-2 border-dashed rounded-lg p-6 text-center mb-4 transition-all cursor-pointer ${
-                      isDragging
-                        ? 'border-teal-500 bg-teal-50'
-                        : 'border-gray-300 hover:border-teal-400'
+                      isDragging ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-400'
                     }`}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
@@ -886,11 +907,7 @@ export default function HomePage() {
                     <div className="grid grid-cols-4 gap-3 mb-4">
                       {photoPreviewUrls.map((url, index) => (
                         <div key={index} className="relative group aspect-square">
-                          <img
-                            src={url}
-                            alt={`Product ${index + 1}`}
-                            className="w-full h-full object-cover rounded-lg"
-                          />
+                          <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover rounded-lg" />
                           <button
                             type="button"
                             onClick={(e) => {
@@ -911,12 +928,9 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  <p className="text-sm text-gray-500 text-center">
-                    {photos.length}/12 photos uploaded
-                  </p>
+                  <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
                 </div>
 
-                {/* AI Generation */}
                 <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
                     <Sparkles className="w-5 h-5 mr-2" /> AI-Powered Generation
@@ -964,11 +978,7 @@ export default function HomePage() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1">
                   <div className="card overflow-hidden">
-                    <img
-                      src={photoPreviewUrls[0]}
-                      alt="Main product"
-                      className="w-full h-auto object-cover"
-                    />
+                    <img src={photoPreviewUrls[0]} alt="Main product" className="w-full h-auto object-cover" />
                   </div>
                 </div>
 
@@ -994,7 +1004,6 @@ export default function HomePage() {
                           setPhotos([]);
                           setPhotoPreviewUrls([]);
                           setStatus('');
-                          setValidationErrors([]);
                         }}
                         className="btn btn-outline"
                       >
@@ -1003,12 +1012,9 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  {/* Editable form */}
                   <div className="bg-white rounded-lg shadow p-6 space-y-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">
-                        Title
-                      </label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">Title</label>
                       <input
                         type="text"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -1022,16 +1028,12 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">
-                        Category
-                      </label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">Category</label>
                       <div
                         onClick={() => setShowCategorySelector(true)}
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
                       >
-                        <span>
-                          {listingData?.category?.path || 'Click to select a category...'}
-                        </span>
+                        <span>{listingData?.category?.path || 'Click to select a category...'}</span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
                           width="20"
@@ -1050,9 +1052,7 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">
-                        Description
-                      </label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">Description</label>
                       <textarea
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                         rows={5}
