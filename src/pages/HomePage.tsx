@@ -4,32 +4,6 @@ import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
 
 /* -------------------------------------------------------
-   (NEW) Helper: load user's listing style settings
-   ------------------------------------------------------- */
-// Adjust the storage key string if your ListingStyleSettingsPage
-// is using a different key. This should match whatever you used there.
-type ListingStyleSettings = {
-  titleExample?: string;
-  titleRules?: string;
-  descriptionExample?: string;
-  descriptionRules?: string;
-  keywordsRules?: string;
-  extraInstructions?: string;
-};
-
-function loadListingStyleSettings(): ListingStyleSettings | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem('listingStyleSettings');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/* -------------------------------------------------------
    Helper: snap an AI/free-text value to an allowed option
    ------------------------------------------------------- */
 function chooseOptionValue(
@@ -409,10 +383,27 @@ export default function HomePage() {
   const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [isCustomStyleActive, setIsCustomStyleActive] = useState(false);
   const navigate = useNavigate();
 
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
+
+  // Read "useCustomStyle" flag on mount so we can show status to the user
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('listingStyleSettings');
+      if (!raw) {
+        setIsCustomStyleActive(false);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      setIsCustomStyleActive(Boolean(parsed.useCustomStyle));
+    } catch (err) {
+      console.error('Failed to read listingStyleSettings from localStorage:', err);
+      setIsCustomStyleActive(false);
+    }
+  }, []);
 
   const normalizeAiToListing = (raw: any) => {
     const categoryId =
@@ -672,164 +663,39 @@ export default function HomePage() {
 
       setStatus('Images uploaded! Analyzing with AI...');
 
-      // (NEW) Load user’s listing-style settings
-      const listingStyle = loadListingStyleSettings();
-
-      // Build payload for analyze-listing
-      const analyzePayload: any = {
-        session_id: Date.now().toString(),
-        images: uploadedUrls,
-      };
-
-      if (listingStyle) {
-        analyzePayload.listing_style = listingStyle;
-      }
-
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-
-  if (photos.length === 0) {
-    setStatus('Please upload at least one image.');
-    return;
-  }
-
-  setIsLoading(true);
-  setResults(null);
-  setListingData(null);
-  setStatus('Uploading images to Cloudinary...');
-
-  try {
-    // 1) Upload all images to Cloudinary
-    const uploadedUrls = await Promise.all(
-      photos.map(async (file) => {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('upload_preset', 'ebay_listings');
-
-        const res = await fetch(
-          'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
-          {
-            method: 'POST',
-            body: formData,
+      // 2) Read listing style settings from localStorage (if any)
+      let listingStyleSettings: any = null;
+      try {
+        const raw = window.localStorage.getItem('listingStyleSettings');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.useCustomStyle) {
+            // Only send when the user explicitly turned it ON
+            listingStyleSettings = {
+              useCustomStyle: true,
+              titleInstructions: parsed.titleInstructions || '',
+              descriptionInstructions: parsed.descriptionInstructions || '',
+              keywordsInstructions: parsed.keywordsInstructions || '',
+              extraNotes: parsed.extraNotes || '',
+            };
           }
-        );
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error?.message ?? 'Image upload failed');
         }
-
-        return data.secure_url as string;
-      })
-    );
-
-    setStatus('Images uploaded! Analyzing with AI...');
-
-    // 2) Read listing style settings from localStorage (if any)
-    let listingStyleSettings: any = null;
-    try {
-      const raw = window.localStorage.getItem('listingStyleSettings');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed.useCustomStyle) {
-          // Only send when the user explicitly turned it ON
-          listingStyleSettings = {
-            useCustomStyle: true,
-            titleInstructions: parsed.titleInstructions || '',
-            descriptionInstructions: parsed.descriptionInstructions || '',
-            extraNotes: parsed.extraNotes || '',
-          };
-        }
+      } catch (err) {
+        console.error('Failed to load listing style settings:', err);
+        listingStyleSettings = null;
       }
-    } catch (err) {
-      console.error('Failed to load listing style settings:', err);
-      // If anything goes wrong, we just fall back to default behavior
-      listingStyleSettings = null;
-    }
 
-    // 3) Call analyze-listing with optional listingStyleSettings
-    const analysisResponse = await fetch('/api/analyze-listing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: Date.now().toString(),
-        images: uploadedUrls,
-        listingStyleSettings, // can be an object or null
-      }),
-    });
+      // 3) Call analyze-listing with optional listingStyleSettings
+      const analysisResponse = await fetch('/api/analyze-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: Date.now().toString(),
+          images: uploadedUrls,
+          listingStyleSettings, // object when custom style is ON, null/undefined otherwise
+        }),
+      });
 
-    if (!analysisResponse.ok) {
-      const errorData = await analysisResponse.json().catch(() => ({}));
-      throw new Error(errorData?.error ?? 'Failed to analyze images');
-    }
-
-    const analysisResult = await analysisResponse.json();
-    const aiData =
-      analysisResult?.data ||
-      analysisResult?.analysis ||
-      analysisResult ||
-      {};
-
-    const normalized = normalizeAiToListing(aiData);
-
-    setStatus('Listing generated successfully!');
-    setResults(aiData);
-
-    // 4) Listing data for the on-page form
-    let finalListingData = normalized;
-    if (!normalized?.category?.id) {
-      finalListingData = { ...normalized, item_specifics: [] };
-      setEbaySpecifics([]);
-    }
-
-    setListingData(finalListingData);
-
-    // 5) Fetch eBay specifics for the detected category
-    if (finalListingData?.category?.id) {
-      const catId = finalListingData.category.id;
-
-      if (specificsCacheRef.current.has(catId)) {
-        const cached = specificsCacheRef.current.get(catId)!;
-        const updatedSpecifics = cached.map((spec: any) => {
-          const aiSpec = normalized.item_specifics.find(
-            (s: any) => s.name === spec.name
-          );
-          return aiSpec ? { ...spec, value: aiSpec.value } : spec;
-        });
-
-        startTransition(() => {
-          setEbaySpecifics(updatedSpecifics);
-          setListingData((prev: any) => ({
-            ...(prev ?? {}),
-            item_specifics: updatedSpecifics,
-          }));
-        });
-      } else {
-        fetchEbaySpecifics(catId, normalized.item_specifics);
-      }
-    }
-
-    // 6) Save everything the Results page needs
-    const aiListingPayload = {
-      ...aiData,
-      // make sure these are present even if AI model shape changes
-      title: normalized.title,
-      description: normalized.description,
-      category: finalListingData.category,
-      item_specifics: normalized.item_specifics,
-      images: uploadedUrls,
-      image_urls: uploadedUrls,
-    };
-
-    sessionStorage.setItem('aiListingData', JSON.stringify(aiListingPayload));
-    navigate('/results'); // or '/create-listing' depending on your route
-  } catch (error: any) {
-    console.error('Error:', error);
-    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-  } finally {
-    setIsLoading(false);
-  }
-};
       if (!analysisResponse.ok) {
         const errorData = await analysisResponse.json().catch(() => ({}));
         throw new Error(errorData?.error ?? 'Failed to analyze images');
@@ -847,7 +713,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       setStatus('Listing generated successfully!');
       setResults(aiData);
 
-      // 3) Listing data for the on-page form
+      // 4) Listing data for the on-page form
       let finalListingData = normalized;
       if (!normalized?.category?.id) {
         finalListingData = { ...normalized, item_specifics: [] };
@@ -856,7 +722,7 @@ const handleSubmit = async (e: React.FormEvent) => {
 
       setListingData(finalListingData);
 
-      // 4) Fetch eBay specifics for the detected category
+      // 5) Fetch eBay specifics for the detected category
       if (finalListingData?.category?.id) {
         const catId = finalListingData.category.id;
 
@@ -881,7 +747,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         }
       }
 
-      // 5) Save everything the Results page needs
+      // 6) Save everything the Results page needs
       const aiListingPayload = {
         ...aiData,
         // make sure these are present even if AI model shape changes
@@ -1087,9 +953,21 @@ const handleSubmit = async (e: React.FormEvent) => {
 
                 {/* AI Generation */}
                 <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
-                  <h3 className="text-xl font-semibold mb-4 flex items-center">
+                  <h3 className="text-xl font-semibold mb-2 flex items-center">
                     <Sparkles className="w-5 h-5 mr-2" /> AI-Powered Generation
                   </h3>
+
+                  {isCustomStyleActive ? (
+                    <div className="mb-4 text-xs rounded-full bg-teal-700/60 px-3 py-1 inline-flex items-center">
+                      <Sparkles className="w-3 h-3 mr-1" />
+                      <span>Using your custom listing style</span>
+                    </div>
+                  ) : (
+                    <div className="mb-4 text-xs rounded-full bg-white/10 px-3 py-1 inline-flex items-center">
+                      <span>Using SnapLine default style</span>
+                    </div>
+                  )}
+
                   <div className="space-y-4 mb-6">
                     <div className="flex items-center">
                       <CheckCircle className="w-5 h-5 mr-3 text-teal-200" />
