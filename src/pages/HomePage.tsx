@@ -4,13 +4,15 @@ import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
 
 /* -------------------------------------------------------
-   Listing Style Settings (from localStorage)
+   Listing style settings (optional)
 ------------------------------------------------------- */
 type ListingStyleSettings = {
-  useCustomStyle?: boolean;
-  titleInstructions?: string;
-  descriptionInstructions?: string;
-  extraNotes?: string;
+  titleExample?: string;
+  titleRules?: string;
+  descriptionExample?: string;
+  descriptionRules?: string;
+  keywordsRules?: string;
+  extraInstructions?: string;
 };
 
 function loadListingStyleSettings(): ListingStyleSettings | null {
@@ -19,44 +21,270 @@ function loadListingStyleSettings(): ListingStyleSettings | null {
     const raw = window.localStorage.getItem('listingStyleSettings');
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || !parsed.useCustomStyle) return null;
-    return parsed;
+    return parsed ?? null;
   } catch {
     return null;
   }
 }
 
 /* -------------------------------------------------------
-   Helper: snap an AI/free-text value to an allowed option
+   Size / Size Type dependency helpers (DATA-DRIVEN)
 ------------------------------------------------------- */
-function chooseOptionValue(
-  aiValue: string | string[] | undefined,
-  options: string[] = [],
-  selectionOnly = false
-): string {
-  if (!aiValue) return '';
-  const raw = Array.isArray(aiValue) ? (aiValue[0] ?? '') : aiValue;
-  const norm = (s: string) => s.trim().toLowerCase().replace(/’/g, "'");
 
-  const exactIdx = options.findIndex((o) => norm(o) === norm(raw));
-  if (exactIdx >= 0) return options[exactIdx];
+type Dept = 'women' | 'men' | 'boys' | 'girls' | 'toddler' | 'unknown';
 
-  const startsIdx = options.findIndex(
-    (o) => norm(o).startsWith(norm(raw)) || norm(raw).startsWith(norm(o))
-  );
-  if (startsIdx >= 0) return options[startsIdx];
+const norm = (s: string) => s.trim().toLowerCase();
 
-  const containsIdx = options.findIndex(
-    (o) => norm(o).includes(norm(raw)) || norm(raw).includes(norm(o))
-  );
-  if (containsIdx >= 0) return options[containsIdx];
-
-  return selectionOnly ? '' : raw;
+/**
+ * Infer department from eBay category path.
+ */
+function detectDeptFromCategoryPath(path: string): Dept {
+  const p = norm(path || '');
+  if (p.includes('women')) return 'women';
+  if (p.includes('men')) return 'men';
+  if (p.includes('girls')) return 'girls';
+  if (p.includes('boys')) return 'boys';
+  if (p.includes('baby') || p.includes('toddler')) return 'toddler';
+  return 'unknown';
 }
 
-/* -------------------------------------------------------
-   Size / Size Type helpers (rock-solid buckets)
-------------------------------------------------------- */
+/**
+ * Normalize Size Type labels to a canonical key.
+ * We keep this simple because options come from eBay.
+ */
+function normalizeSizeTypeLabel(sizeType: string): string {
+  const s = norm(sizeType || '');
+  if (!s) return '';
+  if (s.includes('regular')) return 'Regular';
+  if (s.includes('plus')) return 'Plus';
+  if (s.includes('petite')) return 'Petites';
+  if (s.includes('maternity')) return 'Maternity';
+  if (s.includes('junior')) return 'Juniors';
+  if (s.includes('big') && s.includes('tall')) return 'Big & Tall';
+  if (s.includes('tall')) return 'Tall';
+  if (s.includes('husky')) return 'Husky';
+  if (s.includes('slim')) return 'Slim';
+  if (s.includes('toddler') || s.includes('baby')) return 'Toddler';
+  return sizeType;
+}
+
+/**
+ * WOMEN – size buckets
+ * We deliberately avoid overlapping labels:
+ *  - Regular: XS–XL + numeric 0–16 + One Size
+ *  - Plus: 1X+, W-sizes, numeric 18+ and 2XL+
+ *  - Petites: P*, *P, *XP, etc.
+ *  - Tall: "* Tall", "*XT"
+ *  - Juniors: Juniors numeric pattern + XS–2XL used in Juniors
+ *  - Maternity: standard maternity ranges
+ */
+
+// Women Regular (non-plus, non-petite, non-tall)
+const WOMEN_REGULAR_SIZES = new Set<string>([
+  '2XS', 'XS', 'S', 'M', 'L', 'XL',
+  // keep Regular numeric core 0–16
+  '0', '2', '4', '6', '8', '10', '12', '14', '15', '16',
+  // some extended numeric but still "regular" in many categories
+  '17',
+  // exclude 18+ from Regular to keep them in Plus bucket
+  '30', '32', '34', '36', '38', '40', '42', '44', '46', '48', '50',
+  'One Size',
+]);
+
+// Women Plus
+const WOMEN_PLUS_SIZES = new Set<string>([
+  // lettered plus
+  '2XL', '3XL', '4XL', '5XL', '6XL',
+  '0X', '1X', '2X', '3X', '4X', '5X', '6X',
+  // numeric plus
+  '18', '19', '20', '22', '24', '26', '28', '30', '32', '34', '36', '38', '40', '42', '44', '46', '48', '50',
+  // W-sizes
+  '14W', '16W', '18W', '20W', '22W', '24W', '26W', '28W', '30W', '32W', '34W',
+]);
+
+// Women Petites
+const WOMEN_PETITE_SIZES = new Set<string>([
+  'P2XS', 'PXS', 'PP', 'PS', 'PM', 'PL', 'PXL', 'P2XL',
+  '00P', '0P', '2P', '4P', '6P', '8P', '10P', '12P', '14P', '16P', '18P', '20P',
+  '0XP', '1XP', '2XP', '3XP', '4XP',
+]);
+
+// Women Tall
+const WOMEN_TALL_SIZES = new Set<string>([
+  '2XS Tall', 'XS Tall', 'S Tall', 'M Tall', 'L Tall', 'XL Tall', '2XL Tall',
+  '00 Tall', '0 Tall', '2 Tall', '4 Tall', '6 Tall', '8 Tall',
+  '10 Tall', '12 Tall', '14 Tall', '16 Tall', '18 Tall', '20 Tall',
+  '0XT', '1XT', '2XT', '3XT', '4XT',
+]);
+
+// Women Juniors
+const WOMEN_JUNIORS_SIZES = new Set<string>([
+  '2XS', 'XS', 'S', 'M', 'L', 'XL', '2XL',
+  '00', '0', '1', '3', '5', '7', '9', '11', '13', '15', '17', '19', '21',
+]);
+
+// Women Maternity
+const WOMEN_MATERNITY_SIZES = new Set<string>([
+  '2XS', 'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL',
+  '0', '2', '4', '6', '8', '10', '12', '14', '16', '18', '20', '22',
+  '0X', '1X', '2X', '3X', '4X', '5X', '6X',
+]);
+
+/**
+ * MEN – size buckets
+ * For men we let some overlap (e.g. 3XL can be Regular or Big & Tall in eBay),
+ * but keep Tall-specific labels in Big & Tall only.
+ */
+
+// Men tops/jackets – Regular
+const MEN_REGULAR_TOP_SIZES = new Set<string>([
+  'XS', 'S', 'M', 'L', 'XL',
+  '2XL', '3XL', '4XL', '5XL', '6XL', '7XL',
+  '30', '32', '34', '36', '38', '40', '42', '44', '46', '48', '50',
+]);
+
+// Men tops/jackets – Big & Tall
+const MEN_BIG_TALL_TOP_SIZES = new Set<string>([
+  'XL', '2XL', '3XL', '4XL', '5XL', '6XL', '7XL',
+  '40', '42', '44', '46', '48', '50', '52', '54', '56', '58', '60', '62',
+  'ST', 'MT', 'LT', 'XLT', '2XLT', '3XLT', '4XLT', '5XLT', '6XLT',
+  'Big 1X', 'Big 2X', 'Big 3X', 'Big 4X',
+]);
+
+// Men pants – Regular
+const MEN_REGULAR_PANT_SIZES = new Set<string>([
+  'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL',
+  '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39',
+  '40', '42', '44', '46',
+  'One Size',
+]);
+
+// Men pants – Big & Tall
+const MEN_BIG_TALL_PANT_SIZES = new Set<string>([
+  '30', '31', '32', '33', '34', '35', '36', '37', '38', '39',
+  '40', '42', '44', '46', '48', '50', '52', '54', '56', '58', '60', '62', '64', '66', '68',
+  'ST', 'MT', 'LT', 'XLT', '2XLT', '3XLT', '4XLT',
+  'Big 1X', 'Big 2X', 'Big 3X', 'Big 4X',
+]);
+
+/**
+ * KIDS / BOYS / GIRLS – we split only where eBay does (Husky / Slim / Plus),
+ * but otherwise leave most sizes as Regular.
+ */
+
+// Boys – Husky (tops & pants)
+const BOYS_HUSKY_SIZES = new Set<string>([
+  '4 Husky', '5 Husky', '6 Husky', '7 Husky',
+  '8 Husky', '10 Husky', '12 Husky', '14 Husky',
+  '16 Husky', '18 Husky', '20 Husky',
+]);
+
+// Boys – Slim
+const BOYS_SLIM_SIZES = new Set<string>([
+  '4 Slim', '5 Slim', '6 Slim', '7 Slim',
+  '8 Slim', '9 Slim',
+  '10 Slim', '12 Slim', '14 Slim', '16 Slim', '18 Slim', '20 Slim',
+]);
+
+// Girls – Plus
+const GIRLS_PLUS_SIZES = new Set<string>([
+  '4 Plus', '5 Plus', '6 Plus', '7 Plus',
+  '8 Plus', '10 Plus', '12 Plus', '14 Plus',
+  '16 Plus', '18 Plus', '20 Plus',
+]);
+
+// Girls – Slim
+const GIRLS_SLIM_SIZES = new Set<string>([
+  '4 Slim', '5 Slim', '6 Slim', '7 Slim',
+  '8 Slim', '10 Slim', '12 Slim', '14 Slim', '16 Slim',
+]);
+
+// Toddler
+const TODDLER_SIZES = new Set<string>([
+  'Newborn', 'Preemie',
+  '0-3 Months', '3-6 Months', '6-9 Months', '9-12 Months',
+  '12-18 Months', '18-24 Months',
+  '2T', '3T', '4T', '5T',
+  'One Size',
+]);
+
+/**
+ * Return the allowed size set for a given dept + sizeType.
+ * NOTE: For men we don't try to distinguish top vs pants by code;
+ * we use tops mapping for most "top" categories and pants mapping
+ * will still mostly work because of overlapping labels.
+ */
+function getAllowedSizeSet(dept: Dept, sizeType: string, categoryPath: string): Set<string> | null {
+  const st = normalizeSizeTypeLabel(sizeType);
+
+  if (dept === 'women') {
+    if (st === 'Regular') return WOMEN_REGULAR_SIZES;
+    if (st === 'Plus') return WOMEN_PLUS_SIZES;
+    if (st === 'Petites') return WOMEN_PETITE_SIZES;
+    if (st === 'Tall') return WOMEN_TALL_SIZES;
+    if (st === 'Juniors') return WOMEN_JUNIORS_SIZES;
+    if (st === 'Maternity') return WOMEN_MATERNITY_SIZES;
+    return null;
+  }
+
+  if (dept === 'men') {
+    const p = norm(categoryPath);
+    const isPants =
+      p.includes('pants') ||
+      p.includes('jeans') ||
+      p.includes('shorts');
+
+    if (st === 'Regular') {
+      return isPants ? MEN_REGULAR_PANT_SIZES : MEN_REGULAR_TOP_SIZES;
+    }
+    if (st === 'Big & Tall') {
+      return isPants ? MEN_BIG_TALL_PANT_SIZES : MEN_BIG_TALL_TOP_SIZES;
+    }
+    return null;
+  }
+
+  if (dept === 'boys') {
+    if (st === 'Husky') return BOYS_HUSKY_SIZES;
+    if (st === 'Slim') return BOYS_SLIM_SIZES;
+    // Regular: don't filter aggressively – kids sizing is very mixed
+    if (st === 'Regular') return null;
+    return null;
+  }
+
+  if (dept === 'girls') {
+    if (st === 'Plus') return GIRLS_PLUS_SIZES;
+    if (st === 'Slim') return GIRLS_SLIM_SIZES;
+    if (st === 'Regular') return null;
+    return null;
+  }
+
+  if (dept === 'toddler') {
+    return TODDLER_SIZES;
+  }
+
+  return null;
+}
+
+/**
+ * Filter the Size options based on Size Type AND department.
+ * If no match, we fall back to all options so nothing disappears silently.
+ */
+function filterSizeOptionsBySizeType(
+  sizeType: string,
+  allOptions: string[] = [],
+  categoryPath: string = ''
+): string[] {
+  const dept = detectDeptFromCategoryPath(categoryPath);
+  if (!sizeType || !allOptions.length) return allOptions;
+
+  const allowedSet = getAllowedSizeSet(dept, sizeType, categoryPath);
+  if (!allowedSet) {
+    // no strict mapping for this combo → keep original options
+    return allOptions;
+  }
+
+  return allOptions.filter((o) => allowedSet.has(o.trim()));
+}
 
 // detect the current "Size Type" selected value from item specifics
 function getSizeTypeValue(specs: any[]): string {
@@ -69,130 +297,32 @@ function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
 
-// numeric grabber for helpers
-function parseFirstNumber(s: string): number | null {
-  const m = (s || '').match(/\d+(?:\.\d+)?/);
-  return m ? Number(m[0]) : null;
-}
+/* -------------------------------------------------------
+   Helper: snap an AI/free-text value to an allowed option
+------------------------------------------------------- */
+function chooseOptionValue(
+  aiValue: string | string[] | undefined,
+  options: string[] = [],
+  selectionOnly = false
+): string {
+  if (!aiValue) return '';
+  const raw = Array.isArray(aiValue) ? (aiValue[0] ?? '') : aiValue;
+  const n = (s: string) => s.trim().toLowerCase().replace(/’/g, "'");
 
-// Big & Tall tokens (covers many eBay option patterns)
-function isTallToken(v: string) {
-  return /(tall|long|\bLT\b|\bXLT\b|\b2XLT\b|\b3XLT\b|\b4XLT\b|\b5XLT\b)/i.test(v);
-}
-function isPetiteToken(v: string) {
-  return /(petite|\bP\b|\bPS\b|\bPM\b|\bPL\b|\bPXL\b|\bPetites?\b)/i.test(v);
-}
-function isJuniorToken(v: string) {
-  return /(junior|jr\b|juniors)/i.test(v);
-}
-function isMaternityToken(v: string) {
-  return /maternity/i.test(v);
-}
-function isBigToken(v: string) {
-  return /(husky|big|big & tall|b&t)/i.test(v);
-}
-function isPlusNumeric(v: string) {
-  // 1X 2X 3X etc are usually "Plus" / Big
-  if (/\b[1-6]\s*x(l|lt)?\b/i.test(v)) return true;
-  if (/\b[1-6]x(l|lt)?\b/i.test(v)) return true;
-  // W-suffixed numeric: 18W, 20W, 16 W, etc.
-  if (/\d+\s*w\b/i.test(v) || /\d+w\b/i.test(v)) return true;
-  return false;
-}
+  const exactIdx = options.findIndex((o) => n(o) === n(raw));
+  if (exactIdx >= 0) return options[exactIdx];
 
-// juniors numeric heuristic (odd numbers 1,3,5,7,... common)
-function isJuniorsOddNumber(v: string) {
-  const n = parseFirstNumber(v);
-  if (n == null) return false;
-  return n % 2 === 1 && n <= 19;
-}
+  const startsIdx = options.findIndex(
+    (o) => n(o).startsWith(n(raw)) || n(raw).startsWith(n(o))
+  );
+  if (startsIdx >= 0) return options[startsIdx];
 
-type SizeGroups = {
-  regular: string[];
-  plus: string[];
-  petite: string[];
-  juniors: string[];
-  tall: string[];
-  maternity: string[];
-};
+  const containsIdx = options.findIndex(
+    (o) => n(o).includes(n(raw)) || n(raw).includes(n(o))
+  );
+  if (containsIdx >= 0) return options[containsIdx];
 
-function buildSizeGroups(allOptions: string[] = []): SizeGroups {
-  const groups: SizeGroups = {
-    regular: [],
-    plus: [],
-    petite: [],
-    juniors: [],
-    tall: [],
-    maternity: [],
-  };
-
-  for (const raw of allOptions) {
-    const label = (raw || '').trim();
-    if (!label) continue;
-    const lower = label.toLowerCase();
-
-    // broadened detectors
-    const petite =
-      isPetiteToken(label) ||
-      /\bpetite(s)?\b/i.test(lower) ||
-      /^p(\d+|xxs|xs|s|m|l|xl|xxl|xxxl)\b/i.test(label) || // P0, P2, PXS, etc
-      /\d+\s*p\b/i.test(label) ||
-      /\d+p\b/i.test(label); // 4P, 6P, etc
-
-    const plus =
-      isBigToken(label) ||
-      isPlusNumeric(label) ||
-      /\bplus\b/i.test(lower);
-
-    const juniors =
-      isJuniorToken(label) ||
-      isJuniorsOddNumber(label);
-
-    const tall =
-      isTallToken(label) ||
-      /\btall\b/i.test(lower);
-
-    const maternity = isMaternityToken(label);
-
-    let bucket: keyof SizeGroups = 'regular';
-
-    if (maternity) bucket = 'maternity';
-    else if (petite) bucket = 'petite';
-    else if (plus) bucket = 'plus';
-    else if (juniors) bucket = 'juniors';
-    else if (tall) bucket = 'tall';
-    else bucket = 'regular';
-
-    groups[bucket].push(label);
-  }
-
-  return groups;
-}
-
-/**
- * Filter the size options based on Size Type selection.
- * If no type chosen -> return full set.
- * Once a type is chosen, each size belongs to ONE bucket only.
- */
-function filterSizeOptionsBySizeType(
-  sizeType: string,
-  allOptions: string[] = [],
-  _categoryPath: string = ''
-): string[] {
-  const st = (sizeType || '').toLowerCase().trim();
-  if (!st) return allOptions;
-
-  const groups = buildSizeGroups(allOptions);
-  console.log('[SIZE DEBUG] Size Type =', sizeType, { groups });
-
-  if (st.includes('petite')) return groups.petite;
-  if (st.includes('plus')) return groups.plus;
-  if (st.includes('junior')) return groups.juniors;
-  if (st.includes('tall') || st.includes('long')) return groups.tall;
-  if (st.includes('maternity')) return groups.maternity;
-
-  // Regular / Misses / default: only regular bucket
-  return groups.regular;
+  return selectionOnly ? '' : raw;
 }
 
 /* -------------------------------------------------------
@@ -218,7 +348,7 @@ function TokenSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
-  const selected = Array.isArray(value) ? value : value ? [value] : [];
+  const selected = Array.isArray(value) ? value : (value ? [value] : []);
   const lowerQuery = query.trim().toLowerCase();
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
@@ -592,7 +722,7 @@ export default function HomePage() {
         next[index] = { ...next[index], value: String(Array.isArray(value) ? value[0] ?? '' : value) };
       }
 
-      // if "Size Type" changed, normalize any "Size"-like aspect
+      // if "Size Type" changed, we should re-filter Size options
       if (/size type/i.test(next[index].name || '')) {
         const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
         if (sizeIdx !== -1) {
@@ -603,14 +733,21 @@ export default function HomePage() {
             sizeSpec?.options || [],
             prev?.category?.path || ''
           );
+          // if current value is not allowed anymore → clear it
           if (!filtered.includes(sizeSpec?.value)) {
-            next[sizeIdx] = { ...sizeSpec, value: '' };
+            next[sizeIdx] = { ...sizeSpec, options: filtered, value: '' };
+          } else {
+            next[sizeIdx] = { ...sizeSpec, options: filtered };
           }
         }
       }
 
       return { ...(prev ?? {}), item_specifics: next };
     });
+
+    if (validationErrors.length > 0) {
+      setValidationErrors([]);
+    }
   };
 
   const handlePhotoUpload = (files: FileList | null) => {
@@ -688,18 +825,22 @@ export default function HomePage() {
 
       setStatus('Images uploaded! Analyzing with AI...');
 
-      // 2) Load listing style settings (if user turned them on)
-      const listingStyleSettings = loadListingStyleSettings();
+      // Load listing style settings (if any)
+      const listingStyle = loadListingStyleSettings();
 
-      // 3) Call analyze-listing with optional listingStyleSettings
+      const analyzePayload: any = {
+        session_id: Date.now().toString(),
+        images: uploadedUrls,
+      };
+
+      if (listingStyle) {
+        analyzePayload.listing_style = listingStyle;
+      }
+
       const analysisResponse = await fetch('/api/analyze-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: Date.now().toString(),
-          images: uploadedUrls,
-          listingStyleSettings, // server can ignore if null
-        }),
+        body: JSON.stringify(analyzePayload),
       });
 
       if (!analysisResponse.ok) {
@@ -719,7 +860,7 @@ export default function HomePage() {
       setStatus('Listing generated successfully!');
       setResults(aiData);
 
-      // 4) Listing data for the on-page form
+      // Listing data for the on-page form
       let finalListingData = normalized;
       if (!normalized?.category?.id) {
         finalListingData = { ...normalized, item_specifics: [] };
@@ -728,7 +869,7 @@ export default function HomePage() {
 
       setListingData(finalListingData);
 
-      // 5) Fetch eBay specifics for the detected category
+      // Fetch eBay specifics for the detected category
       if (finalListingData?.category?.id) {
         const catId = finalListingData.category.id;
 
@@ -753,10 +894,9 @@ export default function HomePage() {
         }
       }
 
-      // 6) Save everything the Results page needs
+      // Save everything the Results page needs
       const aiListingPayload = {
         ...aiData,
-        // make sure these are present even if AI model shape changes
         title: normalized.title,
         description: normalized.description,
         category: finalListingData.category,
@@ -766,7 +906,7 @@ export default function HomePage() {
       };
 
       sessionStorage.setItem('aiListingData', JSON.stringify(aiListingPayload));
-      navigate('/results'); // or '/create-listing'
+      navigate('/results');
     } catch (error: any) {
       console.error('Error:', error);
       setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
@@ -852,7 +992,6 @@ export default function HomePage() {
         listingData?.category?.path || ''
       );
 
-      // If current value is now invalid, clear it (safety on first render after AI)
       if (spec?.value && !filteredOpts.includes(spec.value)) {
         effectiveSpec = { ...spec, options: filteredOpts, value: '' };
       } else {
