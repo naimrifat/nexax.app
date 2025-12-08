@@ -964,12 +964,40 @@ export default function ResultsPage() {
                 display: 'flex',
                 gap: 8,
                 flexWrap: 'wrap',
+                justifyContent: 'center',
+                marginTop: 8,
               }}
             >
               {images.map((img, idx) => (
                 <div
                   key={idx}
+                  draggable
                   onClick={() => setMainImageIndex(idx)}
+                  onDragStart={(e) => {
+                    setDragIndex(idx);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', String(idx));
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (dragIndex === null || dragIndex === idx) return;
+                    setImages((prevImages) => {
+                      const next = [...prevImages];
+                      const [moved] = next.splice(dragIndex, 1);
+                      next.splice(idx, 0, moved);
+                      setMainImageIndex((prevMain) => {
+                        const mainUrl = prevImages[prevMain];
+                        const newIndex = next.findIndex((url) => url === mainUrl);
+                        return newIndex >= 0 ? newIndex : 0;
+                      });
+                      return next;
+                    });
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
                   style={{
                     borderRadius: 4,
                     overflow: 'hidden',
@@ -977,7 +1005,7 @@ export default function ResultsPage() {
                       idx === mainImageIndex
                         ? '2px solid #0064d2'
                         : '1px solid #ddd',
-                    cursor: 'pointer',
+                    cursor: 'grab',
                     background: '#fafafa',
                     height: 70,
                     width: 70,
