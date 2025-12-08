@@ -338,7 +338,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { images, session_id } = req.body;
+    // 🔹 NEW: normalize body & pull listing_style
+    const body: any = req.body || {};
+    const { images, session_id, listing_style } = body;
+
     if (!images || !Array.isArray(images) || images.length === 0) {
       return res.status(400).json({ error: 'No images provided' });
     }
@@ -361,6 +364,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     /* ----------------------------------------
        Stage A: Vision analysis (broad)
     -----------------------------------------*/
+
+    // 🔹 NEW: build a seller-style instruction block for the vision model
+    let listingStyleInstructions = '';
+    if (listing_style && typeof listing_style === 'object') {
+      const {
+        titleExample,
+        titleRules,
+        descriptionExample,
+        descriptionRules,
+        keywordsRules,
+        extraInstructions,
+      } = listing_style as any;
+
+      const lines: string[] = [];
+
+      lines.push(
+        'The seller has provided custom instructions for how the listing should be written.',
+        'When you generate the "title", "description", and "keywords" fields in the JSON, follow these seller instructions as long as they do not contradict the actual item details in the photos, eBay marketplace rules, or the JSON structure described below.'
+      );
+
+      if (titleExample) {
+        lines.push('\nExample title:', String(titleExample));
+      }
+      if (titleRules) {
+        lines.push('\nTitle rules:', String(titleRules));
+      }
+      if (descriptionExample) {
+        lines.push('\nExample description:', String(descriptionExample));
+      }
+      if (descriptionRules) {
+        lines.push('\nDescription rules:', String(descriptionRules));
+      }
+      if (keywordsRules) {
+        lines.push('\nKeyword rules:', String(keywordsRules));
+      }
+      if (extraInstructions) {
+        lines.push('\nAdditional instructions:', String(extraInstructions));
+      }
+
+      listingStyleInstructions = lines.join('\n');
+    }
+
     const vision = await callOpenAIChat({
       model: 'gpt-5.1',
       response_format: { type: 'json_object' },
@@ -380,10 +425,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             })),
             {
               type: 'text' as const,
-              text: `Return JSON like:
+              text: `
+${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must return a single JSON object with this structure:
+
 {
-  "title": "... (<=80 chars)",
-  "description": "...",
+  "title": "... (<=80 chars, follow seller rules if provided)",
+  "description": "... (follow seller rules if provided)",
   "detected": {
     "brand": "...",
     "size": "...",
@@ -406,8 +453,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     "fit": "Regular|Slim|Relaxed|Classic|... if visible",
     "sizeTypeHint": "Regular|Plus|Petite|Tall|Big & Tall if visible"
   },
-  "keywords": ["..."]
-}`,
+  "keywords": ["... (follow seller keyword rules if provided)"]
+}
+
+Always obey the visual facts in the images and eBay-style accuracy first. Seller instructions are for *style and structure*, not for making up untrue details.
+`,
             },
           ],
         },
