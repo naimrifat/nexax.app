@@ -4,37 +4,31 @@ import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
 
 /* -------------------------------------------------------
-   Listing style settings helper (if user enabled custom style)
-------------------------------------------------------- */
+   Listing style settings helper
+   ------------------------------------------------------- */
 type ListingStyleSettings = {
   useCustomStyle?: boolean;
   titleInstructions?: string;
   descriptionInstructions?: string;
   extraNotes?: string;
+  [key: string]: any;
 };
 
-function loadListingStyleSettingsFromStorage(): ListingStyleSettings | null {
+function loadListingStyleSettings(): ListingStyleSettings | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem('listingStyleSettings');
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || !parsed.useCustomStyle) return null;
-    return {
-      useCustomStyle: true,
-      titleInstructions: parsed.titleInstructions || '',
-      descriptionInstructions: parsed.descriptionInstructions || '',
-      extraNotes: parsed.extraNotes || '',
-    };
-  } catch (err) {
-    console.error('Failed to load listing style settings:', err);
+    return parsed ?? null;
+  } catch {
     return null;
   }
 }
 
 /* -------------------------------------------------------
    Helper: snap an AI/free-text value to an allowed option
-------------------------------------------------------- */
+   ------------------------------------------------------- */
 function chooseOptionValue(
   aiValue: string | string[] | undefined,
   options: string[] = [],
@@ -61,26 +55,25 @@ function chooseOptionValue(
 }
 
 /* -------------------------------------------------------
-   Size / Size Type dependency helpers (rock-solid version)
-------------------------------------------------------- */
+   Size / Size Type dependency helpers (rock solid)
+   ------------------------------------------------------- */
 
-// numeric grabber
-function parseFirstNumber(s: string): number | null {
-  const m = (s || '').match(/\d+(?:\.\d+)?/);
-  return m ? Number(m[0]) : null;
+// detect the current "Size Type" selected value from item specifics
+function getSizeTypeValue(specs: any[]): string {
+  const st = specs?.find((s: any) => /size type/i.test(s?.name || ''));
+  return st?.value || '';
 }
 
-// Name check: which aspects are "size-like"
+// which aspect is actually "Size"?
 function isSizeAspectName(name: string): boolean {
-  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+  // be generous here, but specific to the Size field
+  return /(^size$|^size \(.*\)$|waist size|neck size|chest size|inseam)/i.test(name || '');
 }
 
-// Canonical group labels
 type SizeGroup = 'regular' | 'petite' | 'plus' | 'tall' | 'juniors' | 'maternity' | 'unknown';
 
 /**
- * Classify a single size option into exactly ONE group.
- * No overlaps – this is what makes filtering rock solid.
+ * Classify ONE size option into exactly ONE group
  */
 function classifySizeOption(label: string, categoryPath: string = ''): SizeGroup {
   const raw = label || '';
@@ -89,59 +82,51 @@ function classifySizeOption(label: string, categoryPath: string = ''): SizeGroup
 
   if (!s) return 'unknown';
 
-  // ----- Maternity -----
-  if (s.includes('maternity') || cat.includes('maternity')) {
-    return 'maternity';
-  }
+  // maternity
+  if (s.includes('maternity') || cat.includes('maternity')) return 'maternity';
 
-  // ----- Plus (W, X, "Plus") -----
+  // PLUS: "plus", X-sizes (0X–6X), W-sizes (14W, 30W, etc.)
   const hasPlusWord = /\bplus\b/.test(s) || cat.includes('plus');
-  const hasXSize = /\b[0-6]x(t|tall|short)?\b/.test(s);   // 0X, 1X, 2X, 3X, ...
-  const hasWSize = /\d+\s*w\b/.test(s) || /\d+w\b/.test(s); // 14W, 16W, etc
-  if (hasPlusWord || hasXSize || hasWSize) {
-    return 'plus';
-  }
+  const hasXSize = /\b[0-6]x(t|tall|short)?\b/.test(s); // 0X, 1X, 2X, 3X...
+  const hasWSize = /\b\d{1,3}\s*w\b/.test(s) || /\b\d{1,3}w\b/.test(s); // 14W, 18W, 30W
+  if (hasPlusWord || hasXSize || hasWSize) return 'plus';
 
-  // ----- Petite (P suffix, P-sizes, "Petite") -----
+  // PETITE: word "petite", P* sizes (PXS, PS, PM, PL, PXL), numeric P (2P, 4P...)
   const hasPetiteWord = /\bpetite(s)?\b/.test(s) || cat.includes('petite');
   const hasPetitePrefixSize = /\bp(xxs|xs|s|m|l|xl|xxl|2xl)\b/.test(s); // PXS, PS, PM, PL, PXL...
-  const hasPetiteNumericSuffix = /\d{1,2}p\b/.test(s); // 0P, 2P, 4P, 6P...
-  if (hasPetiteWord || hasPetitePrefixSize || hasPetiteNumericSuffix) {
-    return 'petite';
-  }
+  const hasPetiteNumericSuffix = /\b\d{1,2}p\b/.test(s); // 0P, 2P, 4P, 6P...
+  if (hasPetiteWord || hasPetitePrefixSize || hasPetiteNumericSuffix) return 'petite';
 
-  // ----- Tall (T suffix, "Tall", LT/XLT) -----
+  // TALL: word, LT/XLT, numeric T, or "Medium Tall"/"LT" patterns
   const hasTallWord = /\btall\b/.test(s) || cat.includes('tall');
   const hasLTToken = /\b(?:lt|xlt|2xlt|3xlt|4xlt)\b/.test(s);
-  const hasTallNumericSuffix = /\d{1,2}t\b/.test(s); // 8T, 10T...
+  const hasTallNumericSuffix = /\b\d{1,2}t\b/.test(s); // 8T, 10T...
   const hasTallNamedSize =
     /\b(xs|s|m|l|xl|xxl|2xl)\s*tall\b/.test(s) || /\b(xs|s|m|l|xl|xxl|2xl)t\b/.test(s);
-  if (hasTallWord || hasLTToken || hasTallNumericSuffix || hasTallNamedSize) {
-    return 'tall';
-  }
+  if (hasTallWord || hasLTToken || hasTallNumericSuffix || hasTallNamedSize) return 'tall';
 
-  // ----- Juniors (explicit word, or odd numeric <= 19) -----
-  const hasJuniorsWord = /\bjunior'?s\b/.test(s) || /\bjrs?\b/.test(s) || /\bjuniors\b/.test(s);
-  if (hasJuniorsWord) {
-    return 'juniors';
-  }
-  const n = parseFirstNumber(raw);
-  if (n != null && n <= 19 && n >= 0) {
-    // If it's a small odd number and hasn't already been classified as plus/petite/tall,
-    // treat it as Juniors.
-    if (n % 2 === 1) {
+  // JUNIORS: explicit word or odd numeric 1–19
+  const hasJuniorsWord =
+    /\bjunior'?s\b/.test(s) || /\bjrs?\b/.test(s) || /\bjuniors\b/.test(s);
+  if (hasJuniorsWord) return 'juniors';
+
+  const numMatch = raw.match(/\d+/);
+  if (numMatch) {
+    const n = Number(numMatch[0]);
+    if (!Number.isNaN(n) && n >= 0 && n <= 19 && n % 2 === 1) {
+      // 1,3,5,7,...,19 → typical juniors run
       return 'juniors';
     }
   }
 
-  // ----- Default / Regular -----
+  // default bucket
   return 'regular';
 }
 
 /**
- * Filter the size options based on the selected Size Type.
- * Each size option is assigned to one group; we then keep only those
- * groups that match the Size Type choice.
+ * Filter the Size options based on Size Type selection.
+ * Each option lives in exactly one group. Only that group's
+ * options are shown for the selected Size Type.
  */
 function filterSizeOptionsBySizeType(
   sizeType: string,
@@ -162,37 +147,31 @@ function filterSizeOptionsBySizeType(
   } else if (st.includes('maternity')) {
     groupsToKeep.add('maternity');
   } else if (st.includes('big') && st.includes('tall')) {
-    // Big & Tall: keep both plus + tall
     groupsToKeep.add('plus');
     groupsToKeep.add('tall');
   } else if (st.includes('tall')) {
     groupsToKeep.add('tall');
   } else {
-    // Regular / Misses / anything else → treat as regular bucket
+    // regular / misses / default
     groupsToKeep.add('regular');
   }
 
-  return allOptions.filter((opt) => {
+  const filtered = allOptions.filter((opt) => {
     const group = classifySizeOption(opt, categoryPath);
-
     if (groupsToKeep.has(group)) return true;
 
-    // For regular size type, also allow "unknown" values
+    // Let weird/unclassified sizes fall into Regular only
     if (group === 'unknown' && groupsToKeep.has('regular')) return true;
 
     return false;
   });
-}
 
-// convenience: detect "Size Type" current value
-function getSizeTypeValue(specs: any[]): string {
-  const st = specs?.find((s: any) => /size type/i.test(s?.name || ''));
-  return st?.value || '';
+  return filtered;
 }
 
 /* -------------------------------------------------------
    Compact, searchable token selector for item specifics
-------------------------------------------------------- */
+   ------------------------------------------------------- */
 function TokenSelect({
   value,
   options,
@@ -270,6 +249,7 @@ function TokenSelect({
           inputRef.current?.focus();
         }}
       >
+        {/* Chips */}
         {multi &&
           selected.map((s) => (
             <span
@@ -290,6 +270,7 @@ function TokenSelect({
             </span>
           ))}
 
+        {/* Single pill */}
         {!multi && selected[0] && (
           <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
             {selected[0]}
@@ -352,7 +333,7 @@ function TokenSelect({
 
 /* -------------------------------------------------------
    Wrapper control deciding between token select / text
-------------------------------------------------------- */
+   ------------------------------------------------------- */
 function ItemSpecificControl({
   spec,
   onChange,
@@ -371,7 +352,7 @@ function ItemSpecificControl({
   const opts = Array.isArray(spec.options) ? spec.options : [];
 
   if (opts.length > 0) {
-    return
+    return (
       <TokenSelect
         multi={!!spec.multi}
         value={spec.value ?? (spec.multi ? [] : '')}
@@ -379,9 +360,11 @@ function ItemSpecificControl({
         disabled={spec.freeTextAllowed === false && opts.length === 0}
         placeholder="Search & select..."
         onChange={(val) => onChange(val)}
-      />;
+      />
+    );
   }
 
+  // Free text fallback
   return (
     <input
       type="text"
@@ -402,7 +385,7 @@ function ItemSpecificControl({
 
 /* -------------------------------------------------------
    Page
-------------------------------------------------------- */
+   ------------------------------------------------------- */
 export default function HomePage() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
@@ -569,18 +552,24 @@ export default function HomePage() {
     }));
   };
 
+  // main change handler with dependency logic between Size Type and Size
   const handleItemSpecificsChange = (index: number, value: string | string[]) => {
     setListingData((prev: any) => {
       const next = [...(prev?.item_specifics ?? [])];
       if (!next[index]) return prev;
 
+      // update field
       if (next[index]?.multi) {
         const arr = Array.isArray(value) ? value : value ? [String(value)] : [];
         next[index] = { ...next[index], value: arr };
       } else {
-        next[index] = { ...next[index], value: String(Array.isArray(value) ? value[0] ?? '' : value) };
+        next[index] = {
+          ...next[index],
+          value: String(Array.isArray(value) ? value[0] ?? '' : value),
+        };
       }
 
+      // if "Size Type" changed, clear Size if it no longer fits
       if (/size type/i.test(next[index].name || '')) {
         const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
         if (sizeIdx !== -1) {
@@ -592,9 +581,7 @@ export default function HomePage() {
             prev?.category?.path || ''
           );
           if (!filtered.includes(sizeSpec?.value)) {
-            next[sizeIdx] = { ...sizeSpec, options: filtered, value: '' };
-          } else {
-            next[sizeIdx] = { ...sizeSpec, options: filtered };
+            next[sizeIdx] = { ...sizeSpec, value: '' };
           }
         }
       }
@@ -652,16 +639,20 @@ export default function HomePage() {
     setStatus('Uploading images to Cloudinary...');
 
     try {
+      // 1) Upload all images to Cloudinary
       const uploadedUrls = await Promise.all(
         photos.map(async (file) => {
           const formData = new FormData();
           formData.append('file', file);
           formData.append('upload_preset', 'ebay_listings');
 
-          const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
-            method: 'POST',
-            body: formData,
-          });
+          const res = await fetch(
+            'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
+            {
+              method: 'POST',
+              body: formData,
+            }
+          );
 
           const data = await res.json();
           if (!res.ok) {
@@ -674,15 +665,17 @@ export default function HomePage() {
 
       setStatus('Images uploaded! Analyzing with AI...');
 
-      const listingStyleSettings = loadListingStyleSettingsFromStorage();
+      // 2) Load user’s listing-style settings (if any)
+      const listingStyleSettings = loadListingStyleSettings();
 
+      // 3) Call analyze-listing with optional listingStyleSettings
       const analysisResponse = await fetch('/api/analyze-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: Date.now().toString(),
           images: uploadedUrls,
-          listingStyleSettings,
+          listingStyleSettings, // backend can ignore if null / useCustomStyle is false
         }),
       });
 
@@ -703,6 +696,7 @@ export default function HomePage() {
       setStatus('Listing generated successfully!');
       setResults(aiData);
 
+      // 4) Listing data for the on-page form
       let finalListingData = normalized;
       if (!normalized?.category?.id) {
         finalListingData = { ...normalized, item_specifics: [] };
@@ -711,6 +705,7 @@ export default function HomePage() {
 
       setListingData(finalListingData);
 
+      // 5) Fetch eBay specifics for the detected category
       if (finalListingData?.category?.id) {
         const catId = finalListingData.category.id;
 
@@ -735,8 +730,10 @@ export default function HomePage() {
         }
       }
 
+      // 6) Save everything the Results page needs
       const aiListingPayload = {
         ...aiData,
+        // make sure these are present even if AI model shape changes
         title: normalized.title,
         description: normalized.description,
         category: finalListingData.category,
@@ -746,7 +743,7 @@ export default function HomePage() {
       };
 
       sessionStorage.setItem('aiListingData', JSON.stringify(aiListingPayload));
-      navigate('/results');
+      navigate('/results'); // or '/create-listing' depending on your route
     } catch (error: any) {
       console.error('Error:', error);
       setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
@@ -755,6 +752,9 @@ export default function HomePage() {
     }
   };
 
+  /**
+   * Validates the listing data before publishing
+   */
   const validateListing = (): { valid: boolean; errors: string[] } => {
     const errors: string[] = [];
 
@@ -770,7 +770,8 @@ export default function HomePage() {
       if (!spec.required) continue;
       const value = spec.value;
       if (Array.isArray(value)) {
-        if (value.length === 0) errors.push(`${spec.name} is required (select at least one option)`);
+        if (value.length === 0)
+          errors.push(`${spec.name} is required (select at least one option)`);
       } else {
         if (!String(value ?? '').trim()) errors.push(`${spec.name} is required`);
       }
@@ -817,17 +818,21 @@ export default function HomePage() {
     }
   };
 
+  // Build UI rows; for "Size" rows, filter options dynamically using current Size Type
   const renderSpecificRow = (spec: any, index: number) => {
     let effectiveSpec = spec;
 
     if (isSizeAspectName(spec?.name || '')) {
       const sizeTypeVal = getSizeTypeValue(listingData?.item_specifics || []);
+      const allOpts = Array.isArray(spec?.options) ? spec.options : [];
+
       const filteredOpts = filterSizeOptionsBySizeType(
         sizeTypeVal,
-        Array.isArray(spec?.options) ? spec.options : [],
+        allOpts,
         listingData?.category?.path || ''
       );
 
+      // If current value is now invalid, clear it (safety on first render after AI)
       if (spec?.value && !filteredOpts.includes(spec.value)) {
         effectiveSpec = { ...spec, options: filteredOpts, value: '' };
       } else {
@@ -856,7 +861,9 @@ export default function HomePage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Try It Now - Free Demo</h2>
+              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+                Try It Now - Free Demo
+              </h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
                 Upload up to 12 photos and see how our AI creates professional listings instantly
               </p>
@@ -875,6 +882,7 @@ export default function HomePage() {
 
             {!listingData ? (
               <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Upload */}
                 <div className="card p-6">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
                     <ImageIcon className="w-5 h-5 mr-2 text-teal-600" />
@@ -907,7 +915,11 @@ export default function HomePage() {
                     <div className="grid grid-cols-4 gap-3 mb-4">
                       {photoPreviewUrls.map((url, index) => (
                         <div key={index} className="relative group aspect-square">
-                          <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover rounded-lg" />
+                          <img
+                            src={url}
+                            alt={`Product ${index + 1}`}
+                            className="w-full h-full object-cover rounded-lg"
+                          />
                           <button
                             type="button"
                             onClick={(e) => {
@@ -928,9 +940,12 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
+                  <p className="text-sm text-gray-500 text-center">
+                    {photos.length}/12 photos uploaded
+                  </p>
                 </div>
 
+                {/* AI Generation */}
                 <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
                     <Sparkles className="w-5 h-5 mr-2" /> AI-Powered Generation
@@ -978,7 +993,11 @@ export default function HomePage() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1">
                   <div className="card overflow-hidden">
-                    <img src={photoPreviewUrls[0]} alt="Main product" className="w-full h-auto object-cover" />
+                    <img
+                      src={photoPreviewUrls[0]}
+                      alt="Main product"
+                      className="w-full h-auto object-cover"
+                    />
                   </div>
                 </div>
 
@@ -1012,9 +1031,12 @@ export default function HomePage() {
                     </div>
                   </div>
 
+                  {/* Editable form */}
                   <div className="bg-white rounded-lg shadow p-6 space-y-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Title</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Title
+                      </label>
                       <input
                         type="text"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -1028,12 +1050,16 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Category</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Category
+                      </label>
                       <div
                         onClick={() => setShowCategorySelector(true)}
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
                       >
-                        <span>{listingData?.category?.path || 'Click to select a category...'}</span>
+                        <span>
+                          {listingData?.category?.path || 'Click to select a category...'}
+                        </span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
                           width="20"
@@ -1052,7 +1078,9 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Description</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Description
+                      </label>
                       <textarea
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                         rows={5}
@@ -1075,7 +1103,7 @@ export default function HomePage() {
                   </div>
 
                   {showCategorySelector && (
-                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                    <div className="fixed inset-0 bg-black/40Closable flex items-center justify-center z-50">
                       <div className="w-full max-w-3xl bg-white rounded-lg shadow p-5">
                         <CategorySelector
                           initialCategoryPath={listingData?.category?.path || ''}
