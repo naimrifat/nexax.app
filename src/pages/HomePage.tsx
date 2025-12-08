@@ -4,6 +4,32 @@ import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
 
 /* -------------------------------------------------------
+   (NEW) Helper: load user's listing style settings
+   ------------------------------------------------------- */
+// Adjust the storage key string if your ListingStyleSettingsPage
+// is using a different key. This should match whatever you used there.
+type ListingStyleSettings = {
+  titleExample?: string;
+  titleRules?: string;
+  descriptionExample?: string;
+  descriptionRules?: string;
+  keywordsRules?: string;
+  extraInstructions?: string;
+};
+
+function loadListingStyleSettings(): ListingStyleSettings | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem('listingStyleSettings');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/* -------------------------------------------------------
    Helper: snap an AI/free-text value to an allowed option
    ------------------------------------------------------- */
 function chooseOptionValue(
@@ -606,128 +632,138 @@ export default function HomePage() {
     handlePhotoUpload(e.dataTransfer.files);
   };
 
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
 
-  if (photos.length === 0) {
-    setStatus('Please upload at least one image.');
-    return;
-  }
+    if (photos.length === 0) {
+      setStatus('Please upload at least one image.');
+      return;
+    }
 
-  setIsLoading(true);
-  setResults(null);
-  setListingData(null);
-  setStatus('Uploading images to Cloudinary...');
+    setIsLoading(true);
+    setResults(null);
+    setListingData(null);
+    setStatus('Uploading images to Cloudinary...');
 
-  try {
-    // 1) Upload all images to Cloudinary
-    const uploadedUrls = await Promise.all(
-      photos.map(async (file) => {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('upload_preset', 'ebay_listings');
+    try {
+      // 1) Upload all images to Cloudinary
+      const uploadedUrls = await Promise.all(
+        photos.map(async (file) => {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('upload_preset', 'ebay_listings');
 
-        const res = await fetch(
-          'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
-          {
-            method: 'POST',
-            body: formData,
+          const res = await fetch(
+            'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
+            {
+              method: 'POST',
+              body: formData,
+            }
+          );
+
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data?.error?.message ?? 'Image upload failed');
           }
-        );
 
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error?.message ?? 'Image upload failed');
-        }
+          return data.secure_url as string;
+        })
+      );
 
-        return data.secure_url as string;
-      })
-    );
+      setStatus('Images uploaded! Analyzing with AI...');
 
-    setStatus('Images uploaded! Analyzing with AI...');
+      // (NEW) Load user’s listing-style settings
+      const listingStyle = loadListingStyleSettings();
 
-    // 2) Call analyze-listing
-    const analysisResponse = await fetch('/api/analyze-listing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      // Build payload for analyze-listing
+      const analyzePayload: any = {
         session_id: Date.now().toString(),
         images: uploadedUrls,
-      }),
-    });
+      };
 
-    if (!analysisResponse.ok) {
-      const errorData = await analysisResponse.json().catch(() => ({}));
-      throw new Error(errorData?.error ?? 'Failed to analyze images');
-    }
-
-    const analysisResult = await analysisResponse.json();
-    const aiData =
-      analysisResult?.data ||
-      analysisResult?.analysis ||
-      analysisResult ||
-      {};
-
-    const normalized = normalizeAiToListing(aiData);
-
-    setStatus('Listing generated successfully!');
-    setResults(aiData);
-
-    // 3) Listing data for the on-page form
-    let finalListingData = normalized;
-    if (!normalized?.category?.id) {
-      finalListingData = { ...normalized, item_specifics: [] };
-      setEbaySpecifics([]);
-    }
-
-    setListingData(finalListingData);
-
-    // 4) Fetch eBay specifics for the detected category
-    if (finalListingData?.category?.id) {
-      const catId = finalListingData.category.id;
-
-      if (specificsCacheRef.current.has(catId)) {
-        const cached = specificsCacheRef.current.get(catId)!;
-        const updatedSpecifics = cached.map((spec: any) => {
-          const aiSpec = normalized.item_specifics.find(
-            (s: any) => s.name === spec.name
-          );
-          return aiSpec ? { ...spec, value: aiSpec.value } : spec;
-        });
-
-        startTransition(() => {
-          setEbaySpecifics(updatedSpecifics);
-          setListingData((prev: any) => ({
-            ...(prev ?? {}),
-            item_specifics: updatedSpecifics,
-          }));
-        });
-      } else {
-        fetchEbaySpecifics(catId, normalized.item_specifics);
+      if (listingStyle) {
+        analyzePayload.listing_style = listingStyle;
       }
+
+      // 2) Call analyze-listing
+      const analysisResponse = await fetch('/api/analyze-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(analyzePayload),
+      });
+
+      if (!analysisResponse.ok) {
+        const errorData = await analysisResponse.json().catch(() => ({}));
+        throw new Error(errorData?.error ?? 'Failed to analyze images');
+      }
+
+      const analysisResult = await analysisResponse.json();
+      const aiData =
+        analysisResult?.data ||
+        analysisResult?.analysis ||
+        analysisResult ||
+        {};
+
+      const normalized = normalizeAiToListing(aiData);
+
+      setStatus('Listing generated successfully!');
+      setResults(aiData);
+
+      // 3) Listing data for the on-page form
+      let finalListingData = normalized;
+      if (!normalized?.category?.id) {
+        finalListingData = { ...normalized, item_specifics: [] };
+        setEbaySpecifics([]);
+      }
+
+      setListingData(finalListingData);
+
+      // 4) Fetch eBay specifics for the detected category
+      if (finalListingData?.category?.id) {
+        const catId = finalListingData.category.id;
+
+        if (specificsCacheRef.current.has(catId)) {
+          const cached = specificsCacheRef.current.get(catId)!;
+          const updatedSpecifics = cached.map((spec: any) => {
+            const aiSpec = normalized.item_specifics.find(
+              (s: any) => s.name === spec.name
+            );
+            return aiSpec ? { ...spec, value: aiSpec.value } : spec;
+          });
+
+          startTransition(() => {
+            setEbaySpecifics(updatedSpecifics);
+            setListingData((prev: any) => ({
+              ...(prev ?? {}),
+              item_specifics: updatedSpecifics,
+            }));
+          });
+        } else {
+          fetchEbaySpecifics(catId, normalized.item_specifics);
+        }
+      }
+
+      // 5) Save everything the Results page needs
+      const aiListingPayload = {
+        ...aiData,
+        // make sure these are present even if AI model shape changes
+        title: normalized.title,
+        description: normalized.description,
+        category: finalListingData.category,
+        item_specifics: normalized.item_specifics,
+        images: uploadedUrls,
+        image_urls: uploadedUrls,
+      };
+
+      sessionStorage.setItem('aiListingData', JSON.stringify(aiListingPayload));
+      navigate('/results'); // or '/create-listing' depending on your route
+    } catch (error: any) {
+      console.error('Error:', error);
+      setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+    } finally {
+      setIsLoading(false);
     }
-
-    // 5) Save everything the Results page needs
-    const aiListingPayload = {
-      ...aiData,
-      // make sure these are present even if AI model shape changes
-      title: normalized.title,
-      description: normalized.description,
-      category: finalListingData.category,
-      item_specifics: normalized.item_specifics,
-      images: uploadedUrls,
-      image_urls: uploadedUrls,
-    };
-
-    sessionStorage.setItem('aiListingData', JSON.stringify(aiListingPayload));
-    navigate('/results'); // or '/create-listing' depending on your route
-  } catch (error: any) {
-    console.error('Error:', error);
-    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-  } finally {
-    setIsLoading(false);
-  }
-};
+  };
 
   /**
    * Validates the listing data before publishing
