@@ -114,7 +114,6 @@ function filterSizeOptionsBySizeType(
 ): string[] {
   return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
 }
-string[] {
   const st = (sizeType || '').toLowerCase();
   if (!st) return allOptions;
 
