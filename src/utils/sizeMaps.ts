@@ -65,11 +65,7 @@ function getSizeFamily(categoryPath: string): SizeFamily {
   return null;
 }
 
-// -------------------------------------------------------------
-// WOMEN (applies to dresses, tops, sleepwear, etc. – clothing)
-// -------------------------------------------------------------
-
-// Regular: XS–XL + numeric 0–16 + One Size
+// Regular: XS–XL + numeric 0–14 ONLY (no Plus overlap!)
 const WOMEN_REGULAR = new Set<string>([
   '2XS',
   'XS',
@@ -85,26 +81,12 @@ const WOMEN_REGULAR = new Set<string>([
   '10',
   '12',
   '14',
-  '15',
-  '16',
-  '17',
-  '30',
-  '32',
-  '34',
-  '36',
-  '38',
-  '40',
-  '42',
-  '44',
-  '46',
-  '48',
-  '50',
   'One Size',
 ]);
 
-// Plus: all obvious plus indicators only
+// Plus: 2XL+, X-sizes, 16+, W-sizes ONLY
 const WOMEN_PLUS = new Set<string>([
-  // lettered plus
+  // Lettered plus (2XL and up)
   '2XL',
   '3XL',
   '4XL',
@@ -117,9 +99,10 @@ const WOMEN_PLUS = new Set<string>([
   '4X',
   '5X',
   '6X',
-  // numeric plus
+  
+  // Numeric plus (16 and up)
+  '16',
   '18',
-  '19',
   '20',
   '22',
   '24',
@@ -128,15 +111,8 @@ const WOMEN_PLUS = new Set<string>([
   '30',
   '32',
   '34',
-  '36',
-  '38',
-  '40',
-  '42',
-  '44',
-  '46',
-  '48',
-  '50',
-  // W-sizes
+  
+  // W-sizes (women's plus)
   '14W',
   '16W',
   '18W',
@@ -150,7 +126,7 @@ const WOMEN_PLUS = new Set<string>([
   '34W',
 ]);
 
-// Petites
+// Petites: Standard petite sizes only (up to 14P)
 const WOMEN_PETITES = new Set<string>([
   'P2XS',
   'PXS',
@@ -159,7 +135,6 @@ const WOMEN_PETITES = new Set<string>([
   'PM',
   'PL',
   'PXL',
-  'P2XL',
   '00P',
   '0P',
   '2P',
@@ -169,14 +144,8 @@ const WOMEN_PETITES = new Set<string>([
   '10P',
   '12P',
   '14P',
-  '16P',
-  '18P',
-  '20P',
-  '0XP',
-  '1XP',
-  '2XP',
-  '3XP',
-  '4XP',
+  // Removed: 16P, 18P, 20P (those are Plus Petite)
+  // Removed: 0XP-4XP (those are X-size Petites, rare on eBay)
 ]);
 
 // Tall
@@ -231,7 +200,8 @@ const WOMEN_JUNIORS = new Set<string>([
   '21',
 ]);
 
-// Maternity
+// Maternity: Uses same sizes as Regular/Plus, so keep them separate
+// This is the "Regular Maternity" range
 const WOMEN_MATERNITY = new Set<string>([
   '2XS',
   'XS',
@@ -239,8 +209,6 @@ const WOMEN_MATERNITY = new Set<string>([
   'M',
   'L',
   'XL',
-  '2XL',
-  '3XL',
   '0',
   '2',
   '4',
@@ -249,17 +217,20 @@ const WOMEN_MATERNITY = new Set<string>([
   '10',
   '12',
   '14',
+  // Maternity Plus would be 16+ and 2XL+, but eBay typically doesn't separate them
+  // If a user selects "Maternity" size type, show all maternity sizes
+  '2XL',
+  '3XL',
   '16',
   '18',
   '20',
   '22',
+  '24',
   '0X',
   '1X',
   '2X',
   '3X',
   '4X',
-  '5X',
-  '6X',
 ]);
 
 const WOMEN_MAP: Record<string, Set<string>> = {
@@ -271,23 +242,15 @@ const WOMEN_MAP: Record<string, Set<string>> = {
   Maternity: WOMEN_MATERNITY,
 };
 
-// -------------------------------------------------------------
-// MEN
-// -------------------------------------------------------------
-
-// Tops / jackets – Regular
+// Men's Tops – Regular (XS-XL only, no 2XL+)
 const MEN_TOP_REGULAR = new Set<string>([
   'XS',
   'S',
   'M',
   'L',
   'XL',
-  '2XL',
-  '3XL',
-  '4XL',
-  '5XL',
-  '6XL',
-  '7XL',
+  // Removed: 2XL-7XL (those are Big & Tall)
+  // Numeric sizes for dress shirts
   '30',
   '32',
   '34',
@@ -296,14 +259,10 @@ const MEN_TOP_REGULAR = new Set<string>([
   '40',
   '42',
   '44',
-  '46',
-  '48',
-  '50',
 ]);
 
 // Tops / jackets – Big & Tall
 const MEN_TOP_BIGTALL = new Set<string>([
-  'XL',
   '2XL',
   '3XL',
   '4XL',
@@ -337,15 +296,14 @@ const MEN_TOP_BIGTALL = new Set<string>([
   'Big 4X',
 ]);
 
-// Pants – Regular
+// Men's Pants – Regular (waists up to 40)
 const MEN_BOTTOM_REGULAR = new Set<string>([
   'XS',
   'S',
   'M',
   'L',
   'XL',
-  '2XL',
-  '3XL',
+  // Waist sizes (regular range)
   '24',
   '25',
   '26',
@@ -363,9 +321,7 @@ const MEN_BOTTOM_REGULAR = new Set<string>([
   '38',
   '39',
   '40',
-  '42',
-  '44',
-  '46',
+  // Removed: 42-46 (those are Big & Tall)
   'One Size',
 ]);
 
