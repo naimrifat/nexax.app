@@ -8,10 +8,7 @@ import React, {
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CategorySelector from '../components/CategorySelector';
-import {
-  filterSizesForFamilyAndSizeType,
-  detectSizeTypeForFamily,
-} from '../utils/sizeMaps';
+import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
 
 type Category = {
   id: string;
@@ -104,81 +101,25 @@ function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
 function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
+
 /**
  * Centralized size filtering using sizeMaps.ts
  */
 function filterSizeOptionsBySizeType(
   sizeType: string,
   allOptions: string[] = [],
-  categoryPath: string = ''
+  categoryPath: string = '',
 ): string[] {
   return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
 }
-  const st = (sizeType || '').toLowerCase();
-  if (!st) return allOptions;
 
-  const tallSet = (v: string) => isTallToken(v);
-  const petiteSet = (v: string) => isPetiteToken(v);
-  const juniorSet = (v: string) => isJuniorToken(v) || isJuniorsOddNumber(v);
-
-  const regularExclude = (v: string) =>
-    !isTallToken(v) &&
-    !isPetiteToken(v) &&
-    !isJuniorToken(v) &&
-    !isMaternityToken(v) &&
-    !isBigToken(v) &&
-    !isPlusNumeric(v);
-
-  // Big & Tall / Husky
-  if (st.includes('big') || st.includes('husky') || st.includes('tall')) {
-    return allOptions.filter(
-      (v) =>
-        tallSet(v) || isBigToken(v) || isPlusNumeric(v) || isLargeNumeric(v),
-    );
-  }
-
-  // Petites
-  if (st.includes('petite')) {
-    const filtered = allOptions.filter((v) => petiteSet(v));
-    return filtered.length ? filtered : allOptions;
-  }
-
-  // Juniors
-  if (st.includes('junior')) {
-    const filtered = allOptions.filter((v) => juniorSet(v));
-    return filtered.length ? filtered : allOptions.filter(regularExclude);
-  }
-
-  // Maternity – keep all; eBay often doesn’t encode it in the size
-  if (st.includes('maternity')) {
-    return allOptions;
-  }
-
-  // Plus
-  if (st.includes('plus')) {
-    const plusLike = allOptions.filter(
-      (v) => isPlusNumeric(v) || isBigToken(v),
-    );
-    if (plusLike.length) return plusLike;
-    return allOptions.filter(regularExclude);
-  }
-
-  // Regular / Misses / default
-  return allOptions.filter(regularExclude);
-
-/**
- * Apply Size Type filter to the "Size" aspect in a list of specifics.
- * - Reads the Size Type from the specifics
- * - Filters the Size options from the original eBay set (`allOptions`)
- * - Clears Size value if it’s incompatible with the new type
- */
 /**
  * Apply Size Type filter to Size fields in the specifics list
  * Now includes categoryPath for proper filtering
  */
 function applySizeTypeFilterToSpecifics(
   specs: ItemSpecific[],
-  categoryPath: string = ''
+  categoryPath: string = '',
 ): ItemSpecific[] {
   const sizeTypeVal = getSizeTypeValueFromSpecifics(specs);
   if (!sizeTypeVal) return specs;
@@ -190,7 +131,7 @@ function applySizeTypeFilterToSpecifics(
     const filtered = filterSizeOptionsBySizeType(
       sizeTypeVal,
       fullOptions,
-      categoryPath  // ← NOW INCLUDES CATEGORY PATH
+      categoryPath,
     );
 
     let value = spec.value;
@@ -429,7 +370,9 @@ export default function ResultsPage() {
   const [price, setPrice] = useState('0.00');
   const [keywords, setKeywords] = useState('');
   const [category, setCategory] = useState<CategoryWithPath | null>(null);
-  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
+  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>(
+    [],
+  );
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -439,6 +382,8 @@ export default function ResultsPage() {
 
   const [images, setImages] = useState<string[]>([]);
   const [mainImageIndex, setMainImageIndex] = useState(0);
+
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
@@ -628,9 +573,9 @@ export default function ResultsPage() {
         );
 
         const sizeFiltered = applySizeTypeFilterToSpecifics(
-  filledSpecifics,
-  category?.path || ''
-);
+          filledSpecifics,
+          category?.path || '',
+        );
         setSpecifics(sizeFiltered);
       } catch (err) {
         console.error('Error fetching specifics:', err);
@@ -638,7 +583,7 @@ export default function ResultsPage() {
         setLoadingSpecifics(false);
       }
     },
-    [smartFillSpecifics],
+    [smartFillSpecifics, category?.path],
   );
 
   // Unified loader: from /api/listing-data/:session OR sessionStorage
@@ -719,9 +664,9 @@ export default function ResultsPage() {
             aiDetectedRef.current || {},
           );
           const sizeFiltered = applySizeTypeFilterToSpecifics(
-  filled,
-  initialCategory?.path || ''
-);
+            filled,
+            initialCategory?.path || '',
+          );
           setSpecifics(sizeFiltered);
         }
 
@@ -743,28 +688,23 @@ export default function ResultsPage() {
   }, [navigate, fetchCategorySpecifics, smartFillSpecifics]);
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
-    // If the selector only returns id + path, this still works;
-    // name can be derived later from path on the backend if needed.
     setCategory(newCategory);
     setShowCategoryModal(false);
     await fetchCategorySpecifics(newCategory.id);
   };
 
-const updateSpecific = (idx: number, value: string | string[]) => {
-  setSpecifics((prev) => {
-    let next = [...prev];
-    next[idx] = { ...next[idx], value };
+  const updateSpecific = (idx: number, value: string | string[]) => {
+    setSpecifics((prev) => {
+      let next = [...prev];
+      next[idx] = { ...next[idx], value };
 
-    if (/size type/i.test(next[idx].name || '')) {
-      next = applySizeTypeFilterToSpecifics(
-        next,
-        category?.path || ''  // ← ADD THIS
-      );
-    }
+      if (/size type/i.test(next[idx].name || '')) {
+        next = applySizeTypeFilterToSpecifics(next, category?.path || '');
+      }
 
-    return next;
-  });
-};
+      return next;
+    });
+  };
 
   const addSpecific = () =>
     setSpecifics((prev) => [...prev, { name: '', value: '' }]);
@@ -791,7 +731,6 @@ const updateSpecific = (idx: number, value: string | string[]) => {
   }, [category]);
 
   const mainImageUrl = images[mainImageIndex] || '';
-    const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
@@ -975,7 +914,9 @@ const updateSpecific = (idx: number, value: string | string[]) => {
                       next.splice(idx, 0, moved);
                       setMainImageIndex((prevMain) => {
                         const mainUrl = prevImages[prevMain];
-                        const newIndex = next.findIndex((url) => url === mainUrl);
+                        const newIndex = next.findIndex(
+                          (url) => url === mainUrl,
+                        );
                         return newIndex >= 0 ? newIndex : 0;
                       });
                       return next;
@@ -1039,8 +980,8 @@ const updateSpecific = (idx: number, value: string | string[]) => {
             {title.length}/80 characters
           </div>
         </section>
-        
-{/* DESCRIPTION */}
+
+        {/* DESCRIPTION */}
         <section style={{ marginTop: 24 }}>
           <h3>Description</h3>
           <textarea
@@ -1056,7 +997,7 @@ const updateSpecific = (idx: number, value: string | string[]) => {
             }}
           />
         </section>
-        
+
         {/* CATEGORY */}
         <section style={{ marginTop: 24 }}>
           <h3>Category</h3>
@@ -1171,7 +1112,7 @@ const updateSpecific = (idx: number, value: string | string[]) => {
             + Add Custom Specific
           </button>
         </section>
-        
+
         {/* KEYWORDS */}
         <section style={{ marginTop: 24 }}>
           <h3>Keywords</h3>
