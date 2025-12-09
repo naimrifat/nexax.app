@@ -2,6 +2,10 @@ import React, { useState, useRef, useEffect, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
+import {
+  filterSizesForFamilyAndSizeType,
+  detectSizeTypeForFamily,
+} from '../utils/sizeMaps';
 
 /* -------------------------------------------------------
    Listing style settings (optional)
@@ -28,263 +32,8 @@ function loadListingStyleSettings(): ListingStyleSettings | null {
 }
 
 /* -------------------------------------------------------
-   Size / Size Type dependency helpers (DATA-DRIVEN)
+   Size / Size Type dependency helpers (uses sizeMaps.ts)
 ------------------------------------------------------- */
-
-type Dept = 'women' | 'men' | 'boys' | 'girls' | 'toddler' | 'unknown';
-
-const norm = (s: string) => s.trim().toLowerCase();
-
-/**
- * Infer department from eBay category path.
- */
-function detectDeptFromCategoryPath(path: string): Dept {
-  const p = norm(path || '');
-  if (p.includes('women')) return 'women';
-  if (p.includes('men')) return 'men';
-  if (p.includes('girls')) return 'girls';
-  if (p.includes('boys')) return 'boys';
-  if (p.includes('baby') || p.includes('toddler')) return 'toddler';
-  return 'unknown';
-}
-
-/**
- * Normalize Size Type labels to a canonical key.
- * We keep this simple because options come from eBay.
- */
-function normalizeSizeTypeLabel(sizeType: string): string {
-  const s = norm(sizeType || '');
-  if (!s) return '';
-  if (s.includes('regular')) return 'Regular';
-  if (s.includes('plus')) return 'Plus';
-  if (s.includes('petite')) return 'Petites';
-  if (s.includes('maternity')) return 'Maternity';
-  if (s.includes('junior')) return 'Juniors';
-  if (s.includes('big') && s.includes('tall')) return 'Big & Tall';
-  if (s.includes('tall')) return 'Tall';
-  if (s.includes('husky')) return 'Husky';
-  if (s.includes('slim')) return 'Slim';
-  if (s.includes('toddler') || s.includes('baby')) return 'Toddler';
-  return sizeType;
-}
-
-/**
- * WOMEN – size buckets
- * We deliberately avoid overlapping labels:
- *  - Regular: XS–XL + numeric 0–16 + One Size
- *  - Plus: 1X+, W-sizes, numeric 18+ and 2XL+
- *  - Petites: P*, *P, *XP, etc.
- *  - Tall: "* Tall", "*XT"
- *  - Juniors: Juniors numeric pattern + XS–2XL used in Juniors
- *  - Maternity: standard maternity ranges
- */
-
-// Women Regular (non-plus, non-petite, non-tall)
-const WOMEN_REGULAR_SIZES = new Set<string>([
-  '2XS', 'XS', 'S', 'M', 'L', 'XL',
-  // keep Regular numeric core 0–16
-  '0', '2', '4', '6', '8', '10', '12', '14', '15', '16',
-  // some extended numeric but still "regular" in many categories
-  '17',
-  // exclude 18+ from Regular to keep them in Plus bucket
-  '30', '32', '34', '36', '38', '40', '42', '44', '46', '48', '50',
-  'One Size',
-]);
-
-// Women Plus
-const WOMEN_PLUS_SIZES = new Set<string>([
-  // lettered plus
-  '2XL', '3XL', '4XL', '5XL', '6XL',
-  '0X', '1X', '2X', '3X', '4X', '5X', '6X',
-  // numeric plus
-  '18', '19', '20', '22', '24', '26', '28', '30', '32', '34', '36', '38', '40', '42', '44', '46', '48', '50',
-  // W-sizes
-  '14W', '16W', '18W', '20W', '22W', '24W', '26W', '28W', '30W', '32W', '34W',
-]);
-
-// Women Petites
-const WOMEN_PETITE_SIZES = new Set<string>([
-  'P2XS', 'PXS', 'PP', 'PS', 'PM', 'PL', 'PXL', 'P2XL',
-  '00P', '0P', '2P', '4P', '6P', '8P', '10P', '12P', '14P', '16P', '18P', '20P',
-  '0XP', '1XP', '2XP', '3XP', '4XP',
-]);
-
-// Women Tall
-const WOMEN_TALL_SIZES = new Set<string>([
-  '2XS Tall', 'XS Tall', 'S Tall', 'M Tall', 'L Tall', 'XL Tall', '2XL Tall',
-  '00 Tall', '0 Tall', '2 Tall', '4 Tall', '6 Tall', '8 Tall',
-  '10 Tall', '12 Tall', '14 Tall', '16 Tall', '18 Tall', '20 Tall',
-  '0XT', '1XT', '2XT', '3XT', '4XT',
-]);
-
-// Women Juniors
-const WOMEN_JUNIORS_SIZES = new Set<string>([
-  '2XS', 'XS', 'S', 'M', 'L', 'XL', '2XL',
-  '00', '0', '1', '3', '5', '7', '9', '11', '13', '15', '17', '19', '21',
-]);
-
-// Women Maternity
-const WOMEN_MATERNITY_SIZES = new Set<string>([
-  '2XS', 'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL',
-  '0', '2', '4', '6', '8', '10', '12', '14', '16', '18', '20', '22',
-  '0X', '1X', '2X', '3X', '4X', '5X', '6X',
-]);
-
-/**
- * MEN – size buckets
- * For men we let some overlap (e.g. 3XL can be Regular or Big & Tall in eBay),
- * but keep Tall-specific labels in Big & Tall only.
- */
-
-// Men tops/jackets – Regular
-const MEN_REGULAR_TOP_SIZES = new Set<string>([
-  'XS', 'S', 'M', 'L', 'XL',
-  '2XL', '3XL', '4XL', '5XL', '6XL', '7XL',
-  '30', '32', '34', '36', '38', '40', '42', '44', '46', '48', '50',
-]);
-
-// Men tops/jackets – Big & Tall
-const MEN_BIG_TALL_TOP_SIZES = new Set<string>([
-  'XL', '2XL', '3XL', '4XL', '5XL', '6XL', '7XL',
-  '40', '42', '44', '46', '48', '50', '52', '54', '56', '58', '60', '62',
-  'ST', 'MT', 'LT', 'XLT', '2XLT', '3XLT', '4XLT', '5XLT', '6XLT',
-  'Big 1X', 'Big 2X', 'Big 3X', 'Big 4X',
-]);
-
-// Men pants – Regular
-const MEN_REGULAR_PANT_SIZES = new Set<string>([
-  'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL',
-  '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39',
-  '40', '42', '44', '46',
-  'One Size',
-]);
-
-// Men pants – Big & Tall
-const MEN_BIG_TALL_PANT_SIZES = new Set<string>([
-  '30', '31', '32', '33', '34', '35', '36', '37', '38', '39',
-  '40', '42', '44', '46', '48', '50', '52', '54', '56', '58', '60', '62', '64', '66', '68',
-  'ST', 'MT', 'LT', 'XLT', '2XLT', '3XLT', '4XLT',
-  'Big 1X', 'Big 2X', 'Big 3X', 'Big 4X',
-]);
-
-/**
- * KIDS / BOYS / GIRLS – we split only where eBay does (Husky / Slim / Plus),
- * but otherwise leave most sizes as Regular.
- */
-
-// Boys – Husky (tops & pants)
-const BOYS_HUSKY_SIZES = new Set<string>([
-  '4 Husky', '5 Husky', '6 Husky', '7 Husky',
-  '8 Husky', '10 Husky', '12 Husky', '14 Husky',
-  '16 Husky', '18 Husky', '20 Husky',
-]);
-
-// Boys – Slim
-const BOYS_SLIM_SIZES = new Set<string>([
-  '4 Slim', '5 Slim', '6 Slim', '7 Slim',
-  '8 Slim', '9 Slim',
-  '10 Slim', '12 Slim', '14 Slim', '16 Slim', '18 Slim', '20 Slim',
-]);
-
-// Girls – Plus
-const GIRLS_PLUS_SIZES = new Set<string>([
-  '4 Plus', '5 Plus', '6 Plus', '7 Plus',
-  '8 Plus', '10 Plus', '12 Plus', '14 Plus',
-  '16 Plus', '18 Plus', '20 Plus',
-]);
-
-// Girls – Slim
-const GIRLS_SLIM_SIZES = new Set<string>([
-  '4 Slim', '5 Slim', '6 Slim', '7 Slim',
-  '8 Slim', '10 Slim', '12 Slim', '14 Slim', '16 Slim',
-]);
-
-// Toddler
-const TODDLER_SIZES = new Set<string>([
-  'Newborn', 'Preemie',
-  '0-3 Months', '3-6 Months', '6-9 Months', '9-12 Months',
-  '12-18 Months', '18-24 Months',
-  '2T', '3T', '4T', '5T',
-  'One Size',
-]);
-
-/**
- * Return the allowed size set for a given dept + sizeType.
- * NOTE: For men we don't try to distinguish top vs pants by code;
- * we use tops mapping for most "top" categories and pants mapping
- * will still mostly work because of overlapping labels.
- */
-function getAllowedSizeSet(dept: Dept, sizeType: string, categoryPath: string): Set<string> | null {
-  const st = normalizeSizeTypeLabel(sizeType);
-
-  if (dept === 'women') {
-    if (st === 'Regular') return WOMEN_REGULAR_SIZES;
-    if (st === 'Plus') return WOMEN_PLUS_SIZES;
-    if (st === 'Petites') return WOMEN_PETITE_SIZES;
-    if (st === 'Tall') return WOMEN_TALL_SIZES;
-    if (st === 'Juniors') return WOMEN_JUNIORS_SIZES;
-    if (st === 'Maternity') return WOMEN_MATERNITY_SIZES;
-    return null;
-  }
-
-  if (dept === 'men') {
-    const p = norm(categoryPath);
-    const isPants =
-      p.includes('pants') ||
-      p.includes('jeans') ||
-      p.includes('shorts');
-
-    if (st === 'Regular') {
-      return isPants ? MEN_REGULAR_PANT_SIZES : MEN_REGULAR_TOP_SIZES;
-    }
-    if (st === 'Big & Tall') {
-      return isPants ? MEN_BIG_TALL_PANT_SIZES : MEN_BIG_TALL_TOP_SIZES;
-    }
-    return null;
-  }
-
-  if (dept === 'boys') {
-    if (st === 'Husky') return BOYS_HUSKY_SIZES;
-    if (st === 'Slim') return BOYS_SLIM_SIZES;
-    // Regular: don't filter aggressively – kids sizing is very mixed
-    if (st === 'Regular') return null;
-    return null;
-  }
-
-  if (dept === 'girls') {
-    if (st === 'Plus') return GIRLS_PLUS_SIZES;
-    if (st === 'Slim') return GIRLS_SLIM_SIZES;
-    if (st === 'Regular') return null;
-    return null;
-  }
-
-  if (dept === 'toddler') {
-    return TODDLER_SIZES;
-  }
-
-  return null;
-}
-
-/**
- * Filter the Size options based on Size Type AND department.
- * If no match, we fall back to all options so nothing disappears silently.
- */
-function filterSizeOptionsBySizeType(
-  sizeType: string,
-  allOptions: string[] = [],
-  categoryPath: string = ''
-): string[] {
-  const dept = detectDeptFromCategoryPath(categoryPath);
-  if (!sizeType || !allOptions.length) return allOptions;
-
-  const allowedSet = getAllowedSizeSet(dept, sizeType, categoryPath);
-  if (!allowedSet) {
-    // no strict mapping for this combo → keep original options
-    return allOptions;
-  }
-
-  return allOptions.filter((o) => allowedSet.has(o.trim()));
-}
 
 // detect the current "Size Type" selected value from item specifics
 function getSizeTypeValue(specs: any[]): string {
@@ -295,6 +44,17 @@ function getSizeTypeValue(specs: any[]): string {
 // recognize size-like aspect names that should be filtered by Size Type
 function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+}
+
+/**
+ * Wrapper that delegates to the central sizeMaps.ts
+ */
+function filterSizeOptionsBySizeType(
+  sizeType: string,
+  allOptions: string[] = [],
+  categoryPath: string = ''
+): string[] {
+  return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
 }
 
 /* -------------------------------------------------------
@@ -708,7 +468,7 @@ export default function HomePage() {
     }));
   };
 
-  // main change handler with dependency logic between Size Type and Size
+  // main change handler with dependency logic between Size, Size Type and category
   const handleItemSpecificsChange = (index: number, value: string | string[]) => {
     setListingData((prev: any) => {
       const next = [...(prev?.item_specifics ?? [])];
@@ -719,11 +479,55 @@ export default function HomePage() {
         const arr = Array.isArray(value) ? value : value ? [String(value)] : [];
         next[index] = { ...next[index], value: arr };
       } else {
-        next[index] = { ...next[index], value: String(Array.isArray(value) ? value[0] ?? '' : value) };
+        next[index] = {
+          ...next[index],
+          value: String(Array.isArray(value) ? value[0] ?? '' : value),
+        };
       }
 
-      // if "Size Type" changed, we should re-filter Size options
-      if (/size type/i.test(next[index].name || '')) {
+      const categoryPath = prev?.category?.path || '';
+      const fieldName = String(next[index].name || '');
+
+      // If "Size" changed → try to auto-detect Size Type and align options
+      if (isSizeAspectName(fieldName)) {
+        const sizeVal = next[index].value;
+        const detectedType = detectSizeTypeForFamily(categoryPath, sizeVal);
+
+        if (detectedType) {
+          const sizeTypeIdx = next.findIndex((s: any) =>
+            /size type/i.test(s?.name || '')
+          );
+          if (sizeTypeIdx !== -1) {
+            const stSpec = next[sizeTypeIdx];
+            const stOptions = Array.isArray(stSpec.options) ? stSpec.options : [];
+            if (stOptions.includes(detectedType)) {
+              // update size type value
+              next[sizeTypeIdx] = { ...stSpec, value: detectedType };
+
+              // also re-filter the size options for that detected type
+              const sizeIdx = next.findIndex((s: any) =>
+                isSizeAspectName(s?.name || '')
+              );
+              if (sizeIdx !== -1) {
+                const sizeSpec = next[sizeIdx];
+                const filtered = filterSizeOptionsBySizeType(
+                  detectedType,
+                  sizeSpec?.options || [],
+                  categoryPath
+                );
+                if (sizeSpec.value && !filtered.includes(sizeSpec.value)) {
+                  next[sizeIdx] = { ...sizeSpec, options: filtered, value: '' };
+                } else {
+                  next[sizeIdx] = { ...sizeSpec, options: filtered };
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // If "Size Type" changed → re-filter Size options
+      if (/size type/i.test(fieldName)) {
         const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
         if (sizeIdx !== -1) {
           const sizeSpec = next[sizeIdx];
@@ -731,10 +535,9 @@ export default function HomePage() {
           const filtered = filterSizeOptionsBySizeType(
             newSizeTypeVal,
             sizeSpec?.options || [],
-            prev?.category?.path || ''
+            categoryPath
           );
-          // if current value is not allowed anymore → clear it
-          if (!filtered.includes(sizeSpec?.value)) {
+          if (sizeSpec.value && !filtered.includes(sizeSpec.value)) {
             next[sizeIdx] = { ...sizeSpec, options: filtered, value: '' };
           } else {
             next[sizeIdx] = { ...sizeSpec, options: filtered };
@@ -933,7 +736,8 @@ export default function HomePage() {
       if (!spec.required) continue;
       const value = spec.value;
       if (Array.isArray(value)) {
-        if (value.length === 0) errors.push(`${spec.name} is required (select at least one option)`);
+        if (value.length === 0)
+          errors.push(`${spec.name} is required (select at least one option)`);
       } else {
         if (!String(value ?? '').trim()) errors.push(`${spec.name} is required`);
       }
@@ -1000,7 +804,10 @@ export default function HomePage() {
     }
 
     return (
-      <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
+      <div
+        key={`${spec?.name ?? 'spec'}-${index}`}
+        className="grid grid-cols-2 gap-2 mb-3"
+      >
         <div className="flex items-center">
           <span className="text-sm text-gray-700">{spec?.name || 'Specific'}</span>
           {spec?.required ? <span className="ml-1 text-red-500">*</span> : null}
@@ -1020,15 +827,20 @@ export default function HomePage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Try It Now - Free Demo</h2>
+              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+                Try It Now - Free Demo
+              </h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                Upload up to 12 photos and see how our AI creates professional listings instantly
+                Upload up to 12 photos and see how our AI creates professional listings
+                instantly
               </p>
             </div>
 
             {validationErrors.length > 0 && (
               <div className="mb-6 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
-                <p className="font-semibold mb-2">Please fix the following before publishing:</p>
+                <p className="font-semibold mb-2">
+                  Please fix the following before publishing:
+                </p>
                 <ul className="list-disc ml-5">
                   {validationErrors.map((e, i) => (
                     <li key={i}>{e}</li>
@@ -1038,7 +850,10 @@ export default function HomePage() {
             )}
 
             {!listingData ? (
-              <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <form
+                onSubmit={handleSubmit}
+                className="grid grid-cols-1 lg:grid-cols-2 gap-8"
+              >
                 {/* Upload */}
                 <div className="card p-6">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
@@ -1048,7 +863,9 @@ export default function HomePage() {
 
                   <div
                     className={`border-2 border-dashed rounded-lg p-6 text-center mb-4 transition-all cursor-pointer ${
-                      isDragging ? 'border-teal-500 bg-teal-50' : 'border-gray-300 hover:border-teal-400'
+                      isDragging
+                        ? 'border-teal-500 bg-teal-50'
+                        : 'border-gray-300 hover:border-teal-400'
                     }`}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
@@ -1064,7 +881,9 @@ export default function HomePage() {
                       onChange={handleFileInputChange}
                     />
                     <Upload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                    <p className="text-gray-700 font-medium">Drag and drop your photos here</p>
+                    <p className="text-gray-700 font-medium">
+                      Drag and drop your photos here
+                    </p>
                     <p className="text-gray-500 text-sm">or click to browse</p>
                   </div>
 
@@ -1072,7 +891,11 @@ export default function HomePage() {
                     <div className="grid grid-cols-4 gap-3 mb-4">
                       {photoPreviewUrls.map((url, index) => (
                         <div key={index} className="relative group aspect-square">
-                          <img src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover rounded-lg" />
+                          <img
+                            src={url}
+                            alt={`Product ${index + 1}`}
+                            className="w-full h-full object-cover rounded-lg"
+                          />
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1093,7 +916,9 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
+                  <p className="text-sm text-gray-500 text-center">
+                    {photos.length}/12 photos uploaded
+                  </p>
                 </div>
 
                 {/* AI Generation */}
@@ -1144,13 +969,19 @@ export default function HomePage() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1">
                   <div className="card overflow-hidden">
-                    <img src={photoPreviewUrls[0]} alt="Main product" className="w-full h-auto object-cover" />
+                    <img
+                      src={photoPreviewUrls[0]}
+                      alt="Main product"
+                      className="w-full h-auto object-cover"
+                    />
                   </div>
                 </div>
 
                 <div className="lg:col-span-2 space-y-6">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
+                    <h2 className="text-2xl font-bold text-gray-900">
+                      Your Generated Listing
+                    </h2>
                     <div className="flex items-center gap-3">
                       <button
                         onClick={handlePublishToEbay}
@@ -1181,7 +1012,9 @@ export default function HomePage() {
                   {/* Editable form */}
                   <div className="bg-white rounded-lg shadow p-6 space-y-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Title</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Title
+                      </label>
                       <input
                         type="text"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -1195,12 +1028,16 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Category</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Category
+                      </label>
                       <div
                         onClick={() => setShowCategorySelector(true)}
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
                       >
-                        <span>{listingData?.category?.path || 'Click to select a category...'}</span>
+                        <span>
+                          {listingData?.category?.path || 'Click to select a category...'}
+                        </span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
                           width="20"
@@ -1219,7 +1056,9 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">Description</label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">
+                        Description
+                      </label>
                       <textarea
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                         rows={5}
@@ -1231,8 +1070,8 @@ export default function HomePage() {
                     {!!(listingData?.item_specifics?.length) && (
                       <div>
                         <label className="block text-sm font-semibold text-gray-600 mb-2">
-  Item Specifics (HOME TEST)
-</label>
+                          Item Specifics
+                        </label>
 
                         {listingData.item_specifics.map((spec: any, index: number) =>
                           renderSpecificRow(spec, index)
