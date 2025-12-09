@@ -8,6 +8,10 @@ import React, {
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CategorySelector from '../components/CategorySelector';
+import {
+  filterSizesForFamilyAndSizeType,
+  detectSizeTypeForFamily,
+} from '../utils/sizeMaps';
 
 type Category = {
   id: string;
@@ -100,53 +104,17 @@ function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
 function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
-
-// numeric helper
-function parseFirstNumber(s: string): number | null {
-  const m = (s || '').match(/\d+(?:\.\d+)?/);
-  return m ? Number(m[0]) : null;
-}
-
-function isTallToken(v: string) {
-  return /(tall|long|\bLT\b|\bXLT\b|\b2XLT\b|\b3XLT\b|\b4XLT\b|\b5XLT\b)/i.test(
-    v,
-  );
-}
-function isPetiteToken(v: string) {
-  return /(petite|\bP\b|\bPS\b|\bPM\b|\bPL\b|\bPXL\b|\bPetites?\b)/i.test(v);
-}
-function isJuniorToken(v: string) {
-  return /(junior|jr\b|juniors)/i.test(v);
-}
-function isMaternityToken(v: string) {
-  return /maternity/i.test(v);
-}
-function isBigToken(v: string) {
-  return /(husky|big|big & tall|b&t)/i.test(v);
-}
-function isPlusNumeric(v: string) {
-  // 1X 2X 3X etc are usually "Plus" or Big sets
-  return /\b[1-6]X(L|LT)?\b/i.test(v);
-}
-function isLargeNumeric(v: string) {
-  const n = parseFirstNumber(v);
-  if (n == null) return false;
-  return n >= 46;
-}
-function isJuniorsOddNumber(v: string) {
-  const n = parseFirstNumber(v);
-  if (n == null) return false;
-  return n % 2 === 1 && n <= 19;
-}
-
 /**
- * Filter the size options based on Size Type selection.
- * If no type chosen -> return full set.
+ * Centralized size filtering using sizeMaps.ts
  */
 function filterSizeOptionsBySizeType(
   sizeType: string,
   allOptions: string[] = [],
+  categoryPath: string = ''
 ): string[] {
+  return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
+}
+string[] {
   const st = (sizeType || '').toLowerCase();
   if (!st) return allOptions;
 
@@ -206,8 +174,13 @@ function filterSizeOptionsBySizeType(
  * - Filters the Size options from the original eBay set (`allOptions`)
  * - Clears Size value if it’s incompatible with the new type
  */
+/**
+ * Apply Size Type filter to Size fields in the specifics list
+ * Now includes categoryPath for proper filtering
+ */
 function applySizeTypeFilterToSpecifics(
   specs: ItemSpecific[],
+  categoryPath: string = ''
 ): ItemSpecific[] {
   const sizeTypeVal = getSizeTypeValueFromSpecifics(specs);
   if (!sizeTypeVal) return specs;
@@ -216,15 +189,19 @@ function applySizeTypeFilterToSpecifics(
     if (!isSizeAspectName(spec.name)) return spec;
 
     const fullOptions = spec.allOptions ?? spec.options ?? [];
-    const filtered = filterSizeOptionsBySizeType(sizeTypeVal, fullOptions);
+    const filtered = filterSizeOptionsBySizeType(
+      sizeTypeVal,
+      fullOptions,
+      categoryPath  // ← NOW INCLUDES CATEGORY PATH
+    );
 
     let value = spec.value;
     const valueStr = firstValue(
       typeof value === 'string' || Array.isArray(value) ? value : '',
     );
 
+    // Clear value if it's not compatible with the new Size Type
     if (valueStr && !filtered.includes(valueStr)) {
-      // current size is not valid for this Size Type -> clear it
       value = spec.multi ? [] : '';
     }
 
@@ -652,7 +629,10 @@ export default function ResultsPage() {
           aiDetectedRef.current || {},
         );
 
-        const sizeFiltered = applySizeTypeFilterToSpecifics(filledSpecifics);
+        const sizeFiltered = applySizeTypeFilterToSpecifics(
+  filledSpecifics,
+  category?.path || ''
+);
         setSpecifics(sizeFiltered);
       } catch (err) {
         console.error('Error fetching specifics:', err);
@@ -740,7 +720,10 @@ export default function ResultsPage() {
             base,
             aiDetectedRef.current || {},
           );
-          const sizeFiltered = applySizeTypeFilterToSpecifics(filled);
+          const sizeFiltered = applySizeTypeFilterToSpecifics(
+  filled,
+  initialCategory?.path || ''
+);
           setSpecifics(sizeFiltered);
         }
 
@@ -769,19 +752,21 @@ export default function ResultsPage() {
     await fetchCategorySpecifics(newCategory.id);
   };
 
-  const updateSpecific = (idx: number, value: string | string[]) => {
-    setSpecifics((prev) => {
-      let next = [...prev];
-      next[idx] = { ...next[idx], value };
+const updateSpecific = (idx: number, value: string | string[]) => {
+  setSpecifics((prev) => {
+    let next = [...prev];
+    next[idx] = { ...next[idx], value };
 
-      // If this is the Size Type field, re-apply Size filter
-      if (/size type/i.test(next[idx].name || '')) {
-        next = applySizeTypeFilterToSpecifics(next);
-      }
+    if (/size type/i.test(next[idx].name || '')) {
+      next = applySizeTypeFilterToSpecifics(
+        next,
+        category?.path || ''  // ← ADD THIS
+      );
+    }
 
-      return next;
-    });
-  };
+    return next;
+  });
+};
 
   const addSpecific = () =>
     setSpecifics((prev) => [...prev, { name: '', value: '' }]);
