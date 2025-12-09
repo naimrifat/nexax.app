@@ -165,7 +165,6 @@ function filterSizeOptionsBySizeType(
 
   // Regular / Misses / default
   return allOptions.filter(regularExclude);
-}
 
 /**
  * Apply Size Type filter to the "Size" aspect in a list of specifics.
