@@ -1,36 +1,82 @@
-// src/utils/sizeMaps.ts
+// utils/sizeMaps.ts
 
-export type SizeTypeLabel =
-  | 'Regular'
-  | 'Plus'
-  | 'Petites'
-  | 'Tall'
-  | 'Juniors'
-  | 'Maternity'
-  | 'Big & Tall';
+// -------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------
+const norm = (s: string) => s.trim().toLowerCase();
 
-export type SizeFamilyKey = 'WOMEN_CLOTHING' | 'MEN_TOPS' | 'MEN_PANTS';
+function normalizeSizeTypeKey(label: string): string {
+  const s = norm(label);
+  if (!s) return '';
 
-/**
- * IMPORTANT:
- * These are exact eBay size VALUES, without the item counts.
- * For overlapping values (like 2XL that appear under Regular AND Plus on eBay),
- * I treat them as belonging to BOTH buckets. The reverse map will use a priority
- * order so we can decide what Size Type we prefer when auto-detecting.
- */
+  if (s.includes('regular')) return 'Regular';
+  if (s.includes('plus')) return 'Plus';
+  if (s.includes('petite')) return 'Petites';
+  if (s.includes('tall')) return 'Tall';
+  if (s.includes('junior')) return 'Juniors';
+  if (s.includes('maternity')) return 'Maternity';
+  if (s.includes('big') && s.includes('tall')) return 'Big & Tall';
+  if (s === 'husky') return 'Husky';
+  if (s === 'slim') return 'Slim';
 
-const WOMEN_REGULAR = [
+  return label;
+}
+
+// -------------------------------------------------------------
+// Category → family detection
+// -------------------------------------------------------------
+type SizeFamily =
+  | 'women_all'
+  | 'men_top'
+  | 'men_bottom'
+  | 'boys_all'
+  | 'girls_all'
+  | 'toddler_all'
+  | null;
+
+function getSizeFamily(categoryPath: string): SizeFamily {
+  const p = norm(categoryPath || '');
+
+  // Toddler / baby first so they don't get caught by "boys/girls"
+  if (p.includes('toddler') || p.includes('baby')) return 'toddler_all';
+
+  const hasWomen = p.includes('women');
+  const hasMen = p.includes('men');
+  const hasBoys = p.includes('boys');
+  const hasGirls = p.includes('girls');
+
+  if (hasWomen) return 'women_all';
+
+  if (hasMen) {
+    const isBottom =
+      p.includes('pants') ||
+      p.includes('jeans') ||
+      p.includes('shorts') ||
+      p.includes('trousers') ||
+      p.includes('chinos') ||
+      p.includes('slacks');
+
+    return isBottom ? 'men_bottom' : 'men_top';
+  }
+
+  if (hasBoys) return 'boys_all';
+  if (hasGirls) return 'girls_all';
+
+  return null;
+}
+
+// -------------------------------------------------------------
+// WOMEN (applies to dresses, tops, sleepwear, etc. – clothing)
+// -------------------------------------------------------------
+
+// Regular: XS–XL + numeric 0–16 + One Size
+const WOMEN_REGULAR = new Set<string>([
   '2XS',
   'XS',
   'S',
   'M',
   'L',
   'XL',
-  '2XL',
-  '3XL',
-  '4XL',
-  '5XL',
-  '6XL',
   '0',
   '2',
   '4',
@@ -42,10 +88,6 @@ const WOMEN_REGULAR = [
   '15',
   '16',
   '17',
-  '18',
-  '19',
-  '20',
-  '22',
   '30',
   '32',
   '34',
@@ -58,15 +100,26 @@ const WOMEN_REGULAR = [
   '48',
   '50',
   'One Size',
-];
+]);
 
-const WOMEN_PLUS = [
+// Plus: all obvious plus indicators only
+const WOMEN_PLUS = new Set<string>([
+  // lettered plus
   '2XL',
   '3XL',
   '4XL',
   '5XL',
   '6XL',
+  '0X',
+  '1X',
+  '2X',
+  '3X',
+  '4X',
+  '5X',
+  '6X',
+  // numeric plus
   '18',
+  '19',
   '20',
   '22',
   '24',
@@ -83,6 +136,7 @@ const WOMEN_PLUS = [
   '46',
   '48',
   '50',
+  // W-sizes
   '14W',
   '16W',
   '18W',
@@ -94,16 +148,10 @@ const WOMEN_PLUS = [
   '30W',
   '32W',
   '34W',
-  '0X',
-  '1X',
-  '2X',
-  '3X',
-  '4X',
-  '5X',
-  '6X',
-];
+]);
 
-const WOMEN_PETITES = [
+// Petites
+const WOMEN_PETITES = new Set<string>([
   'P2XS',
   'PXS',
   'PP',
@@ -129,9 +177,10 @@ const WOMEN_PETITES = [
   '2XP',
   '3XP',
   '4XP',
-];
+]);
 
-const WOMEN_TALL = [
+// Tall
+const WOMEN_TALL = new Set<string>([
   '2XS Tall',
   'XS Tall',
   'S Tall',
@@ -156,9 +205,10 @@ const WOMEN_TALL = [
   '2XT',
   '3XT',
   '4XT',
-];
+]);
 
-const WOMEN_JUNIORS = [
+// Juniors
+const WOMEN_JUNIORS = new Set<string>([
   '2XS',
   'XS',
   'S',
@@ -179,9 +229,10 @@ const WOMEN_JUNIORS = [
   '17',
   '19',
   '21',
-];
+]);
 
-const WOMEN_MATERNITY = [
+// Maternity
+const WOMEN_MATERNITY = new Set<string>([
   '2XS',
   'XS',
   'S',
@@ -209,9 +260,23 @@ const WOMEN_MATERNITY = [
   '4X',
   '5X',
   '6X',
-];
+]);
 
-const MEN_TOPS_REGULAR = [
+const WOMEN_MAP: Record<string, Set<string>> = {
+  Regular: WOMEN_REGULAR,
+  Plus: WOMEN_PLUS,
+  Petites: WOMEN_PETITES,
+  Tall: WOMEN_TALL,
+  Juniors: WOMEN_JUNIORS,
+  Maternity: WOMEN_MATERNITY,
+};
+
+// -------------------------------------------------------------
+// MEN
+// -------------------------------------------------------------
+
+// Tops / jackets – Regular
+const MEN_TOP_REGULAR = new Set<string>([
   'XS',
   'S',
   'M',
@@ -234,9 +299,10 @@ const MEN_TOPS_REGULAR = [
   '46',
   '48',
   '50',
-];
+]);
 
-const MEN_TOPS_BIGTALL = [
+// Tops / jackets – Big & Tall
+const MEN_TOP_BIGTALL = new Set<string>([
   'XL',
   '2XL',
   '3XL',
@@ -255,6 +321,7 @@ const MEN_TOPS_BIGTALL = [
   '56',
   '58',
   '60',
+  '62',
   'ST',
   'MT',
   'LT',
@@ -268,67 +335,10 @@ const MEN_TOPS_BIGTALL = [
   'Big 2X',
   'Big 3X',
   'Big 4X',
-];
+]);
 
-const MEN_SUIT_REGULAR = [
-  'XS',
-  'S',
-  'M',
-  'L',
-  'XL',
-  '2XL',
-  '3XL',
-  '4XL',
-  '5XL',
-  '6XL',
-  '30',
-  '32',
-  '34',
-  '36',
-  '38',
-  '40',
-  '41',
-  '42',
-  '43',
-  '44',
-  '46',
-  '48',
-  '50',
-];
-
-const MEN_SUIT_BIGTALL = [
-  'S',
-  'M',
-  'L',
-  'XL',
-  '2XL',
-  '3XL',
-  '4XL',
-  '5XL',
-  '6XL',
-  '36',
-  '38',
-  '40',
-  '41',
-  '42',
-  '43',
-  '44',
-  '46',
-  '48',
-  '50',
-  '52',
-  '54',
-  '56',
-  '58',
-  '60',
-  '62',
-  'XLT',
-  '2XLT',
-  '3XLT',
-  '4XLT',
-];
-
-const MEN_PANTS_REGULAR = [
+// Pants – Regular
+const MEN_BOTTOM_REGULAR = new Set<string>([
   'XS',
   'S',
   'M',
@@ -357,9 +367,10 @@ const MEN_PANTS_REGULAR = [
   '44',
   '46',
   'One Size',
-];
+]);
 
-const MEN_PANTS_BIGTALL = [
+// Pants – Big & Tall
+const MEN_BOTTOM_BIGTALL = new Set<string>([
   '30',
   '31',
   '32',
@@ -396,201 +407,195 @@ const MEN_PANTS_BIGTALL = [
   'Big 2X',
   'Big 3X',
   'Big 4X',
-];
+]);
 
-type SizeMap = Record<SizeTypeLabel, string[]>;
-
-const WOMEN_CLOTHING_SIZE_MAP: SizeMap = {
-  Regular: WOMEN_REGULAR,
-  Plus: WOMEN_PLUS,
-  Petites: WOMEN_PETITES,
-  Tall: WOMEN_TALL,
-  Juniors: WOMEN_JUNIORS,
-  Maternity: WOMEN_MATERNITY,
-  'Big & Tall': [], // not relevant for women
+const MEN_TOP_MAP: Record<string, Set<string>> = {
+  Regular: MEN_TOP_REGULAR,
+  'Big & Tall': MEN_TOP_BIGTALL,
 };
 
-const MEN_TOPS_SIZE_MAP: SizeMap = {
-  Regular: MEN_TOPS_REGULAR,
-  Plus: [], // plus handled via Big & Tall for men
-  Petites: [],
-  Tall: [], // tall is encoded in Big & Tall labels (XLT etc)
-  Juniors: [],
-  Maternity: [],
-  'Big & Tall': MEN_TOPS_BIGTALL,
+const MEN_BOTTOM_MAP: Record<string, Set<string>> = {
+  Regular: MEN_BOTTOM_REGULAR,
+  'Big & Tall': MEN_BOTTOM_BIGTALL,
 };
 
-const MEN_PANTS_SIZE_MAP: SizeMap = {
-  Regular: MEN_PANTS_REGULAR,
-  Plus: [],
-  Petites: [],
-  Tall: [],
-  Juniors: [],
-  Maternity: [],
-  'Big & Tall': MEN_PANTS_BIGTALL,
+// -------------------------------------------------------------
+// BOYS
+// -------------------------------------------------------------
+const BOYS_HUSKY = new Set<string>([
+  '4 Husky',
+  '5 Husky',
+  '6 Husky',
+  '7 Husky',
+  '8 Husky',
+  '10 Husky',
+  '12 Husky',
+  '14 Husky',
+  '16 Husky',
+  '18 Husky',
+  '20 Husky',
+]);
+
+const BOYS_SLIM = new Set<string>([
+  '4 Slim',
+  '5 Slim',
+  '6 Slim',
+  '7 Slim',
+  '8 Slim',
+  '9 Slim',
+  '10 Slim',
+  '12 Slim',
+  '14 Slim',
+  '16 Slim',
+  '18 Slim',
+  '20 Slim',
+]);
+
+const BOYS_MAP: Record<string, Set<string>> = {
+  Husky: BOYS_HUSKY,
+  Slim: BOYS_SLIM,
+  // Regular → we deliberately do NOT filter so kids' core sizes stay flexible
 };
 
-export const SIZE_MAP: Record<SizeFamilyKey, SizeMap> = {
-  WOMEN_CLOTHING: WOMEN_CLOTHING_SIZE_MAP,
-  MEN_TOPS: MEN_TOPS_SIZE_MAP,
-  MEN_PANTS: MEN_PANTS_SIZE_MAP,
+// -------------------------------------------------------------
+// GIRLS
+// -------------------------------------------------------------
+const GIRLS_PLUS = new Set<string>([
+  '4 Plus',
+  '5 Plus',
+  '6 Plus',
+  '7 Plus',
+  '8 Plus',
+  '10 Plus',
+  '12 Plus',
+  '14 Plus',
+  '16 Plus',
+  '18 Plus',
+  '20 Plus',
+]);
+
+const GIRLS_SLIM = new Set<string>([
+  '4 Slim',
+  '5 Slim',
+  '6 Slim',
+  '7 Slim',
+  '8 Slim',
+  '10 Slim',
+  '12 Slim',
+  '14 Slim',
+  '16 Slim',
+]);
+
+const GIRLS_MAP: Record<string, Set<string>> = {
+  Plus: GIRLS_PLUS,
+  Slim: GIRLS_SLIM,
+  // Regular → again, no hard filter
 };
 
-/**
- * Build reverse lookup: for each size value, which Size Type should we prefer?
- * Priority order is important when a value appears in multiple buckets.
- * For women I bias Plus/Petites/Juniors over Regular; for men I bias Big & Tall
- * over Regular when the size clearly belongs there.
- */
-const SIZE_TYPE_PRIORITY: SizeTypeLabel[] = [
-  'Petites',
-  'Juniors',
-  'Maternity',
-  'Plus',
-  'Tall',
-  'Big & Tall',
-  'Regular',
-];
+// -------------------------------------------------------------
+// TODDLER
+// -------------------------------------------------------------
+const TODDLER_ALL = new Set<string>([
+  'Newborn',
+  'Preemie',
+  '0-3 Months',
+  '3-6 Months',
+  '6-9 Months',
+  '9-12 Months',
+  '12-18 Months',
+  '18-24 Months',
+  '2T',
+  '3T',
+  '4T',
+  '5T',
+  'One Size',
+]);
 
-type ReverseSizeMap = Record<SizeFamilyKey, Record<string, SizeTypeLabel>>;
-
-export const REVERSE_SIZE_MAP: ReverseSizeMap = (() => {
-  const out: Partial<ReverseSizeMap> = {};
-
-  (Object.keys(SIZE_MAP) as SizeFamilyKey[]).forEach((family) => {
-    const famMap = SIZE_MAP[family];
-    const rev: Record<string, SizeTypeLabel> = {};
-
-    SIZE_TYPE_PRIORITY.forEach((label) => {
-      const sizes = famMap[label] || [];
-      sizes.forEach((sz) => {
-        if (!rev[sz]) {
-          rev[sz] = label;
-        }
-      });
-    });
-
-    out[family] = rev;
-  });
-
-  return out as ReverseSizeMap;
-})();
+// -------------------------------------------------------------
+// Public API
+// -------------------------------------------------------------
 
 /**
- * Normalize size type strings coming from eBay / AI / user into our labels.
- */
-export function normalizeSizeTypeLabel(raw: string | undefined | null): SizeTypeLabel | '' {
-  if (!raw) return '';
-  const v = raw.toString().toLowerCase();
-
-  if (v.includes('petite')) return 'Petites';
-  if (v.includes('junior')) return 'Juniors';
-  if (v.includes('maternity')) return 'Maternity';
-  if (v.includes('big') || v.includes('husky') || v.includes('tall')) return 'Big & Tall';
-  if (v.includes('plus')) return 'Plus';
-  if (v.includes('regular') || v.includes('standard') || v.includes('misses')) return 'Regular';
-
-  return '';
-}
-
-/**
- * Map a category path to a size family.
- * This is where we decide which map to use for a given eBay category path.
- */
-export function getSizeFamilyForCategoryPath(path: string): SizeFamilyKey | null {
-  const p = path.toLowerCase();
-
-  // Women clothing (tops, dresses, outerwear, bottoms)
-  if (
-    p.includes("women") &&
-    (p.includes("dress") ||
-      p.includes("dresses") ||
-      p.includes("tops") ||
-      p.includes("shirt") ||
-      p.includes("blouse") ||
-      p.includes("sweater") ||
-      p.includes("coat") ||
-      p.includes("jacket") ||
-      p.includes("jeans") ||
-      p.includes("pants") ||
-      p.includes("leggings") ||
-      p.includes("shorts") ||
-      p.includes("skirts") ||
-      p.includes("activewear") ||
-      p.includes("intimates") ||
-      p.includes("swimwear"))
-  ) {
-    return 'WOMEN_CLOTHING';
-  }
-
-  // Men – tops, outerwear, etc.
-  if (
-    p.includes("men") &&
-    (p.includes("shirt") ||
-      p.includes("t-shirt") ||
-      p.includes("tshirt") ||
-      p.includes("tops") ||
-      p.includes("sweater") ||
-      p.includes("hoodie") ||
-      p.includes("coat") ||
-      p.includes("jacket") ||
-      p.includes("sport coats") ||
-      p.includes("blazers"))
-  ) {
-    return 'MEN_TOPS';
-  }
-
-  // Men – pants/jeans/shorts
-  if (
-    p.includes("men") &&
-    (p.includes("jeans") ||
-      p.includes("pants") ||
-      p.includes("trousers") ||
-      p.includes("shorts"))
-  ) {
-    return 'MEN_PANTS';
-  }
-
-  return null;
-}
-
-/**
- * Given a category path, selected Size Type and all eBay options,
- * return the subset of options valid for that combo.
+ * Return filtered size options for a given category path + size type.
+ * If we don't have a mapping for that combination, we simply return the
+ * original list so nothing breaks.
  */
 export function filterSizesForFamilyAndSizeType(
   categoryPath: string,
-  sizeTypeRaw: string,
+  sizeType: string,
   allOptions: string[] = []
 ): string[] {
-  const family = getSizeFamilyForCategoryPath(categoryPath);
+  if (!sizeType || !allOptions.length) return allOptions;
+
+  const family = getSizeFamily(categoryPath);
   if (!family) return allOptions;
 
-  const map = SIZE_MAP[family];
-  if (!map) return allOptions;
+  const key = normalizeSizeTypeKey(sizeType);
 
-  const st = normalizeSizeTypeLabel(sizeTypeRaw) || 'Regular';
-  const allowed = new Set(map[st] || []);
+  let allowed: Set<string> | undefined;
 
-  // If for some reason that type has no entries in our map, don't over-filter.
-  if (allowed.size === 0) return allOptions;
+  if (family === 'women_all') {
+    allowed = WOMEN_MAP[key];
+  } else if (family === 'men_top') {
+    allowed = MEN_TOP_MAP[key];
+  } else if (family === 'men_bottom') {
+    allowed = MEN_BOTTOM_MAP[key];
+  } else if (family === 'boys_all') {
+    allowed = BOYS_MAP[key];
+  } else if (family === 'girls_all') {
+    allowed = GIRLS_MAP[key];
+  } else if (family === 'toddler_all') {
+    // toddler has only one implicit size type, so we don't care what label is
+    allowed = TODDLER_ALL;
+  }
 
-  return allOptions.filter((opt) => allowed.has(opt));
+  if (!allowed) {
+    // no strict rule → leave as-is
+    return allOptions;
+  }
+
+  return allOptions.filter((o) => allowed!.has(o.trim()));
 }
 
 /**
- * Auto-detect Size Type for a given size value, within a category family.
+ * Given the detected Size value and category, infer the correct Size Type.
+ * This is used to auto-set Size Type when Size is chosen/AI-detected.
  */
 export function detectSizeTypeForFamily(
   categoryPath: string,
   sizeValue: string | string[] | undefined
-): SizeTypeLabel | '' {
-  const family = getSizeFamilyForCategoryPath(categoryPath);
-  if (!family || !sizeValue) return '';
-
-  const v = Array.isArray(sizeValue) ? sizeValue[0] : sizeValue;
+): string {
+  if (!sizeValue) return '';
+  const v = Array.isArray(sizeValue)
+    ? String(sizeValue[0] ?? '').trim()
+    : String(sizeValue ?? '').trim();
   if (!v) return '';
 
-  const rev = REVERSE_SIZE_MAP[family];
-  return rev[v] || '';
+  const family = getSizeFamily(categoryPath);
+  if (!family) return '';
+
+  const mapsByFamily: Record<
+    SizeFamily,
+    Record<string, Set<string>> | undefined
+  > = {
+    women_all: WOMEN_MAP,
+    men_top: MEN_TOP_MAP,
+    men_bottom: MEN_BOTTOM_MAP,
+    boys_all: BOYS_MAP,
+    girls_all: GIRLS_MAP,
+    toddler_all: { Regular: TODDLER_ALL },
+    null: undefined,
+  };
+
+  const map = mapsByFamily[family];
+  if (!map) return '';
+
+  const matches = Object.entries(map).filter(([_, set]) => set.has(v));
+
+  if (matches.length === 1) {
+    return matches[0][0]; // the size type label (e.g. "Plus")
+  }
+
+  // ambiguous or no match → let user pick
+  return '';
 }
