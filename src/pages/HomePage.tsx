@@ -461,12 +461,17 @@ export default function HomePage() {
     }
   };
 
-  const handleInputChange = (field: string, value: any) => {
-    setListingData((prevData: any) => ({
-      ...(prevData ?? {}),
-      [field]: value,
-    }));
-  };
+const handleInputChange = (field: string, value: any) => {
+  setListingData((prevData: any) => ({
+    ...(prevData ?? {}),
+    [field]: value,
+  }));
+  
+  // Clear errors when user starts fixing
+  if (validationErrors.length > 0) {
+    setValidationErrors([]);
+  }
+};
 
   // main change handler with dependency logic between Size, Size Type and category
   const handleItemSpecificsChange = (index: number, value: string | string[]) => {
