@@ -467,7 +467,7 @@ const handleInputChange = (field: string, value: any) => {
     [field]: value,
   }));
   
-  // Clear errors when user starts fixing
+  // Clear validation errors when user starts editing
   if (validationErrors.length > 0) {
     setValidationErrors([]);
   }
@@ -753,41 +753,48 @@ const handleInputChange = (field: string, value: any) => {
     return { valid: errors.length === 0, errors };
   };
 
-  const handlePublishToEbay = async () => {
-    if (!listingData) return;
+const handlePublishToEbay = async () => {
+  if (!listingData) return;
 
-    const validation = validateListing();
-    setValidationErrors(validation.errors);
-    if (!validation.valid) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
+  // Run validation
+  const validation = validateListing();
+  setValidationErrors(validation.errors);
+
+  if (!validation.valid) {
+    // Scroll to top so user sees the error box
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+
+  // Clear any old errors
+  setValidationErrors([]);
+
+  setStatus('Publishing to eBay...');
+  try {
+    const response = await fetch('/api/publish-listing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        listing_data: listingData,
+        images: photoPreviewUrls,
+      }),
+    });
+
+    if (!response.ok) {
+      const msg = await response.text();
+      throw new Error(msg || 'Failed to start the publishing process.');
     }
 
-    setStatus('Publishing to eBay...');
-    try {
-      const response = await fetch('/api/publish-listing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listing_data: listingData,
-          images: photoPreviewUrls,
-        }),
-      });
-
-      if (!response.ok) {
-        const msg = await response.text();
-        throw new Error(msg || 'Failed to start the publishing process.');
-      }
-
-      setStatus('Listing sent to eBay for publishing!');
-      setValidationErrors([]);
-      alert('Your listing has been sent to eBay! It may take a minute to appear.');
-    } catch (error: any) {
-      console.error('Error publishing listing:', error);
-      setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-      alert(`An error occurred: ${error?.message ?? 'Unknown error'}`);
-    }
-  };
+    setStatus('Listing sent to eBay for publishing!');
+    alert('Your listing has been sent to eBay! It may take a minute to appear.');
+  } catch (error: any) {
+    console.error('Error publishing listing:', error);
+    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+    
+    // Show error in the error box too
+    setValidationErrors([error?.message || 'Unknown error occurred']);
+  }
+};
 
   // Build UI rows; for "Size" rows, filter options dynamically using current Size Type
   const renderSpecificRow = (spec: any, index: number) => {
@@ -1014,6 +1021,50 @@ const handleInputChange = (field: string, value: any) => {
                     </div>
                   </div>
 
+        {/* ⭐ ADD THIS ENTIRE ERROR DISPLAY BLOCK HERE ⭐ */}
+        {validationErrors.length > 0 && (
+          <div className="bg-red-50 border-2 border-red-300 rounded-lg p-5 mb-6 shadow-lg animate-fade-in">
+            <div className="flex items-start gap-3">
+              {/* Warning Icon */}
+              <div className="flex-shrink-0 mt-0.5">
+                <svg 
+                  className="h-6 w-6 text-red-600" 
+                  fill="none" 
+                  viewBox="0 0 24 24" 
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" 
+                  />
+                </svg>
+              </div>
+              
+              {/* Error Content */}
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-red-800 mb-2">
+                  Cannot publish - please fix {validationErrors.length} error{validationErrors.length !== 1 ? 's' : ''}:
+                </h3>
+                <ul className="space-y-1.5">
+                  {validationErrors.map((error, index) => (
+                    <li key={index} className="text-sm text-red-700 flex items-start gap-2">
+                      <span className="text-red-500 font-bold mt-0.5">•</span>
+                      <span>{error}</span>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => setValidationErrors([])}
+                  className="mt-3 text-xs text-red-600 hover:text-red-800 underline font-medium"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
                   {/* Editable form */}
                   <div className="bg-white rounded-lg shadow p-6 space-y-4">
                     <div>
