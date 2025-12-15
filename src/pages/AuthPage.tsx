@@ -31,6 +31,13 @@ export default function AuthPage() {
         const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
         if (error) throw error;
         setStatus("Signed in.");
+        const { data, error } = await supabase.rpc("ensure_user_and_workspace");
+console.log("ensure_user_and_workspace result:", { data, error });
+
+if (error) {
+  setStatus(error.message);
+  return;
+}
         navigate(redirectTo, { replace: true });
       }
     } catch (err: any) {
