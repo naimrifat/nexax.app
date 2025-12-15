@@ -1,11 +1,16 @@
-import { useState } from "react";
+import React from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabaseClient";
 
 export default function AuthPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [status, setStatus] = useState<string>("");
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [mode, setMode] = React.useState<"signin" | "signup">("signin");
+  const [status, setStatus] = React.useState("");
+
+  const navigate = useNavigate();
+  const location = useLocation() as any;
+  const redirectTo = location?.state?.from || "/dashboard";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -13,19 +18,20 @@ export default function AuthPage() {
 
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) return setStatus("Email is required.");
+    if (!password) return setStatus("Password is required.");
 
     try {
-      // EMAIL + PASSWORD (recommended for simplest flow)
-      if (!password) return setStatus("Password is required.");
-
       if (mode === "signup") {
         const { error } = await supabase.auth.signUp({ email: cleanEmail, password });
         if (error) throw error;
-        setStatus("Signup successful. You can sign in now (or check email if confirmation is enabled).");
+        setStatus("Signup successful. Now sign in.");
+        setMode("signin");
+        return;
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
         if (error) throw error;
         setStatus("Signed in.");
+        navigate(redirectTo, { replace: true });
       }
     } catch (err: any) {
       setStatus(err?.message ?? "Auth failed.");
@@ -50,10 +56,7 @@ export default function AuthPage() {
           onChange={(e) => setPassword(e.target.value)}
           autoComplete={mode === "signup" ? "new-password" : "current-password"}
         />
-
-        <button type="submit">
-          {mode === "signup" ? "Sign up" : "Sign in"}
-        </button>
+        <button type="submit">{mode === "signup" ? "Sign up" : "Sign in"}</button>
       </form>
 
       <div style={{ marginTop: 12 }}>
