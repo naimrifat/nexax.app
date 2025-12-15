@@ -55,6 +55,8 @@ export default function AuthPage() {
       const { data, error: rpcError } = await supabase.rpc("ensure_user_and_workspace");
       console.log("ensure_user_and_workspace result:", { data, rpcError });
 
+      console.log("workspace from RPC:", data?.[0]?.out_workspace_id);
+
       if (rpcError) {
         setStatus(rpcError.message);
         return;
