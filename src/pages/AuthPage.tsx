@@ -2,48 +2,71 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabaseClient";
 
+type LocationState = {
+  from?: string;
+};
+
 export default function AuthPage() {
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
+  const [email, setEmail] = React.useState<string>("");
+  const [password, setPassword] = React.useState<string>("");
   const [mode, setMode] = React.useState<"signin" | "signup">("signin");
-  const [status, setStatus] = React.useState("");
+  const [status, setStatus] = React.useState<string>("");
 
   const navigate = useNavigate();
-  const location = useLocation() as any;
-  const redirectTo = location?.state?.from || "/dashboard";
+  const location = useLocation();
+  const state = (location.state || {}) as LocationState;
+  const redirectTo = state.from || "/dashboard";
 
-  async function handleSubmit(e: React.FormEvent) {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setStatus("Working...");
 
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) return setStatus("Email is required.");
-    if (!password) return setStatus("Password is required.");
+    if (!cleanEmail) {
+      setStatus("Email is required.");
+      return;
+    }
+    if (!password) {
+      setStatus("Password is required.");
+      return;
+    }
 
     try {
       if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({ email: cleanEmail, password });
+        const { error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+        });
         if (error) throw error;
+
         setStatus("Signup successful. Now sign in.");
         setMode("signin");
         return;
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
-        if (error) throw error;
-        setStatus("Signed in.");
-        const { data, error } = await supabase.rpc("ensure_user_and_workspace");
-console.log("ensure_user_and_workspace result:", { data, error });
-
-if (error) {
-  setStatus(error.message);
-  return;
-}
-        navigate(redirectTo, { replace: true });
       }
-    } catch (err: any) {
-      setStatus(err?.message ?? "Auth failed.");
+
+      // Sign in
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password,
+      });
+      if (signInError) throw signInError;
+
+      // Ensure workspace + local user exist (idempotent)
+      const { data, error: rpcError } = await supabase.rpc("ensure_user_and_workspace");
+      console.log("ensure_user_and_workspace result:", { data, rpcError });
+
+      if (rpcError) {
+        setStatus(rpcError.message);
+        return;
+      }
+
+      setStatus("Signed in.");
+      navigate(redirectTo, { replace: true });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Auth failed.";
+      setStatus(message);
     }
-  }
+  };
 
   return (
     <div style={{ maxWidth: 420, margin: "40px auto", padding: 16 }}>
@@ -56,6 +79,7 @@ if (error) {
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="email"
         />
+
         <input
           placeholder="Password"
           type="password"
@@ -63,16 +87,17 @@ if (error) {
           onChange={(e) => setPassword(e.target.value)}
           autoComplete={mode === "signup" ? "new-password" : "current-password"}
         />
+
         <button type="submit">{mode === "signup" ? "Sign up" : "Sign in"}</button>
       </form>
 
       <div style={{ marginTop: 12 }}>
-        <button onClick={() => setMode(mode === "signup" ? "signin" : "signup")}>
+        <button type="button" onClick={() => setMode(mode === "signup" ? "signin" : "signup")}>
           Switch to {mode === "signup" ? "sign in" : "sign up"}
         </button>
       </div>
 
-      {status && <p style={{ marginTop: 12 }}>{status}</p>}
+      {status ? <p style={{ marginTop: 12 }}>{status}</p> : null}
     </div>
   );
 }
