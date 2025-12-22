@@ -9,8 +9,9 @@ const Header: React.FC = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
-
   const location = useLocation();
+
+  // We only need user here for display.
   const { user } = useAuth();
 
   // Track scroll position to change header style
@@ -31,19 +32,30 @@ const Header: React.FC = () => {
   const handleLogout = async () => {
     try {
       console.log("[Header] handleLogout started");
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
 
-      console.log("[Header] Supabase signOut succeeded");
+      // Prefer local sign-out (clears browser session without relying on network)
+      const signOutPromise = supabase.auth.signOut({ scope: "local" });
+
+      // Timeout guard so we never hang silently
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Logout timed out (network stall).")), 3000);
+      });
+
+      await Promise.race([signOutPromise, timeoutPromise]);
+
+      console.log("[Header] Supabase signOut succeeded (local)");
       setMobileMenuOpen(false);
       setAuthMode(null);
 
-      // Hard redirect ensures state is reset even if React state/context lags
+      // Hard redirect resets app state and ensures you're truly logged out
       window.location.href = "/login";
     } catch (err: unknown) {
       console.error("[Header] Logout failed:", err);
       const message = err instanceof Error ? err.message : "Logout failed.";
       alert(message);
+
+      // Still force navigation so you can continue testing
+      window.location.href = "/login";
     }
   };
 
@@ -75,16 +87,13 @@ const Header: React.FC = () => {
               icon={<Home className="w-4 h-4" />}
               active={location.pathname === "/"}
             />
-
             <NavLink
               to="/dashboard"
               label="Dashboard"
               icon={<LayoutDashboard className="w-4 h-4" />}
               active={location.pathname === "/dashboard"}
             />
-
             <NavLink to="/pricing" label="Pricing" active={location.pathname === "/pricing"} />
-
             <NavLink
               to="/settings/listing-style"
               label="Listing Style"
@@ -124,9 +133,9 @@ const Header: React.FC = () => {
 
           {/* Mobile Menu Button */}
           <button
+            type="button"
             className="md:hidden p-2 rounded-md"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            type="button"
           >
             {mobileMenuOpen ? <X className="w-6 h-6 text-gray-900" /> : <Menu className="w-6 h-6 text-gray-900" />}
           </button>
@@ -143,16 +152,13 @@ const Header: React.FC = () => {
               icon={<Home className="w-5 h-5" />}
               active={location.pathname === "/"}
             />
-
             <MobileNavLink
               to="/dashboard"
               label="Dashboard"
               icon={<LayoutDashboard className="w-5 h-5" />}
               active={location.pathname === "/dashboard"}
             />
-
             <MobileNavLink to="/pricing" label="Pricing" active={location.pathname === "/pricing"} />
-
             <MobileNavLink
               to="/settings/listing-style"
               label="Listing Style"
@@ -160,7 +166,6 @@ const Header: React.FC = () => {
             />
 
             <hr className="border-gray-200" />
-
             <div className="flex flex-col space-y-3 pt-2">
               {user ? (
                 <>
