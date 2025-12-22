@@ -51,17 +51,19 @@ const handleLogout = async () => {
     // 2) Manual fallback: clear Supabase auth storage keys
     // Supabase stores auth session in localStorage under keys that include your project ref.
     // This removes ALL Supabase auth data for this origin.
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (!k) continue;
-      if (k.startsWith("sb-") && k.endsWith("-auth-token")) {
-        localStorage.removeItem(k);
-      }
-    }
+    
+for (let i = localStorage.length - 1; i >= 0; i--) {
+  const k = localStorage.key(i);
+  if (!k) continue;
+  if (k.startsWith("sb-") && k.endsWith("-auth-token")) {
+    localStorage.removeItem(k);
+  }
+}
+localStorage.removeItem("supabase.auth.token");
 
-    // Also clear any supabase-related keys that some versions used
-    // (harmless if they don't exist)
-    localStorage.removeItem("supabase.auth.token");
+// Clear legacy Snapline local auth keys (from old AuthContext implementation)
+localStorage.removeItem("snapline.auth.users");
+localStorage.removeItem("snapline.auth.currentUser");
 
     setMobileMenuOpen(false);
     setAuthMode(null);
