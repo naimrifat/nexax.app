@@ -61,8 +61,8 @@ function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
   if (Array.isArray(s)) {
     return s
-      .filter((x) => x && typeof x.name === 'string')
-      .map((x) => ({
+      .filter((x) => x && typeof (x as any).name === 'string')
+      .map((x: any) => ({
         ...x,
         value: x.value ?? '',
       }));
@@ -347,17 +347,17 @@ async function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
   ]);
 }
 
-function extractIdFromRpc(data: any): string | null {
-  // handle: [{id:...}], {id:...}, or uuid string
-  if (!data) return null;
-  if (typeof data === 'string') return data;
-  if (Array.isArray(data)) {
-    const first = data[0];
-    if (first?.id && typeof first.id === 'string') return first.id;
-    return null;
+function getSessionIdFromUrl(): string {
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('session') || 'local';
+  } catch {
+    return 'local';
   }
-  if (data?.id && typeof data.id === 'string') return data.id;
-  return null;
+}
+
+function getDraftStorageKey(): string {
+  return `nexax.currentListingId.${getSessionIdFromUrl()}`;
 }
 
 export default function ResultsPage() {
@@ -380,14 +380,14 @@ export default function ResultsPage() {
   const [mainImageIndex, setMainImageIndex] = useState(0);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
-  // Draft save state (ONLY here, not in TokenSelect)
+  // Draft save state (ONLY here)
   const [savingDraft, setSavingDraft] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
 
   const [listingId, setListingId] = useState<string | null>(() => {
     try {
-      return sessionStorage.getItem('nexax.currentListingId');
+      return sessionStorage.getItem(getDraftStorageKey());
     } catch {
       return null;
     }
@@ -396,6 +396,7 @@ export default function ResultsPage() {
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
 
+  // Remove any injected preview pane
   const removePreviewPane = useCallback(() => {
     const heading = Array.from(document.querySelectorAll('h1, h2, h3, h4')).find((el) => {
       const text = el.textContent?.trim().toLowerCase();
@@ -545,6 +546,15 @@ export default function ResultsPage() {
     const loadData = async () => {
       setLoading(true);
       setError(null);
+
+      const sessionKey = getDraftStorageKey();
+      // load any existing listingId for this session
+      try {
+        const stored = sessionStorage.getItem(sessionKey);
+        setListingId(stored || null);
+      } catch {
+        // ignore
+      }
 
       const urlParams = new URLSearchParams(window.location.search);
       const sessionId = urlParams.get('session');
@@ -710,9 +720,28 @@ export default function ResultsPage() {
         return;
       }
 
-      // Ensure the tenancy rows exist (idempotent). If this fails, saving drafts will fail too.
-      const { error: ensureErr } = await supabase.rpc('ensure_user_and_workspace');
+      // Must have a logged-in user so created_by is correct (and dashboard/RLS can see it)
+      const { data: userData, error: userErr } = await withTimeout(supabase.auth.getUser(), 8000);
+      if (userErr) throw userErr;
+      const user = userData?.user;
+      if (!user) {
+        throw new Error('You must be logged in to save drafts.');
+      }
+
+      // Ensure tenancy rows exist and get workspace id
+      const { data: wsData, error: ensureErr } = await withTimeout(
+        supabase.rpc('ensure_user_and_workspace'),
+        12000,
+      );
       if (ensureErr) throw ensureErr;
+
+      const wsObj = Array.isArray(wsData) ? wsData[0] : wsData;
+      const workspace_id =
+        wsObj?.workspace_id || wsObj?.workspaceId || wsObj?.workspace || wsObj?.id;
+
+      if (!workspace_id || typeof workspace_id !== 'string') {
+        throw new Error('ensure_user_and_workspace did not return workspace_id.');
+      }
 
       const listingJson = buildListingJson();
       const orderedImages = (listingJson.images || []) as string[];
@@ -722,34 +751,53 @@ export default function ResultsPage() {
         return Number.isFinite(n) ? n : 0;
       })();
 
-      const rpcPromise = supabase.rpc('save_draft_listing', {
-        p_listing_id: listingId, // null for insert, uuid for update
-        p_title: listingJson.title || '',
-        p_description: listingJson.description || '',
-        p_category_id: category?.id || '',
-        p_category_path: getCategoryPathString(category) || '',
-        p_price,
-        p_currency: 'USD',
-        p_listing_json: listingJson,
-        p_images: orderedImages, // jsonb array
-      });
+      const payload: any = {
+        workspace_id,
+        created_by: user.id,
+        status: 'draft',
+        marketplace: 'ebay',
+        title: listingJson.title || null,
+        description: listingJson.description || null,
+        category_id: category?.id || null,
+        category_path: getCategoryPathString(category) || null,
+        price: p_price,
+        currency: 'USD',
+        listing_json: listingJson,
+        images: orderedImages,
+        updated_at: new Date().toISOString(),
+      };
 
-      const { data, error: rpcErr } = await withTimeout(rpcPromise, 12000);
-      if (rpcErr) throw rpcErr;
+      // Insert vs Update (direct table writes)
+      if (listingId) {
+        const { error: upErr } = await withTimeout(
+          supabase
+            .from('listings')
+            .update(payload)
+            .eq('id', listingId)
+            .eq('created_by', user.id), // prevents updating someone else's or a stale id
+          12000,
+        );
+        if (upErr) throw upErr;
 
-      const newId = extractIdFromRpc(data);
-      if (!newId) throw new Error('Draft save succeeded but no id was returned.');
+        setDraftStatus('Draft updated.');
+      } else {
+        const { data: insData, error: insErr } = await withTimeout(
+          supabase.from('listings').insert(payload).select('id').single(),
+          12000,
+        );
+        if (insErr) throw insErr;
 
-      if (!listingId) {
+        const newId = insData?.id as string | undefined;
+        if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
+
         setListingId(newId);
         try {
-          sessionStorage.setItem('nexax.currentListingId', newId);
+          sessionStorage.setItem(getDraftStorageKey(), newId);
         } catch {
           // ignore
         }
+
         setDraftStatus('Draft saved.');
-      } else {
-        setDraftStatus('Draft updated.');
       }
     } catch (err: any) {
       console.error('[Draft] Save failed:', err);
@@ -875,11 +923,7 @@ export default function ResultsPage() {
             }}
           >
             {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="Main"
-                style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
-              />
+              <img src={mainImageUrl} alt="Main" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
@@ -940,11 +984,7 @@ export default function ResultsPage() {
                     justifyContent: 'center',
                   }}
                 >
-                  <img
-                    src={img}
-                    alt={`thumb-${idx}`}
-                    style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
-                  />
+                  <img src={img} alt={`thumb-${idx}`} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }} />
                 </div>
               ))}
             </div>
@@ -961,9 +1001,7 @@ export default function ResultsPage() {
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
             maxLength={80}
           />
-          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>
-            {title.length}/80 characters
-          </div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
         </section>
 
         {/* DESCRIPTION */}
@@ -995,15 +1033,7 @@ export default function ResultsPage() {
           >
             <div style={{ flex: 1, marginRight: 12, overflow: 'hidden' }}>
               <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Selected Category:</div>
-              <div
-                style={{
-                  fontWeight: 500,
-                  fontSize: 14,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
+              <div style={{ fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {categoryBreadcrumb}
               </div>
             </div>
@@ -1029,8 +1059,7 @@ export default function ResultsPage() {
         {/* ITEM SPECIFICS */}
         <section style={{ marginTop: 24 }}>
           <h3>
-            Item Specifics{' '}
-            {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>}
+            Item Specifics {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>}
           </h3>
 
           {specifics.length === 0 && !loadingSpecifics && (
@@ -1068,13 +1097,7 @@ export default function ResultsPage() {
         {/* PRICE */}
         <section style={{ marginTop: 24 }}>
           <h3>Price</h3>
-          <input
-            type="number"
-            step="0.01"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
-          />
+          <input type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }} />
         </section>
 
         {/* BUTTONS */}
@@ -1155,20 +1178,14 @@ export default function ResultsPage() {
             }}
           >
             {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="preview"
-                style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }}
-              />
+              <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
           </div>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{title || 'Your Product Title'}</div>
           <div style={{ color: '#c93', fontWeight: 700, fontSize: 20 }}>US ${price || '0.00'}</div>
-          <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-            Category: {category?.name || 'Not selected'}
-          </div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Category: {category?.name || 'Not selected'}</div>
         </div>
       </aside>
 
