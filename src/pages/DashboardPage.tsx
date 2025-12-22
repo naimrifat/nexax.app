@@ -96,8 +96,9 @@ const DashboardPage: React.FC = () => {
             <PlusCircle className="w-5 h-5 mr-2" />
             Create New Listing
           </Link>
+          <TestDbPanel />
         </div>
-
+        
         {/* Filters and Search */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
