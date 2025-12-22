@@ -9,6 +9,7 @@ import React, {
 import { useNavigate } from 'react-router-dom';
 import CategorySelector from '../components/CategorySelector';
 import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
+import { supabase } from '../lib/supabaseClient';
 
 type Category = {
   id: string;
@@ -180,9 +181,7 @@ function TokenSelect({
 
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
-    .filter((o) =>
-      lowerQuery ? o.toLowerCase().includes(lowerQuery) : true,
-    )
+    .filter((o) => (lowerQuery ? o.toLowerCase().includes(lowerQuery) : true))
     .slice(0, 80);
 
   useEffect(() => {
@@ -281,27 +280,23 @@ function TokenSelect({
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => !disabled && setOpen(true)}
           disabled={disabled}
-          placeholder={
-            selected.length ? '' : placeholder || 'Search & select...'
-          }
+          placeholder={selected.length ? '' : placeholder || 'Search & select...'}
           className="flex-1 min-w-[120px] border-0 outline-none text-sm py-1 placeholder-gray-400"
         />
 
-        {(multi ? selected.length > 0 : !!selected[0]) &&
-          !query &&
-          !disabled && (
-            <button
-              type="button"
-              className="ml-auto text-gray-400 hover:text-gray-600"
-              onClick={(e) => {
-                e.stopPropagation();
-                clearAll();
-              }}
-              aria-label="Clear"
-            >
-              ×
-            </button>
-          )}
+        {(multi ? selected.length > 0 : !!selected[0]) && !query && !disabled && (
+          <button
+            type="button"
+            className="ml-auto text-gray-400 hover:text-gray-600"
+            onClick={(e) => {
+              e.stopPropagation();
+              clearAll();
+            }}
+            aria-label="Clear"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {open && !disabled && filtered.length > 0 && (
@@ -360,6 +355,40 @@ function ItemSpecificControl({
   );
 }
 
+/* ---------- Supabase helpers ---------- */
+
+function getCategoryPathString(cat: CategoryWithPath | null): string {
+  if (!cat) return '';
+  if (cat.breadcrumbs && cat.breadcrumbs.length) return cat.breadcrumbs.join(' > ');
+  if (cat.path) {
+    return cat.path
+      .split('>')
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .join(' > ');
+  }
+  return cat.name || '';
+}
+
+async function ensureWorkspaceId(): Promise<string> {
+  // This RPC should be idempotent and return workspace_id.
+  const { data, error } = await supabase.rpc('ensure_user_and_workspace');
+  if (error) throw error;
+
+  // Be defensive: RPC might return object OR array OR {workspace_id:...}
+  const maybe = Array.isArray(data) ? data[0] : data;
+  const workspaceId =
+    maybe?.workspace_id || maybe?.workspaceId || maybe?.workspace || maybe?.id;
+
+  if (!workspaceId || typeof workspaceId !== 'string') {
+    throw new Error(
+      'ensure_user_and_workspace did not return a workspace_id. Check the RPC return shape.',
+    );
+  }
+
+  return workspaceId;
+}
+
 /* ---------- Page ---------- */
 
 export default function ResultsPage() {
@@ -370,9 +399,7 @@ export default function ResultsPage() {
   const [price, setPrice] = useState('0.00');
   const [keywords, setKeywords] = useState('');
   const [category, setCategory] = useState<CategoryWithPath | null>(null);
-  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>(
-    [],
-  );
+  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -385,13 +412,22 @@ export default function ResultsPage() {
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
+  // Draft save state
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<string>('');
+  const [listingId, setListingId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('nexax.currentListingId');
+    } catch {
+      return null;
+    }
+  });
+
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
 
   const removePreviewPane = useCallback(() => {
-    const heading = Array.from(
-      document.querySelectorAll('h1, h2, h3, h4'),
-    ).find((el) => {
+    const heading = Array.from(document.querySelectorAll('h1, h2, h3, h4')).find((el) => {
       const text = el.textContent?.trim().toLowerCase();
       return text === 'listing preview' || text === 'preview';
     });
@@ -418,72 +454,55 @@ export default function ResultsPage() {
   }, [removePreviewPane]);
 
   // Smart mapper from detected facts → specifics
-  const smartFillSpecifics = useCallback(
-    (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
-      return newSpecifics.map((field) => {
-        let current: string | string[] = field.value;
-        let currentStr = firstValue(
-          typeof current === 'string' || Array.isArray(current)
-            ? current
-            : '',
-        );
+  const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
+    return newSpecifics.map((field) => {
+      let current: string | string[] = field.value;
+      let currentStr = firstValue(
+        typeof current === 'string' || Array.isArray(current) ? current : '',
+      );
 
-        const lower = field.name.toLowerCase();
+      const lower = field.name.toLowerCase();
 
-        // Only fill if still empty
-        if (!currentStr) {
-          let candidate = '';
+      // Only fill if still empty
+      if (!currentStr) {
+        let candidate = '';
 
-          if (lower.includes('brand')) candidate = aiData.brand || '';
-          else if (lower.includes('size type')) candidate = aiData.type || '';
-          else if (lower === 'size' || lower.includes('size'))
-            candidate = aiData.size || '';
-          else if (lower.includes('color') || lower.includes('colour'))
-            candidate = aiData.color || '';
-          else if (lower.includes('condition'))
-            candidate = aiData.condition || '';
-          else if (lower.includes('material'))
-            candidate = aiData.material || '';
-          else if (lower.includes('style')) candidate = aiData.style || '';
-          else if (lower.includes('department'))
-            candidate = aiData.department || '';
-          else if (lower === 'type' || lower.includes('type'))
-            candidate = aiData.type || '';
+        if (lower.includes('brand')) candidate = aiData.brand || '';
+        else if (lower.includes('size type')) candidate = aiData.type || '';
+        else if (lower === 'size' || lower.includes('size')) candidate = aiData.size || '';
+        else if (lower.includes('color') || lower.includes('colour')) candidate = aiData.color || '';
+        else if (lower.includes('condition')) candidate = aiData.condition || '';
+        else if (lower.includes('material')) candidate = aiData.material || '';
+        else if (lower.includes('style')) candidate = aiData.style || '';
+        else if (lower.includes('department')) candidate = aiData.department || '';
+        else if (lower === 'type' || lower.includes('type')) candidate = aiData.type || '';
 
-          if (candidate) {
-            if (field.multi) current = [candidate];
-            else current = candidate;
-            currentStr = candidate;
-          }
+        if (candidate) {
+          if (field.multi) current = [candidate];
+          else current = candidate;
+          currentStr = candidate;
         }
+      }
 
-        // Snap to dropdown options if present
-        if (field.type === 'dropdown' && field.options?.length) {
-          if (Array.isArray(current)) {
-            const snapped = current
-              .map((v) => {
-                const exact = field.options!.find(
-                  (opt) =>
-                    opt.toLowerCase() === String(v).toLowerCase(),
-                );
-                return exact || v;
-              })
-              .filter(Boolean) as string[];
-            current = snapped;
-          } else if (typeof current === 'string' && current) {
-            const exact = field.options.find(
-              (opt) =>
-                opt.toLowerCase() === String(current).toLowerCase(),
-            );
-            if (exact) current = exact;
-          }
+      // Snap to dropdown options if present
+      if (field.type === 'dropdown' && field.options?.length) {
+        if (Array.isArray(current)) {
+          const snapped = current
+            .map((v) => {
+              const exact = field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase());
+              return exact || v;
+            })
+            .filter(Boolean) as string[];
+          current = snapped;
+        } else if (typeof current === 'string' && current) {
+          const exact = field.options.find((opt) => opt.toLowerCase() === String(current).toLowerCase());
+          if (exact) current = exact;
         }
+      }
 
-        return { ...field, value: current };
-      });
-    },
-    [],
-  );
+      return { ...field, value: current };
+    });
+  }, []);
 
   // Fetch specifics for a category and merge AI specifics + detected, then apply size filter
   const fetchCategorySpecifics = useCallback(
@@ -503,79 +522,59 @@ export default function ResultsPage() {
 
         const data = await response.json();
 
-        const baseSpecifics: ItemSpecific[] = (data.aspects || []).map(
-          (aspect: any) => ({
-            name: aspect.name,
-            value: aspect.multi ? [] : '',
-            required: !!aspect.required,
-            type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
-            options: aspect.values || [],
-            allOptions: aspect.values || [],
-            multi: !!aspect.multi,
-            selectionOnly: aspect.type === 'SelectionOnly',
-            freeTextAllowed: aspect.type !== 'SelectionOnly',
-          }),
-        );
+        const baseSpecifics: ItemSpecific[] = (data.aspects || []).map((aspect: any) => ({
+          name: aspect.name,
+          value: aspect.multi ? [] : '',
+          required: !!aspect.required,
+          type: aspect.type === 'SelectionOnly' ? 'dropdown' : 'text',
+          options: aspect.values || [],
+          allOptions: aspect.values || [],
+          multi: !!aspect.multi,
+          selectionOnly: aspect.type === 'SelectionOnly',
+          freeTextAllowed: aspect.type !== 'SelectionOnly',
+        }));
 
         const aiSpecifics = aiSpecificsRef.current || [];
-        const aiMap = new Map(
-          aiSpecifics.map((s) => [s.name.toLowerCase(), s.value]),
-        );
+        const aiMap = new Map(aiSpecifics.map((s) => [s.name.toLowerCase(), s.value]));
 
-        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map(
-          (field) => {
-            const lower = field.name.toLowerCase();
-            const aiVal = aiMap.get(lower);
-            if (aiVal == null || aiVal === '') return field;
+        const withAiSpecifics: ItemSpecific[] = baseSpecifics.map((field) => {
+          const lower = field.name.toLowerCase();
+          const aiVal = aiMap.get(lower);
+          if (aiVal == null || aiVal === '') return field;
 
-            let value: string | string[];
+          let value: string | string[];
 
-            if (field.multi) {
-              if (Array.isArray(aiVal)) {
-                value = aiVal.map((v) => String(v));
-              } else {
-                value = String(aiVal)
-                  .split(',')
-                  .map((s) => s.trim())
-                  .filter(Boolean);
-              }
+          if (field.multi) {
+            if (Array.isArray(aiVal)) {
+              value = aiVal.map((v) => String(v));
             } else {
-              value = String(
-                Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal,
-              );
+              value = String(aiVal)
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
             }
+          } else {
+            value = String(Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal);
+          }
 
-            if (field.type === 'dropdown' && field.options?.length) {
-              if (Array.isArray(value)) {
-                value = value.map((v) => {
-                  const exact = field.options!.find(
-                    (opt) =>
-                      opt.toLowerCase() === String(v).toLowerCase(),
-                  );
-                  return exact || v;
-                });
-              } else if (typeof value === 'string' && value) {
-                const exact = field.options.find(
-                  (opt) =>
-                    opt.toLowerCase() === value.toLowerCase(),
-                );
-                if (exact) value = exact;
-              }
+          if (field.type === 'dropdown' && field.options?.length) {
+            if (Array.isArray(value)) {
+              value = value.map((v) => {
+                const exact = field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase());
+                return exact || v;
+              });
+            } else if (typeof value === 'string' && value) {
+              const exact = field.options.find((opt) => opt.toLowerCase() === value.toLowerCase());
+              if (exact) value = exact;
             }
+          }
 
-            return { ...field, value };
-          },
-        );
+          return { ...field, value };
+        });
 
-        const filledSpecifics = smartFillSpecifics(
-          withAiSpecifics,
-          aiDetectedRef.current || {},
-        );
+        const filledSpecifics = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
 
-        const sizeFiltered = applySizeTypeFilterToSpecifics(
-          filledSpecifics,
-          category?.path || '',
-        );
+        const sizeFiltered = applySizeTypeFilterToSpecifics(filledSpecifics, category?.path || '');
         setSpecifics(sizeFiltered);
       } catch (err) {
         console.error('Error fetching specifics:', err);
@@ -618,9 +617,7 @@ export default function ResultsPage() {
 
         if (!isMounted) return;
 
-        const normalizedAiSpecifics = normalizeSpecifics(
-          analysis.item_specifics,
-        );
+        const normalizedAiSpecifics = normalizeSpecifics(analysis.item_specifics);
         aiSpecificsRef.current = normalizedAiSpecifics;
         aiDetectedRef.current = analysis.detected || {};
 
@@ -629,9 +626,7 @@ export default function ResultsPage() {
 
         const optimal = analysis.price_suggestion?.optimal;
         setPrice(
-          typeof optimal === 'number'
-            ? optimal.toFixed(2)
-            : String(optimal ?? '0.00'),
+          typeof optimal === 'number' ? optimal.toFixed(2) : String(optimal ?? '0.00'),
         );
 
         const imgs: string[] =
@@ -651,22 +646,15 @@ export default function ResultsPage() {
 
         setCategorySuggestions(analysis.category_suggestions ?? []);
 
-        const initialCategory: CategoryWithPath | null =
-          analysis.category ?? null;
+        const initialCategory: CategoryWithPath | null = analysis.category ?? null;
         setCategory(initialCategory);
 
         if (initialCategory && initialCategory.id) {
           await fetchCategorySpecifics(initialCategory.id);
         } else {
           const base = normalizeSpecifics(analysis.item_specifics);
-          const filled = smartFillSpecifics(
-            base,
-            aiDetectedRef.current || {},
-          );
-          const sizeFiltered = applySizeTypeFilterToSpecifics(
-            filled,
-            initialCategory?.path || '',
-          );
+          const filled = smartFillSpecifics(base, aiDetectedRef.current || {});
+          const sizeFiltered = applySizeTypeFilterToSpecifics(filled, initialCategory?.path || '');
           setSpecifics(sizeFiltered);
         }
 
@@ -706,10 +694,8 @@ export default function ResultsPage() {
     });
   };
 
-  const addSpecific = () =>
-    setSpecifics((prev) => [...prev, { name: '', value: '' }]);
-  const removeSpecific = (idx: number) =>
-    setSpecifics((prev) => prev.filter((_, i) => i !== idx));
+  const addSpecific = () => setSpecifics((prev) => [...prev, { name: '', value: '' }]);
+  const removeSpecific = (idx: number) => setSpecifics((prev) => prev.filter((_, i) => i !== idx));
 
   // 🔑 Prefer eBay-style breadcrumbs, then normalized path
   const categoryBreadcrumb = useMemo(() => {
@@ -731,6 +717,115 @@ export default function ResultsPage() {
   }, [category]);
 
   const mainImageUrl = images[mainImageIndex] || '';
+
+  const buildListingJson = () => {
+    const categoryPath = getCategoryPathString(category);
+
+    const orderedImages = images.length
+      ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)]
+      : [];
+
+    return {
+      title: title.trim(),
+      description: description.trim(),
+      marketplace: 'ebay',
+      category: category ? { id: category.id, name: category.name, path: categoryPath } : null,
+      category_id: category?.id || null,
+      category_path: categoryPath || null,
+      item_specifics: specifics.map((s) => ({
+        name: s.name,
+        value: s.value,
+        required: !!s.required,
+        multi: !!s.multi,
+        selectionOnly: !!s.selectionOnly,
+        freeTextAllowed: s.freeTextAllowed !== false,
+        options: s.options || [],
+      })),
+      keywords: keywords
+        .split(',')
+        .map((k) => k.trim())
+        .filter(Boolean),
+      price_suggestion: {
+        optimal: parseFloat(price || '0') || 0,
+      },
+      images: orderedImages,
+    };
+  };
+
+  const handleSaveDraft = async () => {
+    setDraftStatus('');
+    setSavingDraft(true);
+
+    try {
+      // Basic form sanity — allow drafts even if not publish-ready, but still guard obvious empties
+      const hasAnyContent =
+        title.trim() ||
+        description.trim() ||
+        keywords.trim() ||
+        specifics.some((s) => firstValue(s.value as any)) ||
+        images.length > 0;
+
+      if (!hasAnyContent) {
+        setDraftStatus('Nothing to save yet.');
+        return;
+      }
+
+      const workspace_id = await ensureWorkspaceId();
+      const listing_json = buildListingJson();
+
+      const payload: any = {
+        workspace_id,
+        status: 'draft',
+        marketplace: 'ebay',
+        title: listing_json.title || null,
+        description: listing_json.description || null,
+        category_id: listing_json.category_id || null,
+        category_path: listing_json.category_path || null,
+        price: Number.isFinite(Number(price)) ? Number(price) : 0,
+        currency: 'USD',
+        listing_json,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (listingId) {
+        const { error: upErr } = await supabase
+          .from('listings')
+          .update(payload)
+          .eq('id', listingId);
+
+        if (upErr) throw upErr;
+
+        setDraftStatus('Draft updated.');
+        console.log('[Draft] Updated listing:', listingId);
+      } else {
+        const { data: insData, error: insErr } = await supabase
+          .from('listings')
+          .insert(payload)
+          .select('id')
+          .single();
+
+        if (insErr) throw insErr;
+
+        const newId = insData?.id as string | undefined;
+        if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
+
+        setListingId(newId);
+        try {
+          sessionStorage.setItem('nexax.currentListingId', newId);
+        } catch {
+          // ignore
+        }
+
+        setDraftStatus('Draft saved.');
+        console.log('[Draft] Inserted listing:', newId);
+      }
+    } catch (err: any) {
+      console.error('[Draft] Save failed:', err);
+      setDraftStatus(err?.message || 'Failed to save draft.');
+    } finally {
+      setSavingDraft(false);
+    }
+  };
 
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
@@ -784,13 +879,7 @@ export default function ResultsPage() {
       const data = await res.json();
       if (!res.ok) {
         console.error('Publish error:', data);
-        alert(
-          `An error occurred: ${JSON.stringify(
-            data,
-            null,
-            2,
-          )}`,
-        );
+        alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
         return;
       }
 
@@ -798,9 +887,7 @@ export default function ResultsPage() {
     } catch (err: any) {
       console.error('Publish error:', err);
       alert(
-        `An unexpected error occurred while publishing: ${
-          err?.message || String(err)
-        }`,
+        `An unexpected error occurred while publishing: ${err?.message || String(err)}`,
       );
     } finally {
       setPublishing(false);
@@ -914,9 +1001,7 @@ export default function ResultsPage() {
                       next.splice(idx, 0, moved);
                       setMainImageIndex((prevMain) => {
                         const mainUrl = prevImages[prevMain];
-                        const newIndex = next.findIndex(
-                          (url) => url === mainUrl,
-                        );
+                        const newIndex = next.findIndex((url) => url === mainUrl);
                         return newIndex >= 0 ? newIndex : 0;
                       });
                       return next;
@@ -926,10 +1011,7 @@ export default function ResultsPage() {
                   style={{
                     borderRadius: 4,
                     overflow: 'hidden',
-                    border:
-                      idx === mainImageIndex
-                        ? '2px solid #0064d2'
-                        : '1px solid #ddd',
+                    border: idx === mainImageIndex ? '2px solid #0064d2' : '1px solid #ddd',
                     cursor: 'grab',
                     background: '#fafafa',
                     height: 70,
@@ -1065,9 +1147,7 @@ export default function ResultsPage() {
           <h3>
             Item Specifics{' '}
             {loadingSpecifics && (
-              <span style={{ fontSize: 14, color: '#666' }}>
-                (Loading…)
-              </span>
+              <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>
             )}
           </h3>
 
@@ -1082,20 +1162,12 @@ export default function ResultsPage() {
             style={{ marginTop: 12 }}
           >
             {specifics.map((spec, i) => (
-              <div
-                key={`${spec.name}-${i}`}
-                className="flex flex-col gap-1"
-              >
+              <div key={`${spec.name}-${i}`} className="flex flex-col gap-1">
                 <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
                   <span>{spec.name}</span>
-                  {spec.required && (
-                    <span className="ml-1 text-red-500">*</span>
-                  )}
+                  {spec.required && <span className="ml-1 text-red-500">*</span>}
                 </label>
-                <ItemSpecificControl
-                  spec={spec}
-                  onChange={(val) => updateSpecific(i, val)}
-                />
+                <ItemSpecificControl spec={spec} onChange={(val) => updateSpecific(i, val)} />
               </div>
             ))}
           </div>
@@ -1147,7 +1219,24 @@ export default function ResultsPage() {
         </section>
 
         {/* BUTTONS */}
-        <div style={{ marginTop: 32, display: 'flex', gap: 12 }}>
+        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleSaveDraft}
+            disabled={savingDraft}
+            style={{
+              padding: '12px 24px',
+              background: savingDraft ? '#999' : '#f0f0f0',
+              color: '#333',
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              cursor: savingDraft ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {savingDraft ? 'Saving…' : listingId ? 'Update Draft' : 'Save Draft'}
+          </button>
+
           <button
             onClick={handlePublish}
             disabled={publishing}
@@ -1164,6 +1253,7 @@ export default function ResultsPage() {
           >
             {publishing ? 'Publishing…' : 'Publish to eBay'}
           </button>
+
           <button
             onClick={() => navigate('/create-listing')}
             style={{
@@ -1178,6 +1268,12 @@ export default function ResultsPage() {
           >
             Cancel
           </button>
+
+          {draftStatus && (
+            <span style={{ fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2b7' }}>
+              {draftStatus}
+            </span>
+          )}
         </div>
       </main>
 
