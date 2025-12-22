@@ -703,111 +703,146 @@ export default function ResultsPage() {
   };
 
   const handleSaveDraft = async () => {
-    setSaveError(null);
-    setDraftStatus('');
-    setSavingDraft(true);
+  setSaveError(null);
+  setDraftStatus('');
+  setSavingDraft(true);
 
-    try {
-      const hasAnyContent =
-        title.trim() ||
-        description.trim() ||
-        keywords.trim() ||
-        specifics.some((s) => firstValue(s.value as any)) ||
-        images.length > 0;
+  try {
+    const hasAnyContent =
+      title.trim() ||
+      description.trim() ||
+      keywords.trim() ||
+      specifics.some((s) => firstValue(s.value as any)) ||
+      images.length > 0;
 
-      if (!hasAnyContent) {
-        setDraftStatus('Nothing to save yet.');
-        return;
-      }
+    // IMPORTANT: avoid early return that skips finally() and leaves saving state stuck
+    if (!hasAnyContent) {
+      setDraftStatus('Nothing to save yet.');
+      return;
+    }
 
-      // Must have a logged-in user so created_by is correct (and dashboard/RLS can see it)
-      const { data: userData, error: userErr } = await withTimeout(supabase.auth.getUser(), 8000);
-      if (userErr) throw userErr;
-      const user = userData?.user;
-      if (!user) {
-        throw new Error('You must be logged in to save drafts.');
-      }
+    // Must have a logged-in user so created_by is correct (and dashboard/RLS can see it)
+    const { data: userData, error: userErr } = await withTimeout(
+      supabase.auth.getUser(),
+      8000,
+    );
+    if (userErr) throw userErr;
 
-      // Ensure tenancy rows exist and get workspace id
-      const { data: wsData, error: ensureErr } = await withTimeout(
-        supabase.rpc('ensure_user_and_workspace'),
+    const user = userData?.user;
+    if (!user?.id) {
+      throw new Error('You must be logged in to save drafts.');
+    }
+
+    // Ensure tenancy rows exist and get workspace id
+    const { data: wsData, error: ensureErr } = await withTimeout(
+      supabase.rpc('ensure_user_and_workspace'),
+      12000,
+    );
+    if (ensureErr) throw ensureErr;
+
+    const wsObj = Array.isArray(wsData) ? wsData[0] : wsData;
+    const workspace_id =
+      wsObj?.workspace_id || wsObj?.workspaceId || wsObj?.workspace || wsObj?.id;
+
+    if (!workspace_id || typeof workspace_id !== 'string') {
+      throw new Error('ensure_user_and_workspace did not return workspace_id.');
+    }
+
+    const listingJson = buildListingJson();
+    const orderedImages = (listingJson.images || []) as string[];
+
+    const p_price = (() => {
+      const n = parseFloat(price || '0');
+      return Number.isFinite(n) ? n : 0;
+    })();
+
+    const payload: any = {
+      workspace_id,
+      created_by: user.id, // MUST be set; dashboard and RLS depend on this
+      status: 'draft',
+      marketplace: 'ebay',
+      title: listingJson.title || null,
+      description: listingJson.description || null,
+      category_id: category?.id || null,
+      category_path: getCategoryPathString(category) || null,
+      price: p_price,
+      currency: 'USD',
+      listing_json: listingJson,
+      images: orderedImages,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Observability (no silent failures)
+    console.log('[Draft] Saving...', {
+      listingId: listingId || null,
+      userId: user.id,
+      workspace_id,
+      title: payload.title,
+      hasImages: orderedImages.length,
+      envUrl: (import.meta as any)?.env?.VITE_SUPABASE_URL,
+    });
+
+    if (listingId) {
+      // Update existing draft (and ensure we only update the current user's row)
+      const { data: upData, error: upErr } = await withTimeout(
+        supabase
+          .from('listings')
+          .update(payload)
+          .eq('id', listingId)
+          .eq('created_by', user.id)
+          .select('id')
+          .single(),
         12000,
       );
-      if (ensureErr) throw ensureErr;
+      if (upErr) throw upErr;
 
-      const wsObj = Array.isArray(wsData) ? wsData[0] : wsData;
-      const workspace_id =
-        wsObj?.workspace_id || wsObj?.workspaceId || wsObj?.workspace || wsObj?.id;
-
-      if (!workspace_id || typeof workspace_id !== 'string') {
-        throw new Error('ensure_user_and_workspace did not return workspace_id.');
+      if (!upData?.id) {
+        throw new Error('Draft update returned no id (unexpected).');
       }
 
-      const listingJson = buildListingJson();
-      const orderedImages = (listingJson.images || []) as string[];
+      setDraftStatus('Draft updated.');
+    } else {
+      // Insert new draft. Select the whole row so we can verify ownership was persisted.
+      const { data: insData, error: insErr } = await withTimeout(
+        supabase.from('listings').insert(payload).select('*').single(),
+        12000,
+      );
+      if (insErr) throw insErr;
 
-      const p_price = (() => {
-        const n = parseFloat(price || '0');
-        return Number.isFinite(n) ? n : 0;
-      })();
+      const newId = insData?.id as string | undefined;
+      if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
 
-      const payload: any = {
-        workspace_id,
-        created_by: user.id,
-        status: 'draft',
-        marketplace: 'ebay',
-        title: listingJson.title || null,
-        description: listingJson.description || null,
-        category_id: category?.id || null,
-        category_path: getCategoryPathString(category) || null,
-        price: p_price,
-        currency: 'USD',
-        listing_json: listingJson,
-        images: orderedImages,
-        updated_at: new Date().toISOString(),
-      };
-
-      // Insert vs Update (direct table writes)
-      if (listingId) {
-        const { error: upErr } = await withTimeout(
-          supabase
-            .from('listings')
-            .update(payload)
-            .eq('id', listingId)
-            .eq('created_by', user.id), // prevents updating someone else's or a stale id
-          12000,
+      // Hard check: if this ever trips, you're writing to a different project or a DB trigger is nulling fields.
+      if (!insData?.created_by) {
+        throw new Error(
+          'Draft saved but created_by is NULL in DB. This indicates an environment mismatch or a DB-side trigger/constraint issue.',
         );
-        if (upErr) throw upErr;
-
-        setDraftStatus('Draft updated.');
-      } else {
-        const { data: insData, error: insErr } = await withTimeout(
-          supabase.from('listings').insert(payload).select('id').single(),
-          12000,
-        );
-        if (insErr) throw insErr;
-
-        const newId = insData?.id as string | undefined;
-        if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
-
-        setListingId(newId);
-        try {
-          sessionStorage.setItem(getDraftStorageKey(), newId);
-        } catch {
-          // ignore
-        }
-
-        setDraftStatus('Draft saved.');
       }
-    } catch (err: any) {
-      console.error('[Draft] Save failed:', err);
-      const msg = err?.message || 'Failed to save draft.';
-      setSaveError(msg);
-      setDraftStatus('Failed to save draft.');
-    } finally {
-      setSavingDraft(false);
+      if (insData.created_by !== user.id) {
+        throw new Error(
+          `Draft saved but created_by mismatch. Expected ${user.id}, got ${insData.created_by}.`,
+        );
+      }
+
+      setListingId(newId);
+      try {
+        sessionStorage.setItem(getDraftStorageKey(), newId);
+      } catch {
+        // ignore
+      }
+
+      setDraftStatus('Draft saved.');
     }
-  };
+  } catch (err: any) {
+    console.error('[Draft] Save failed:', err);
+    const msg = err?.message || 'Failed to save draft.';
+    setSaveError(msg);
+    setDraftStatus('Failed to save draft.');
+  } finally {
+    // Always clear saving state (prevents "Save timed out" UX from sticking)
+    setSavingDraft(false);
+  }
+};
 
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
