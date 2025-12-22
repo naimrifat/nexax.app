@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Search, Filter, ArrowUp, ArrowDown, MoreHorizontal, Eye, Edit, Trash, ExternalLink, Download, Copy } from 'lucide-react';
+import TestDbPanel from "../components/TestDbPanel";
 
 const DashboardPage: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState<string>('all');
