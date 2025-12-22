@@ -175,6 +175,10 @@ function TokenSelect({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [saving, setSaving] = useState(false);
+const [saveError, setSaveError] = useState<string | null>(null);
+const [draftId, setDraftId] = useState<string | null>(
+  () => sessionStorage.getItem("draftListingId") || null);
 
   const selected = Array.isArray(value) ? value : value ? [value] : [];
   const lowerQuery = query.trim().toLowerCase();
@@ -389,7 +393,14 @@ async function ensureWorkspaceId(): Promise<string> {
   return workspaceId;
 }
 
-/* ---------- Page ---------- */
+async function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
+  return await Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("Save timed out")), ms)
+    ),
+  ]);
+}
 
 export default function ResultsPage() {
   const navigate = useNavigate();
@@ -1219,55 +1230,60 @@ export default function ResultsPage() {
         </section>
 
         {/* BUTTONS */}
-        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleSaveDraft}
-            disabled={savingDraft}
-            style={{
-              padding: '12px 24px',
-              background: savingDraft ? '#999' : '#f0f0f0',
-              color: '#333',
-              border: '1px solid #ddd',
-              borderRadius: 4,
-              cursor: savingDraft ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {savingDraft ? 'Saving…' : listingId ? 'Update Draft' : 'Save Draft'}
-          </button>
+        <div style={{ marginTop: 32, display: "flex", gap: 12, alignItems: "center" }}>
+  <button
+    type="button"
+    onClick={handleSaveDraft}
+    disabled={saving}
+    style={{
+      padding: "12px 32px",
+      background: saving ? "#999" : "#2f855a",
+      color: "white",
+      border: "none",
+      borderRadius: 4,
+      cursor: saving ? "default" : "pointer",
+      fontSize: 16,
+      fontWeight: 600,
+    }}
+  >
+    {saving ? "Saving…" : "Save Draft"}
+  </button>
 
-          <button
-            onClick={handlePublish}
-            disabled={publishing}
-            style={{
-              padding: '12px 32px',
-              background: publishing ? '#999' : '#0064d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: publishing ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {publishing ? 'Publishing…' : 'Publish to eBay'}
-          </button>
+  <button
+    onClick={handlePublish}
+    disabled={publishing}
+    style={{
+      padding: "12px 32px",
+      background: publishing ? "#999" : "#0064d2",
+      color: "white",
+      border: "none",
+      borderRadius: 4,
+      cursor: publishing ? "default" : "pointer",
+      fontSize: 16,
+      fontWeight: 600,
+    }}
+  >
+    {publishing ? "Publishing…" : "Publish to eBay"}
+  </button>
 
-          <button
-            onClick={() => navigate('/create-listing')}
-            style={{
-              padding: '12px 32px',
-              background: '#f0f0f0',
-              color: '#333',
-              border: '1px solid #ddd',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 16,
-            }}
-          >
-            Cancel
-          </button>
+  <button
+    type="button"
+    onClick={() => navigate("/create-listing")}
+    style={{
+      padding: "12px 32px",
+      background: "#f0f0f0",
+      color: "#333",
+      border: "1px solid #ddd",
+      borderRadius: 4,
+      cursor: "pointer",
+      fontSize: 16,
+    }}
+  >
+    Cancel
+  </button>
+
+  {saveError ? <span style={{ color: "red" }}>{saveError}</span> : null}
+</div>
 
           {draftStatus && (
             <span style={{ fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2b7' }}>
