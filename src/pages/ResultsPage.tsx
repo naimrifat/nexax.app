@@ -1,11 +1,5 @@
 // src/pages/ResultsPage.tsx
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-  useCallback,
-  useRef,
-} from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CategorySelector from '../components/CategorySelector';
 import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
@@ -32,7 +26,6 @@ type ItemSpecific = {
   multi?: boolean;
   selectionOnly?: boolean;
   freeTextAllowed?: boolean;
-  // full, unfiltered eBay list so we can re-filter when Size Type changes
   allOptions?: string[];
 };
 
@@ -83,7 +76,6 @@ function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   return [];
 }
 
-/** Choose string value from string | string[] */
 function firstValue(v: string | string[] | undefined): string {
   if (Array.isArray(v)) return v[0] ?? '';
   return v ?? '';
@@ -91,21 +83,16 @@ function firstValue(v: string | string[] | undefined): string {
 
 /* ---------- Size / Size Type helpers ---------- */
 
-// detect the current "Size Type" value from specifics
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
   const st = specs.find((s) => /size type/i.test(s.name || ''));
   if (!st) return '';
   return firstValue(st.value);
 }
 
-// recognize size-like aspect names that should be filtered by Size Type
 function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
 
-/**
- * Centralized size filtering using sizeMaps.ts
- */
 function filterSizeOptionsBySizeType(
   sizeType: string,
   allOptions: string[] = [],
@@ -114,10 +101,6 @@ function filterSizeOptionsBySizeType(
   return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
 }
 
-/**
- * Apply Size Type filter to Size fields in the specifics list
- * Now includes categoryPath for proper filtering
- */
 function applySizeTypeFilterToSpecifics(
   specs: ItemSpecific[],
   categoryPath: string = '',
@@ -129,18 +112,11 @@ function applySizeTypeFilterToSpecifics(
     if (!isSizeAspectName(spec.name)) return spec;
 
     const fullOptions = spec.allOptions ?? spec.options ?? [];
-    const filtered = filterSizeOptionsBySizeType(
-      sizeTypeVal,
-      fullOptions,
-      categoryPath,
-    );
+    const filtered = filterSizeOptionsBySizeType(sizeTypeVal, fullOptions, categoryPath);
 
     let value = spec.value;
-    const valueStr = firstValue(
-      typeof value === 'string' || Array.isArray(value) ? value : '',
-    );
+    const valueStr = firstValue(typeof value === 'string' || Array.isArray(value) ? value : '');
 
-    // Clear value if it's not compatible with the new Size Type
     if (valueStr && !filtered.includes(valueStr)) {
       value = spec.multi ? [] : '';
     }
@@ -175,10 +151,6 @@ function TokenSelect({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [saving, setSaving] = useState(false);
-const [saveError, setSaveError] = useState<string | null>(null);
-const [draftId, setDraftId] = useState<string | null>(
-  () => sessionStorage.getItem("draftListingId") || null);
 
   const selected = Array.isArray(value) ? value : value ? [value] : [];
   const lowerQuery = query.trim().toLowerCase();
@@ -230,9 +202,7 @@ const [draftId, setDraftId] = useState<string | null>(
     <div ref={containerRef} className="relative">
       <div
         className={`min-h-[38px] w-full flex flex-wrap items-center gap-1 rounded-md border bg-white px-2 py-1 text-sm transition focus-within:ring-2 focus-within:ring-teal-500 ${
-          disabled
-            ? 'opacity-60 cursor-not-allowed border-gray-200'
-            : 'border-gray-300'
+          disabled ? 'opacity-60 cursor-not-allowed border-gray-200' : 'border-gray-300'
         }`}
         onClick={() => {
           if (disabled) return;
@@ -240,7 +210,6 @@ const [draftId, setDraftId] = useState<string | null>(
           inputRef.current?.focus();
         }}
       >
-        {/* Chips */}
         {multi &&
           selected.map((s) => (
             <span
@@ -261,7 +230,6 @@ const [draftId, setDraftId] = useState<string | null>(
             </span>
           ))}
 
-        {/* Single pill */}
         {!multi && selected[0] && (
           <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
             {selected[0]}
@@ -344,9 +312,7 @@ function ItemSpecificControl({
     );
   }
 
-  const valString = Array.isArray(spec.value)
-    ? spec.value.join(', ')
-    : spec.value ?? '';
+  const valString = Array.isArray(spec.value) ? spec.value.join(', ') : spec.value ?? '';
 
   return (
     <input
@@ -359,7 +325,7 @@ function ItemSpecificControl({
   );
 }
 
-/* ---------- Supabase helpers ---------- */
+/* ---------- Supabase / Draft helpers ---------- */
 
 function getCategoryPathString(cat: CategoryWithPath | null): string {
   if (!cat) return '';
@@ -374,32 +340,24 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-async function ensureWorkspaceId(): Promise<string> {
-  // This RPC should be idempotent and return workspace_id.
-  const { data, error } = await supabase.rpc('ensure_user_and_workspace');
-  if (error) throw error;
-
-  // Be defensive: RPC might return object OR array OR {workspace_id:...}
-  const maybe = Array.isArray(data) ? data[0] : data;
-  const workspaceId =
-    maybe?.workspace_id || maybe?.workspaceId || maybe?.workspace || maybe?.id;
-
-  if (!workspaceId || typeof workspaceId !== 'string') {
-    throw new Error(
-      'ensure_user_and_workspace did not return a workspace_id. Check the RPC return shape.',
-    );
-  }
-
-  return workspaceId;
-}
-
 async function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
   return await Promise.race([
     p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error("Save timed out")), ms)
-    ),
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Save timed out')), ms)),
   ]);
+}
+
+function extractIdFromRpc(data: any): string | null {
+  // handle: [{id:...}], {id:...}, or uuid string
+  if (!data) return null;
+  if (typeof data === 'string') return data;
+  if (Array.isArray(data)) {
+    const first = data[0];
+    if (first?.id && typeof first.id === 'string') return first.id;
+    return null;
+  }
+  if (data?.id && typeof data.id === 'string') return data.id;
+  return null;
 }
 
 export default function ResultsPage() {
@@ -420,12 +378,13 @@ export default function ResultsPage() {
 
   const [images, setImages] = useState<string[]>([]);
   const [mainImageIndex, setMainImageIndex] = useState(0);
-
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
-  // Draft save state
+  // Draft save state (ONLY here, not in TokenSelect)
   const [savingDraft, setSavingDraft] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
+
   const [listingId, setListingId] = useState<string | null>(() => {
     try {
       return sessionStorage.getItem('nexax.currentListingId');
@@ -456,25 +415,18 @@ export default function ResultsPage() {
 
   useEffect(() => {
     removePreviewPane();
-
     const observer = new MutationObserver(() => removePreviewPane());
-
     observer.observe(document.body, { childList: true, subtree: true });
-
     return () => observer.disconnect();
   }, [removePreviewPane]);
 
-  // Smart mapper from detected facts → specifics
   const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
     return newSpecifics.map((field) => {
       let current: string | string[] = field.value;
-      let currentStr = firstValue(
-        typeof current === 'string' || Array.isArray(current) ? current : '',
-      );
+      let currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? current : '');
 
       const lower = field.name.toLowerCase();
 
-      // Only fill if still empty
       if (!currentStr) {
         let candidate = '';
 
@@ -489,13 +441,11 @@ export default function ResultsPage() {
         else if (lower === 'type' || lower.includes('type')) candidate = aiData.type || '';
 
         if (candidate) {
-          if (field.multi) current = [candidate];
-          else current = candidate;
+          current = field.multi ? [candidate] : candidate;
           currentStr = candidate;
         }
       }
 
-      // Snap to dropdown options if present
       if (field.type === 'dropdown' && field.options?.length) {
         if (Array.isArray(current)) {
           const snapped = current
@@ -515,7 +465,6 @@ export default function ResultsPage() {
     });
   }, []);
 
-  // Fetch specifics for a category and merge AI specifics + detected, then apply size filter
   const fetchCategorySpecifics = useCallback(
     async (categoryId: string) => {
       setLoadingSpecifics(true);
@@ -523,10 +472,7 @@ export default function ResultsPage() {
         const response = await fetch('/api/ebay-categories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'getCategorySpecifics',
-            categoryId,
-          }),
+          body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
         });
 
         if (!response.ok) throw new Error('Failed to fetch category specifics');
@@ -554,11 +500,9 @@ export default function ResultsPage() {
           if (aiVal == null || aiVal === '') return field;
 
           let value: string | string[];
-
           if (field.multi) {
-            if (Array.isArray(aiVal)) {
-              value = aiVal.map((v) => String(v));
-            } else {
+            if (Array.isArray(aiVal)) value = aiVal.map((v) => String(v));
+            else {
               value = String(aiVal)
                 .split(',')
                 .map((s) => s.trim())
@@ -583,9 +527,8 @@ export default function ResultsPage() {
           return { ...field, value };
         });
 
-        const filledSpecifics = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
-
-        const sizeFiltered = applySizeTypeFilterToSpecifics(filledSpecifics, category?.path || '');
+        const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
+        const sizeFiltered = applySizeTypeFilterToSpecifics(filled, category?.path || '');
         setSpecifics(sizeFiltered);
       } catch (err) {
         console.error('Error fetching specifics:', err);
@@ -596,7 +539,6 @@ export default function ResultsPage() {
     [smartFillSpecifics, category?.path],
   );
 
-  // Unified loader: from /api/listing-data/:session OR sessionStorage
   useEffect(() => {
     let isMounted = true;
 
@@ -636,9 +578,7 @@ export default function ResultsPage() {
         setDescription(analysis.description ?? '');
 
         const optimal = analysis.price_suggestion?.optimal;
-        setPrice(
-          typeof optimal === 'number' ? optimal.toFixed(2) : String(optimal ?? '0.00'),
-        );
+        setPrice(typeof optimal === 'number' ? optimal.toFixed(2) : String(optimal ?? '0.00'));
 
         const imgs: string[] =
           analysis.images ||
@@ -650,9 +590,7 @@ export default function ResultsPage() {
         setImages(imgs);
         setMainImageIndex(0);
 
-        const kw = Array.isArray(analysis.keywords)
-          ? analysis.keywords.join(', ')
-          : String(analysis.keywords ?? '');
+        const kw = Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? '');
         setKeywords(kw);
 
         setCategorySuggestions(analysis.category_suggestions ?? []);
@@ -696,11 +634,9 @@ export default function ResultsPage() {
     setSpecifics((prev) => {
       let next = [...prev];
       next[idx] = { ...next[idx], value };
-
       if (/size type/i.test(next[idx].name || '')) {
         next = applySizeTypeFilterToSpecifics(next, category?.path || '');
       }
-
       return next;
     });
   };
@@ -708,14 +644,9 @@ export default function ResultsPage() {
   const addSpecific = () => setSpecifics((prev) => [...prev, { name: '', value: '' }]);
   const removeSpecific = (idx: number) => setSpecifics((prev) => prev.filter((_, i) => i !== idx));
 
-  // 🔑 Prefer eBay-style breadcrumbs, then normalized path
   const categoryBreadcrumb = useMemo(() => {
     if (!category) return 'No category selected';
-
-    if (category.breadcrumbs && category.breadcrumbs.length) {
-      return category.breadcrumbs.join(' > ');
-    }
-
+    if (category.breadcrumbs && category.breadcrumbs.length) return category.breadcrumbs.join(' > ');
     if (category.path) {
       const parts = category.path
         .split('>')
@@ -723,7 +654,6 @@ export default function ResultsPage() {
         .filter(Boolean);
       return parts.join(' > ');
     }
-
     return category.name;
   }, [category]);
 
@@ -731,7 +661,6 @@ export default function ResultsPage() {
 
   const buildListingJson = () => {
     const categoryPath = getCategoryPathString(category);
-
     const orderedImages = images.length
       ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)]
       : [];
@@ -764,11 +693,11 @@ export default function ResultsPage() {
   };
 
   const handleSaveDraft = async () => {
+    setSaveError(null);
     setDraftStatus('');
     setSavingDraft(true);
 
     try {
-      // Basic form sanity — allow drafts even if not publish-ready, but still guard obvious empties
       const hasAnyContent =
         title.trim() ||
         description.trim() ||
@@ -781,58 +710,52 @@ export default function ResultsPage() {
         return;
       }
 
-      const workspace_id = await ensureWorkspaceId();
-      const listing_json = buildListingJson();
+      // Ensure the tenancy rows exist (idempotent). If this fails, saving drafts will fail too.
+      const { error: ensureErr } = await supabase.rpc('ensure_user_and_workspace');
+      if (ensureErr) throw ensureErr;
 
-      const payload: any = {
-        workspace_id,
-        status: 'draft',
-        marketplace: 'ebay',
-        title: listing_json.title || null,
-        description: listing_json.description || null,
-        category_id: listing_json.category_id || null,
-        category_path: listing_json.category_path || null,
-        price: Number.isFinite(Number(price)) ? Number(price) : 0,
-        currency: 'USD',
-        listing_json,
-        updated_at: new Date().toISOString(),
-      };
+      const listingJson = buildListingJson();
+      const orderedImages = (listingJson.images || []) as string[];
 
-      if (listingId) {
-        const { error: upErr } = await supabase
-          .from('listings')
-          .update(payload)
-          .eq('id', listingId);
+      const p_price = (() => {
+        const n = parseFloat(price || '0');
+        return Number.isFinite(n) ? n : 0;
+      })();
 
-        if (upErr) throw upErr;
+      const rpcPromise = supabase.rpc('save_draft_listing', {
+        p_listing_id: listingId, // null for insert, uuid for update
+        p_title: listingJson.title || '',
+        p_description: listingJson.description || '',
+        p_category_id: category?.id || '',
+        p_category_path: getCategoryPathString(category) || '',
+        p_price,
+        p_currency: 'USD',
+        p_listing_json: listingJson,
+        p_images: orderedImages, // jsonb array
+      });
 
-        setDraftStatus('Draft updated.');
-        console.log('[Draft] Updated listing:', listingId);
-      } else {
-        const { data: insData, error: insErr } = await supabase
-          .from('listings')
-          .insert(payload)
-          .select('id')
-          .single();
+      const { data, error: rpcErr } = await withTimeout(rpcPromise, 12000);
+      if (rpcErr) throw rpcErr;
 
-        if (insErr) throw insErr;
+      const newId = extractIdFromRpc(data);
+      if (!newId) throw new Error('Draft save succeeded but no id was returned.');
 
-        const newId = insData?.id as string | undefined;
-        if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
-
+      if (!listingId) {
         setListingId(newId);
         try {
           sessionStorage.setItem('nexax.currentListingId', newId);
         } catch {
           // ignore
         }
-
         setDraftStatus('Draft saved.');
-        console.log('[Draft] Inserted listing:', newId);
+      } else {
+        setDraftStatus('Draft updated.');
       }
     } catch (err: any) {
       console.error('[Draft] Save failed:', err);
-      setDraftStatus(err?.message || 'Failed to save draft.');
+      const msg = err?.message || 'Failed to save draft.';
+      setSaveError(msg);
+      setDraftStatus('Failed to save draft.');
     } finally {
       setSavingDraft(false);
     }
@@ -851,10 +774,7 @@ export default function ResultsPage() {
     try {
       setPublishing(true);
 
-      const orderedImages = [
-        images[mainImageIndex],
-        ...images.filter((_, idx) => idx !== mainImageIndex),
-      ];
+      const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)];
 
       const listing_data = {
         title: title.trim(),
@@ -873,18 +793,13 @@ export default function ResultsPage() {
           .split(',')
           .map((k) => k.trim())
           .filter(Boolean),
-        price_suggestion: {
-          optimal: parseFloat(price || '0') || 0,
-        },
+        price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       };
 
       const res = await fetch('/api/publish-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listing_data,
-          images: orderedImages,
-        }),
+        body: JSON.stringify({ listing_data, images: orderedImages }),
       });
 
       const data = await res.json();
@@ -897,9 +812,7 @@ export default function ResultsPage() {
       alert('Your listing has been sent to eBay! It may take a minute to appear.');
     } catch (err: any) {
       console.error('Publish error:', err);
-      alert(
-        `An unexpected error occurred while publishing: ${err?.message || String(err)}`,
-      );
+      alert(`An unexpected error occurred while publishing: ${err?.message || String(err)}`);
     } finally {
       setPublishing(false);
     }
@@ -922,11 +835,8 @@ export default function ResultsPage() {
     );
   }
 
-  // Normalized path passed into CategorySelector so its header matches eBay order
   const normalizedCategoryPathForSelector =
-    (category?.breadcrumbs && category.breadcrumbs.length
-      ? category.breadcrumbs.join(' > ')
-      : '') ||
+    (category?.breadcrumbs && category.breadcrumbs.length ? category.breadcrumbs.join(' > ') : '') ||
     (category?.path
       ? category.path
           .split('>')
@@ -968,11 +878,7 @@ export default function ResultsPage() {
               <img
                 src={mainImageUrl}
                 alt="Main"
-                style={{
-                  maxHeight: '100%',
-                  maxWidth: '100%',
-                  objectFit: 'contain',
-                }}
+                style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
               />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
@@ -1010,11 +916,13 @@ export default function ResultsPage() {
                       const next = [...prevImages];
                       const [moved] = next.splice(dragIndex, 1);
                       next.splice(idx, 0, moved);
+
                       setMainImageIndex((prevMain) => {
                         const mainUrl = prevImages[prevMain];
                         const newIndex = next.findIndex((url) => url === mainUrl);
                         return newIndex >= 0 ? newIndex : 0;
                       });
+
                       return next;
                     });
                   }}
@@ -1035,11 +943,7 @@ export default function ResultsPage() {
                   <img
                     src={img}
                     alt={`thumb-${idx}`}
-                    style={{
-                      maxHeight: '100%',
-                      maxWidth: '100%',
-                      objectFit: 'cover',
-                    }}
+                    style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
                   />
                 </div>
               ))}
@@ -1054,22 +958,10 @@ export default function ResultsPage() {
             placeholder="Enter title..."
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            style={{
-              width: '100%',
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
+            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
             maxLength={80}
           />
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginTop: 4,
-              textAlign: 'right',
-            }}
-          >
+          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>
             {title.length}/80 characters
           </div>
         </section>
@@ -1082,12 +974,7 @@ export default function ResultsPage() {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
-            style={{
-              width: '100%',
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
+            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
 
@@ -1106,22 +993,8 @@ export default function ResultsPage() {
               marginTop: 8,
             }}
           >
-            <div
-              style={{
-                flex: 1,
-                marginRight: 12,
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12,
-                  color: '#666',
-                  marginBottom: 4,
-                }}
-              >
-                Selected Category:
-              </div>
+            <div style={{ flex: 1, marginRight: 12, overflow: 'hidden' }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Selected Category:</div>
               <div
                 style={{
                   fontWeight: 500,
@@ -1157,21 +1030,14 @@ export default function ResultsPage() {
         <section style={{ marginTop: 24 }}>
           <h3>
             Item Specifics{' '}
-            {loadingSpecifics && (
-              <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>
-            )}
+            {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>}
           </h3>
 
           {specifics.length === 0 && !loadingSpecifics && (
-            <div style={{ opacity: 0.7, marginTop: 8 }}>
-              No specifics loaded. Select a category first.
-            </div>
+            <div style={{ opacity: 0.7, marginTop: 8 }}>No specifics loaded. Select a category first.</div>
           )}
 
-          <div
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-3"
-            style={{ marginTop: 12 }}
-          >
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-3" style={{ marginTop: 12 }}>
             {specifics.map((spec, i) => (
               <div key={`${spec.name}-${i}`} className="flex flex-col gap-1">
                 <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
@@ -1183,15 +1049,7 @@ export default function ResultsPage() {
             ))}
           </div>
 
-          <button
-            type="button"
-            onClick={addSpecific}
-            style={{
-              marginTop: 12,
-              padding: '8px 16px',
-              fontSize: 14,
-            }}
-          >
+          <button type="button" onClick={addSpecific} style={{ marginTop: 12, padding: '8px 16px', fontSize: 14 }}>
             + Add Custom Specific
           </button>
         </section>
@@ -1203,12 +1061,7 @@ export default function ResultsPage() {
             placeholder="e.g., vintage, designer, rare"
             value={keywords}
             onChange={(e) => setKeywords(e.target.value)}
-            style={{
-              width: '100%',
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
+            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
 
@@ -1220,90 +1073,76 @@ export default function ResultsPage() {
             step="0.01"
             value={price}
             onChange={(e) => setPrice(e.target.value)}
-            style={{
-              width: 240,
-              padding: 12,
-              marginTop: 8,
-              fontSize: 14,
-            }}
+            style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
 
         {/* BUTTONS */}
-        <div style={{ marginTop: 32, display: "flex", gap: 12, alignItems: "center" }}>
-  <button
-    type="button"
-    onClick={handleSaveDraft}
-    disabled={saving}
-    style={{
-      padding: "12px 32px",
-      background: saving ? "#999" : "#2f855a",
-      color: "white",
-      border: "none",
-      borderRadius: 4,
-      cursor: saving ? "default" : "pointer",
-      fontSize: 16,
-      fontWeight: 600,
-    }}
-  >
-    {saving ? "Saving…" : "Save Draft"}
-  </button>
+        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={handleSaveDraft}
+            disabled={savingDraft}
+            style={{
+              padding: '12px 32px',
+              background: savingDraft ? '#999' : '#2f855a',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: savingDraft ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {savingDraft ? 'Saving…' : 'Save Draft'}
+          </button>
 
-  <button
-    onClick={handlePublish}
-    disabled={publishing}
-    style={{
-      padding: "12px 32px",
-      background: publishing ? "#999" : "#0064d2",
-      color: "white",
-      border: "none",
-      borderRadius: 4,
-      cursor: publishing ? "default" : "pointer",
-      fontSize: 16,
-      fontWeight: 600,
-    }}
-  >
-    {publishing ? "Publishing…" : "Publish to eBay"}
-  </button>
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={publishing}
+            style={{
+              padding: '12px 32px',
+              background: publishing ? '#999' : '#0064d2',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: publishing ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {publishing ? 'Publishing…' : 'Publish to eBay'}
+          </button>
 
-  <button
-    type="button"
-    onClick={() => navigate("/create-listing")}
-    style={{
-      padding: "12px 32px",
-      background: "#f0f0f0",
-      color: "#333",
-      border: "1px solid #ddd",
-      borderRadius: 4,
-      cursor: "pointer",
-      fontSize: 16,
-    }}
-  >
-    Cancel
-  </button>
+          <button
+            type="button"
+            onClick={() => navigate('/create-listing')}
+            style={{
+              padding: '12px 32px',
+              background: '#f0f0f0',
+              color: '#333',
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 16,
+            }}
+          >
+            Cancel
+          </button>
 
-  {saveError ? <span style={{ color: "red" }}>{saveError}</span> : null}
-</div>
-
-          {draftStatus && (
-            <span style={{ fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2b7' }}>
+          {saveError ? <span style={{ color: 'red', fontSize: 14 }}>{saveError}</span> : null}
+          {draftStatus ? (
+            <span style={{ fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2f855a' }}>
               {draftStatus}
             </span>
-          )}
+          ) : null}
         </div>
       </main>
 
       {/* PREVIEW SIDEBAR */}
       <aside>
-        <div
-          style={{
-            border: '1px solid #ddd',
-            borderRadius: 8,
-            padding: 16,
-            position: 'sticky',
-            top: 24,
-          }}
-        >
+        <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, position: 'sticky', top: 24 }}>
           <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
           <div
             style={{
@@ -1319,42 +1158,15 @@ export default function ResultsPage() {
               <img
                 src={mainImageUrl}
                 alt="preview"
-                style={{
-                  maxHeight: 200,
-                  maxWidth: '100%',
-                  borderRadius: 4,
-                  objectFit: 'contain',
-                }}
+                style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }}
               />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
           </div>
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: 14,
-              marginBottom: 8,
-            }}
-          >
-            {title || 'Your Product Title'}
-          </div>
-          <div
-            style={{
-              color: '#c93',
-              fontWeight: 700,
-              fontSize: 20,
-            }}
-          >
-            US ${price || '0.00'}
-          </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: '#666',
-              marginTop: 8,
-            }}
-          >
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{title || 'Your Product Title'}</div>
+          <div style={{ color: '#c93', fontWeight: 700, fontSize: 20 }}>US ${price || '0.00'}</div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
             Category: {category?.name || 'Not selected'}
           </div>
         </div>
