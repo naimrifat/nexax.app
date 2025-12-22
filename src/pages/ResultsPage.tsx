@@ -9,7 +9,7 @@ import React, {
 import { useNavigate } from 'react-router-dom';
 import CategorySelector from '../components/CategorySelector';
 import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../../lib/supabaseClient';
 
 type Category = {
   id: string;
