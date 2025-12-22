@@ -29,35 +29,51 @@ const Header: React.FC = () => {
   const closeAuth = () => setAuthMode(null);
   const openAuth = (mode: AuthMode) => setAuthMode(mode);
 
-  const handleLogout = async () => {
-    try {
-      console.log("[Header] handleLogout started");
+const handleLogout = async () => {
+  try {
+    console.log("[Header] handleLogout started");
 
-      // Prefer local sign-out (clears browser session without relying on network)
-      const signOutPromise = supabase.auth.signOut({ scope: "local" });
+    // 1) Attempt normal local sign out, but do not wait long.
+    const signOutAttempt = supabase.auth.signOut({ scope: "local" });
 
-      // Timeout guard so we never hang silently
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Logout timed out (network stall).")), 3000);
-      });
+    const timeoutPromise = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), 800)
+    );
 
-      await Promise.race([signOutPromise, timeoutPromise]);
+    const result = await Promise.race([signOutAttempt.then(() => "ok" as const), timeoutPromise]);
 
+    if (result === "ok") {
       console.log("[Header] Supabase signOut succeeded (local)");
-      setMobileMenuOpen(false);
-      setAuthMode(null);
-
-      // Hard redirect resets app state and ensures you're truly logged out
-      window.location.href = "/login";
-    } catch (err: unknown) {
-      console.error("[Header] Logout failed:", err);
-      const message = err instanceof Error ? err.message : "Logout failed.";
-      alert(message);
-
-      // Still force navigation so you can continue testing
-      window.location.href = "/login";
+    } else {
+      console.warn("[Header] Supabase signOut timed out, applying manual logout fallback...");
     }
-  };
+
+    // 2) Manual fallback: clear Supabase auth storage keys
+    // Supabase stores auth session in localStorage under keys that include your project ref.
+    // This removes ALL Supabase auth data for this origin.
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      if (k.startsWith("sb-") && k.endsWith("-auth-token")) {
+        localStorage.removeItem(k);
+      }
+    }
+
+    // Also clear any supabase-related keys that some versions used
+    // (harmless if they don't exist)
+    localStorage.removeItem("supabase.auth.token");
+
+    setMobileMenuOpen(false);
+    setAuthMode(null);
+
+    // 3) Hard reload into /login (no SPA state survives)
+    window.location.href = "/login";
+  } catch (err: unknown) {
+    console.error("[Header] Manual logout failed:", err);
+    alert(err instanceof Error ? err.message : "Logout failed.");
+    window.location.href = "/login";
+  }
+};
 
   return (
     <header
