@@ -340,11 +340,28 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-async function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
-  return await Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Save timed out')), ms)),
-  ]);
+async function withTimeout<T>(
+  p: Promise<T>,
+  ms = 12000,
+  label = "operation"
+): Promise<T> {
+  let timeoutId: any;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`[Timeout] ${label} exceeded ${ms}ms`));
+    }, ms);
+  });
+
+  try {
+    const result = await Promise.race([p, timeoutPromise]);
+    clearTimeout(timeoutId);
+    return result as T;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    console.error(`[withTimeout:${label}] failed`, err);
+    throw err;
+  }
 }
 
 function getSessionIdFromUrl(): string {
@@ -803,11 +820,20 @@ export default function ResultsPage() {
       setDraftStatus('Draft updated.');
     } else {
       // Insert new draft. Select the whole row so we can verify ownership was persisted.
-      const { data: insData, error: insErr } = await withTimeout(
-        supabase.from('listings').insert(payload).select('*').single(),
-        12000,
-      );
-      if (insErr) throw insErr;
+      
+const { data: upData, error: upErr } = await withTimeout(
+  supabase
+    .from("listings")
+    .update(payload)
+    .eq("id", listingId)
+    .eq("created_by", user.id)
+    .select("id, updated_at")
+    .single(),
+  12000,
+  "update listing draft"
+);
+
+if (upErr) throw upErr;
 
       const newId = insData?.id as string | undefined;
       if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
