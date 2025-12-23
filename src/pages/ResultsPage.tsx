@@ -759,9 +759,6 @@ export default function ResultsPage() {
         return;
       }
 
-      // Resolve auth robustly (no single-point timeout)
-      await resolveAuthUserId(); // primarily validates “logged-in”; used for debugging only
-
       // Tenancy: internal FK ids for RLS + FK constraints
       const { workspace_id, internal_user_id } = await ensureTenancy();
 
