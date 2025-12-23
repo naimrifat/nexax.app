@@ -108,11 +108,7 @@ function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
 
-function filterSizeOptionsBySizeType(
-  sizeType: string,
-  allOptions: string[] = [],
-  categoryPath: string = '',
-): string[] {
+function filterSizeOptionsBySizeType(sizeType: string, allOptions: string[] = [], categoryPath: string = ''): string[] {
   return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
 }
 
@@ -214,7 +210,10 @@ function TokenSelect({
       >
         {multi &&
           selected.map((s) => (
-            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
+            <span
+              key={s}
+              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
+            >
               {s}
               <button
                 type="button"
@@ -342,8 +341,11 @@ function getSessionIdFromUrl(): string {
 
 function getDraftStorageKey(): string {
   return `nexax.currentListingId.${getSessionIdFromUrl()}`;
+}
 
-const TENANCY_CACHE_KEY = "nexax.tenancy.v1";
+/* ---------- Tenancy cache helpers ---------- */
+
+const TENANCY_CACHE_KEY = 'nexax.tenancy.v1';
 
 function readTenancyCache(): { workspace_id: string; internal_user_id: string } | null {
   try {
@@ -480,67 +482,68 @@ export default function ResultsPage() {
     return uid;
   }, []);
 
-const ensureTenancy = useCallback(async () => {
-  // 1) in-memory cache
-  if (tenancyRef.current) return tenancyRef.current;
+  const ensureTenancy = useCallback(async () => {
+    // 1) in-memory cache
+    if (tenancyRef.current) return tenancyRef.current;
 
-  // 2) persisted cache
-  const cached = readTenancyCache();
-  if (cached) {
-    tenancyRef.current = cached;
-    return cached;
-  }
+    // 2) persisted cache
+    const cached = readTenancyCache();
+    if (cached) {
+      tenancyRef.current = cached;
+      return cached;
+    }
 
-  // 3) single-flight RPC
-  if (ensureTenancyInFlightRef.current) return await ensureTenancyInFlightRef.current;
+    // 3) single-flight RPC
+    if (ensureTenancyInFlightRef.current) return await ensureTenancyInFlightRef.current;
 
-  ensureTenancyInFlightRef.current = (async () => {
+    ensureTenancyInFlightRef.current = (async () => {
+      try {
+        const { data: wsData, error: ensureErr } = await withTimeout(
+          supabase.rpc('ensure_user_and_workspace'),
+          30000,
+          'ensure_user_and_workspace',
+        );
+        if (ensureErr) throw ensureErr;
+
+        const row: any = Array.isArray(wsData) ? wsData[0] : wsData;
+
+        const workspace_id = row?.workspace_id ?? row?.out_workspace_id;
+        const internal_user_id = row?.user_id ?? row?.out_user_id;
+
+        if (!workspace_id || typeof workspace_id !== 'string') {
+          throw new Error(`RPC missing workspace_id. Returned: ${JSON.stringify(wsData)}`);
+        }
+        if (!internal_user_id || typeof internal_user_id !== 'string') {
+          throw new Error(`RPC missing user_id. Returned: ${JSON.stringify(wsData)}`);
+        }
+
+        const result = { workspace_id, internal_user_id };
+        tenancyRef.current = result;
+        writeTenancyCache(result);
+        return result;
+      } finally {
+        // CRITICAL: always clear so we never get stuck
+        ensureTenancyInFlightRef.current = null;
+      }
+    })();
+
     try {
-      const { data: wsData, error: ensureErr } = await withTimeout(
-        supabase.rpc("ensure_user_and_workspace"),
-        30000,
-        "ensure_user_and_workspace"
-      );
-      if (ensureErr) throw ensureErr;
-
-      const row: any = Array.isArray(wsData) ? wsData[0] : wsData;
-
-      const workspace_id = row?.workspace_id ?? row?.out_workspace_id;
-      const internal_user_id = row?.user_id ?? row?.out_user_id;
-
-      if (!workspace_id || typeof workspace_id !== "string") {
-        throw new Error(`RPC missing workspace_id. Returned: ${JSON.stringify(wsData)}`);
+      return await ensureTenancyInFlightRef.current;
+    } catch (err) {
+      // If RPC fails but we have a cache, do not block saving drafts.
+      const fallback = readTenancyCache();
+      if (fallback) {
+        tenancyRef.current = fallback;
+        return fallback;
       }
-      if (!internal_user_id || typeof internal_user_id !== "string") {
-        throw new Error(`RPC missing user_id. Returned: ${JSON.stringify(wsData)}`);
-      }
-
-      const result = { workspace_id, internal_user_id };
-      tenancyRef.current = result;
-      writeTenancyCache(result);
-      return result;
-    } finally {
-      ensureTenancyInFlightRef.current = null; // CRITICAL
+      throw err;
     }
-  })();
-
-  try {
-    return await ensureTenancyInFlightRef.current;
-  } catch (err) {
-    // If RPC fails but we have a cache, do not block saving drafts.
-    const fallback = readTenancyCache();
-    if (fallback) {
-      tenancyRef.current = fallback;
-      return fallback;
-    }
-    throw err;
-  }
-}, []);
+  }, []);
 
   const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
     return newSpecifics.map((field) => {
       let current: string | string[] = field.value;
-      let currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? current : '');
+      const currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? current : '');
 
       const lower = field.name.toLowerCase();
 
@@ -631,10 +634,11 @@ const ensureTenancy = useCallback(async () => {
     },
     [smartFillSpecifics, category?.path],
   );
-  
+
+  // Warm tenancy once (moves RPC off the "Save Draft" click path)
   useEffect(() => {
-  ensureTenancy().catch((e) => console.warn("[Tenancy] warmup failed:", e));
-}, [ensureTenancy]);
+    ensureTenancy().catch((e) => console.warn('[Tenancy] warmup failed:', e));
+  }, [ensureTenancy]);
 
   useEffect(() => {
     let isMounted = true;
@@ -817,7 +821,6 @@ const ensureTenancy = useCallback(async () => {
         return Number.isFinite(n) ? n : 0;
       })();
 
-      // Do NOT include payload.images (avoid schema-cache + missing column failures)
       const payload: any = {
         workspace_id,
         created_by: internal_user_id,
@@ -997,7 +1000,11 @@ const ensureTenancy = useCallback(async () => {
             }}
           >
             {mainImageUrl ? (
-              <img src={mainImageUrl} alt="Main" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />
+              <img
+                src={mainImageUrl}
+                alt="Main"
+                style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
+              />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
@@ -1050,7 +1057,11 @@ const ensureTenancy = useCallback(async () => {
                     justifyContent: 'center',
                   }}
                 >
-                  <img src={img} alt={`thumb-${idx}`} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }} />
+                  <img
+                    src={img}
+                    alt={`thumb-${idx}`}
+                    style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
+                  />
                 </div>
               ))}
             </div>
@@ -1066,7 +1077,9 @@ const ensureTenancy = useCallback(async () => {
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
             maxLength={80}
           />
-          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>
+            {title.length}/80 characters
+          </div>
         </section>
 
         <section style={{ marginTop: 24 }}>
@@ -1096,7 +1109,15 @@ const ensureTenancy = useCallback(async () => {
           >
             <div style={{ flex: 1, marginRight: 12, overflow: 'hidden' }}>
               <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Selected Category:</div>
-              <div style={{ fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div
+                style={{
+                  fontWeight: 500,
+                  fontSize: 14,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
                 {categoryBreadcrumb}
               </div>
             </div>
@@ -1157,7 +1178,13 @@ const ensureTenancy = useCallback(async () => {
 
         <section style={{ marginTop: 24 }}>
           <h3>Price</h3>
-          <input type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }} />
+          <input
+            type="number"
+            step="0.01"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
+          />
         </section>
 
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -1225,9 +1252,22 @@ const ensureTenancy = useCallback(async () => {
       <aside>
         <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, position: 'sticky', top: 24 }}>
           <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
-          <div style={{ height: 200, background: '#f5f5f5', display: 'grid', placeItems: 'center', marginBottom: 12, borderRadius: 4 }}>
+          <div
+            style={{
+              height: 200,
+              background: '#f5f5f5',
+              display: 'grid',
+              placeItems: 'center',
+              marginBottom: 12,
+              borderRadius: 4,
+            }}
+          >
             {mainImageUrl ? (
-              <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
+              <img
+                src={mainImageUrl}
+                alt="preview"
+                style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }}
+              />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
