@@ -55,7 +55,7 @@ type AiData = {
   detected?: AiDetected;
 };
 
-/* ---------- Timeout helper (NO top-level await) ---------- */
+/* ---------- Timeout helper ---------- */
 
 async function withTimeout<T>(p: Promise<T>, ms = 12000, label = 'operation'): Promise<T> {
   let timeoutId: any;
@@ -65,9 +65,6 @@ async function withTimeout<T>(p: Promise<T>, ms = 12000, label = 'operation'): P
 
   try {
     return (await Promise.race([p, timeoutPromise])) as T;
-  } catch (err) {
-    console.error(`[withTimeout:${label}] failed`, err);
-    throw err;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -99,7 +96,7 @@ function firstValue(v: string | string[] | undefined): string {
   return v ?? '';
 }
 
-/* ---------- Size / Size Type helpers ---------- */
+/* ---------- Size helpers ---------- */
 
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
   const st = specs.find((s) => /size type/i.test(s.name || ''));
@@ -136,12 +133,7 @@ function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: str
       value = spec.multi ? [] : '';
     }
 
-    return {
-      ...spec,
-      options: filtered,
-      allOptions: fullOptions,
-      value,
-    };
+    return { ...spec, options: filtered, allOptions: fullOptions, value };
   });
 }
 
@@ -188,10 +180,8 @@ function TokenSelect({
   }, []);
 
   const addOption = (opt: string) => {
-    if (multi) {
-      const next = Array.from(new Set([...selected, opt]));
-      onChange(next);
-    } else {
+    if (multi) onChange(Array.from(new Set([...selected, opt])));
+    else {
       onChange(opt);
       setOpen(false);
     }
@@ -200,11 +190,8 @@ function TokenSelect({
   };
 
   const removeOption = (opt: string) => {
-    if (!multi) {
-      onChange('');
-      return;
-    }
-    onChange(selected.filter((s) => s !== opt));
+    if (!multi) onChange('');
+    else onChange(selected.filter((s) => s !== opt));
   };
 
   const clearAll = () => {
@@ -227,10 +214,7 @@ function TokenSelect({
       >
         {multi &&
           selected.map((s) => (
-            <span
-              key={s}
-              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
-            >
+            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
               {s}
               <button
                 type="button"
@@ -307,7 +291,6 @@ function TokenSelect({
 
 function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange: (val: string | string[]) => void }) {
   const opts = Array.isArray(spec.options) ? spec.options : [];
-
   if (opts.length > 0 || spec.type === 'dropdown') {
     return (
       <TokenSelect
@@ -322,7 +305,6 @@ function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange:
   }
 
   const valString = Array.isArray(spec.value) ? spec.value.join(', ') : spec.value ?? '';
-
   return (
     <input
       type="text"
@@ -334,7 +316,7 @@ function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange:
   );
 }
 
-/* ---------- Supabase / Draft helpers ---------- */
+/* ---------- Draft helpers ---------- */
 
 function getCategoryPathString(cat: CategoryWithPath | null): string {
   if (!cat) return '';
@@ -382,7 +364,6 @@ export default function ResultsPage() {
   const [mainImageIndex, setMainImageIndex] = useState(0);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
-  // Draft save state
   const [savingDraft, setSavingDraft] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
@@ -398,9 +379,85 @@ export default function ResultsPage() {
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
 
-  // Tenancy cache to avoid repeated RPC calls and reduce failure surface
+  // Cache: avoid repeated auth/RPC calls
+  const authUserRef = useRef<{ id: string } | null>(null);
   const tenancyRef = useRef<{ workspace_id: string; internal_user_id: string } | null>(null);
   const ensureTenancyInFlightRef = useRef<Promise<{ workspace_id: string; internal_user_id: string }> | null>(null);
+
+  // Track auth state once; populate authUserRef when possible
+  useEffect(() => {
+    let unsub: any = null;
+    try {
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        const u = session?.user;
+        if (u?.id) authUserRef.current = { id: u.id };
+      });
+      unsub = data?.subscription;
+    } catch {
+      // ignore
+    }
+    return () => {
+      try {
+        unsub?.unsubscribe?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
+  const resolveAuthUserId = useCallback(async (): Promise<string> => {
+    if (authUserRef.current?.id) return authUserRef.current.id;
+
+    // Strategy A: getSession (longer timeout)
+    try {
+      const { data, error } = await withTimeout(supabase.auth.getSession(), 15000, 'auth.getSession');
+      if (error) throw error;
+      const uid = data?.session?.user?.id;
+      if (uid) {
+        authUserRef.current = { id: uid };
+        return uid;
+      }
+    } catch (e) {
+      console.warn('[Auth] getSession failed:', e);
+    }
+
+    // Strategy B: getUser (longer timeout)
+    try {
+      const { data, error } = await withTimeout(supabase.auth.getUser(), 15000, 'auth.getUser');
+      if (error) throw error;
+      const uid = data?.user?.id;
+      if (uid) {
+        authUserRef.current = { id: uid };
+        return uid;
+      }
+    } catch (e) {
+      console.warn('[Auth] getUser failed:', e);
+    }
+
+    // Strategy C: wait for auth state event (bounded)
+    const uid = await withTimeout(
+      new Promise<string>((resolve, reject) => {
+        try {
+          const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+            const u = session?.user;
+            if (u?.id) {
+              try {
+                data?.subscription?.unsubscribe?.();
+              } catch {}
+              resolve(u.id);
+            }
+          });
+        } catch (err) {
+          reject(err);
+        }
+      }),
+      12000,
+      'auth.onAuthStateChange',
+    );
+
+    authUserRef.current = { id: uid };
+    return uid;
+  }, []);
 
   const ensureTenancy = useCallback(async () => {
     if (tenancyRef.current) return tenancyRef.current;
@@ -409,15 +466,15 @@ export default function ResultsPage() {
     ensureTenancyInFlightRef.current = (async () => {
       const { data: wsData, error: ensureErr } = await withTimeout(
         supabase.rpc('ensure_user_and_workspace'),
-        15000,
+        20000,
         'ensure_user_and_workspace',
       );
       if (ensureErr) throw ensureErr;
 
-      const wsRow: any = Array.isArray(wsData) ? wsData[0] : wsData;
+      const row: any = Array.isArray(wsData) ? wsData[0] : wsData;
 
-      const workspace_id = wsRow?.workspace_id ?? wsRow?.out_workspace_id;
-      const internal_user_id = wsRow?.user_id ?? wsRow?.out_user_id;
+      const workspace_id = row?.workspace_id ?? row?.out_workspace_id;
+      const internal_user_id = row?.user_id ?? row?.out_user_id;
 
       if (!workspace_id || typeof workspace_id !== 'string') {
         throw new Error(`RPC missing workspace_id. Returned: ${JSON.stringify(wsData)}`);
@@ -435,31 +492,6 @@ export default function ResultsPage() {
     return await ensureTenancyInFlightRef.current;
   }, []);
 
-  // Remove any injected preview pane
-  const removePreviewPane = useCallback(() => {
-    const heading = Array.from(document.querySelectorAll('h1, h2, h3, h4')).find((el) => {
-      const text = el.textContent?.trim().toLowerCase();
-      return text === 'listing preview' || text === 'preview';
-    });
-
-    if (!heading) return;
-
-    const previewCard =
-      heading.closest('.card') ||
-      heading.closest('aside') ||
-      heading.closest('section') ||
-      heading.parentElement;
-
-    previewCard?.remove();
-  }, []);
-
-  useEffect(() => {
-    removePreviewPane();
-    const observer = new MutationObserver(() => removePreviewPane());
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [removePreviewPane]);
-
   const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
     return newSpecifics.map((field) => {
       let current: string | string[] = field.value;
@@ -469,7 +501,6 @@ export default function ResultsPage() {
 
       if (!currentStr) {
         let candidate = '';
-
         if (lower.includes('brand')) candidate = aiData.brand || '';
         else if (lower.includes('size type')) candidate = aiData.type || '';
         else if (lower === 'size' || lower.includes('size')) candidate = aiData.size || '';
@@ -480,21 +511,14 @@ export default function ResultsPage() {
         else if (lower.includes('department')) candidate = aiData.department || '';
         else if (lower === 'type' || lower.includes('type')) candidate = aiData.type || '';
 
-        if (candidate) {
-          current = field.multi ? [candidate] : candidate;
-          currentStr = candidate;
-        }
+        if (candidate) current = field.multi ? [candidate] : candidate;
       }
 
       if (field.type === 'dropdown' && field.options?.length) {
         if (Array.isArray(current)) {
-          const snapped = current
-            .map((v) => {
-              const exact = field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase());
-              return exact || v;
-            })
+          current = current
+            .map((v) => field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase()) || v)
             .filter(Boolean) as string[];
-          current = snapped;
         } else if (typeof current === 'string' && current) {
           const exact = field.options.find((opt) => opt.toLowerCase() === String(current).toLowerCase());
           if (exact) current = exact;
@@ -514,9 +538,7 @@ export default function ResultsPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
         });
-
         if (!response.ok) throw new Error('Failed to fetch category specifics');
-
         const data = await response.json();
 
         const baseSpecifics: ItemSpecific[] = (data.aspects || []).map((aspect: any) => ({
@@ -535,33 +557,19 @@ export default function ResultsPage() {
         const aiMap = new Map(aiSpecifics.map((s) => [s.name.toLowerCase(), s.value]));
 
         const withAiSpecifics: ItemSpecific[] = baseSpecifics.map((field) => {
-          const lower = field.name.toLowerCase();
-          const aiVal = aiMap.get(lower);
+          const aiVal = aiMap.get(field.name.toLowerCase());
           if (aiVal == null || aiVal === '') return field;
 
           let value: string | string[];
           if (field.multi) {
-            if (Array.isArray(aiVal)) value = aiVal.map((v) => String(v));
-            else {
-              value = String(aiVal)
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-            }
+            value = Array.isArray(aiVal)
+              ? aiVal.map((v) => String(v))
+              : String(aiVal)
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter(Boolean);
           } else {
             value = String(Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal);
-          }
-
-          if (field.type === 'dropdown' && field.options?.length) {
-            if (Array.isArray(value)) {
-              value = value.map((v) => {
-                const exact = field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase());
-                return exact || v;
-              });
-            } else if (typeof value === 'string' && value) {
-              const exact = field.options.find((opt) => opt.toLowerCase() === value.toLowerCase());
-              if (exact) value = exact;
-            }
           }
 
           return { ...field, value };
@@ -590,9 +598,7 @@ export default function ResultsPage() {
       try {
         const stored = sessionStorage.getItem(sessionKey);
         setListingId(stored || null);
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       const urlParams = new URLSearchParams(window.location.search);
       const sessionId = urlParams.get('session');
@@ -618,8 +624,7 @@ export default function ResultsPage() {
 
         if (!isMounted) return;
 
-        const normalizedAiSpecifics = normalizeSpecifics(analysis.item_specifics);
-        aiSpecificsRef.current = normalizedAiSpecifics;
+        aiSpecificsRef.current = normalizeSpecifics(analysis.item_specifics);
         aiDetectedRef.current = analysis.detected || {};
 
         setTitle(analysis.title ?? '');
@@ -638,21 +643,17 @@ export default function ResultsPage() {
         setImages(imgs);
         setMainImageIndex(0);
 
-        const kw = Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? '');
-        setKeywords(kw);
-
+        setKeywords(Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? ''));
         setCategorySuggestions(analysis.category_suggestions ?? []);
 
         const initialCategory: CategoryWithPath | null = analysis.category ?? null;
         setCategory(initialCategory);
 
-        if (initialCategory && initialCategory.id) {
-          await fetchCategorySpecifics(initialCategory.id);
-        } else {
+        if (initialCategory?.id) await fetchCategorySpecifics(initialCategory.id);
+        else {
           const base = normalizeSpecifics(analysis.item_specifics);
           const filled = smartFillSpecifics(base, aiDetectedRef.current || {});
-          const sizeFiltered = applySizeTypeFilterToSpecifics(filled, initialCategory?.path || '');
-          setSpecifics(sizeFiltered);
+          setSpecifics(applySizeTypeFilterToSpecifics(filled, initialCategory?.path || ''));
         }
 
         setLoading(false);
@@ -666,7 +667,6 @@ export default function ResultsPage() {
     };
 
     loadData();
-
     return () => {
       isMounted = false;
     };
@@ -682,9 +682,7 @@ export default function ResultsPage() {
     setSpecifics((prev) => {
       let next = [...prev];
       next[idx] = { ...next[idx], value };
-      if (/size type/i.test(next[idx].name || '')) {
-        next = applySizeTypeFilterToSpecifics(next, category?.path || '');
-      }
+      if (/size type/i.test(next[idx].name || '')) next = applySizeTypeFilterToSpecifics(next, category?.path || '');
       return next;
     });
   };
@@ -695,11 +693,11 @@ export default function ResultsPage() {
     if (!category) return 'No category selected';
     if (category.breadcrumbs && category.breadcrumbs.length) return category.breadcrumbs.join(' > ');
     if (category.path) {
-      const parts = category.path
+      return category.path
         .split('>')
         .map((p) => p.trim())
-        .filter(Boolean);
-      return parts.join(' > ');
+        .filter(Boolean)
+        .join(' > ');
     }
     return category.name;
   }, [category]);
@@ -737,25 +735,16 @@ export default function ResultsPage() {
     };
   };
 
-  /**
-   * FINAL: Draft save that will NOT hang forever and uses:
-   * - auth.getSession() (fast/local)
-   * - ensure_user_and_workspace() for internal_user_id + workspace_id
-   * - NO payload.images column (avoids schema-cache / missing column failures)
-   * - hard UI failsafe + strict timeouts
-   */
   const handleSaveDraft = async () => {
     setSaveError(null);
     setDraftStatus('');
     setSavingDraft(true);
 
-    // Hard UI failsafe: even if something never returns, the button will stop spinning.
     const uiFailsafe = setTimeout(() => {
-      console.error('[Draft] UI failsafe triggered (request likely hung)');
-      setSaveError('Save is taking too long. Please try again.');
+      setSaveError('Save is taking too long. Please refresh and try again.');
       setDraftStatus('Failed to save draft.');
       setSavingDraft(false);
-    }, 20000);
+    }, 25000);
 
     try {
       const hasAnyContent =
@@ -770,33 +759,22 @@ export default function ResultsPage() {
         return;
       }
 
-      // Use getSession (fast/local) instead of getUser (can timeout/hang)
-      const { data: sessionData, error: sessionErr } = await withTimeout(
-        supabase.auth.getSession(),
-        6000,
-        'auth.getSession',
-      );
-      if (sessionErr) throw sessionErr;
+      // Resolve auth robustly (no single-point timeout)
+      await resolveAuthUserId(); // primarily validates “logged-in”; used for debugging only
 
-      const authUser = sessionData?.session?.user;
-      if (!authUser?.id) throw new Error('You must be logged in to save drafts.');
-
-      // Ensure tenancy; cached across saves
+      // Tenancy: internal FK ids for RLS + FK constraints
       const { workspace_id, internal_user_id } = await ensureTenancy();
 
       const listingJson = buildListingJson();
-      const orderedImages = (listingJson.images || []) as string[];
-
       const p_price = (() => {
         const n = parseFloat(price || '0');
         return Number.isFinite(n) ? n : 0;
       })();
 
-      // IMPORTANT: Do NOT include `images` unless your listings table truly has that column.
-      // Keep images inside listing_json.images (always present).
+      // Do NOT include payload.images (avoid schema-cache + missing column failures)
       const payload: any = {
         workspace_id,
-        created_by: internal_user_id, // must match FK -> public.users.id
+        created_by: internal_user_id,
         status: 'draft',
         marketplace: 'ebay',
         title: listingJson.title || null,
@@ -809,16 +787,7 @@ export default function ResultsPage() {
         updated_at: new Date().toISOString(),
       };
 
-      console.log('[Draft] Saving...', {
-        listingId: listingId || null,
-        authUserId: authUser.id,
-        internal_user_id,
-        workspace_id,
-        hasImages: orderedImages.length,
-      });
-
-      // One retry on transient timeout/5xx
-      const runWrite = async () => {
+      const writeOnce = async () => {
         if (listingId) {
           return await withTimeout(
             supabase
@@ -828,31 +797,30 @@ export default function ResultsPage() {
               .eq('created_by', internal_user_id)
               .select('id, updated_at')
               .single(),
-            15000,
+            20000,
             'update listing draft',
           );
         }
         return await withTimeout(
           supabase.from('listings').insert(payload).select('id, created_by, workspace_id').single(),
-          15000,
+          20000,
           'insert listing draft',
         );
       };
 
-      let writeRes: any;
+      let res: any;
       try {
-        writeRes = await runWrite();
+        res = await writeOnce();
       } catch (e: any) {
         const msg = String(e?.message || '');
         if (msg.includes('[Timeout]') || msg.includes('502') || msg.includes('503') || msg.includes('504')) {
-          console.warn('[Draft] transient failure; retrying once...');
-          writeRes = await runWrite();
+          res = await writeOnce();
         } else {
           throw e;
         }
       }
 
-      const { data, error } = writeRes || {};
+      const { data, error } = res || {};
       if (error) throw error;
 
       if (listingId) {
@@ -861,22 +829,17 @@ export default function ResultsPage() {
       } else {
         const newId = data?.id as string | undefined;
         if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
-
         setListingId(newId);
         try {
           sessionStorage.setItem(getDraftStorageKey(), newId);
-        } catch {
-          // ignore
-        }
+        } catch {}
         setDraftStatus('Draft saved.');
       }
     } catch (err: any) {
-      console.error('[Draft] Save failed:', err);
-
-      // If RLS blocks insert/update, this makes the failure explicit instead of “mystery broken”.
       const msg = err?.message || 'Failed to save draft.';
       setSaveError(msg);
       setDraftStatus('Failed to save draft.');
+      console.error('[Draft] Save failed:', err);
     } finally {
       clearTimeout(uiFailsafe);
       setSavingDraft(false);
@@ -895,7 +858,6 @@ export default function ResultsPage() {
 
     try {
       setPublishing(true);
-
       const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)];
 
       const listing_data = {
@@ -968,18 +930,10 @@ export default function ResultsPage() {
       : '');
 
   return (
-    <div
-      style={{
-        padding: 24,
-        display: 'grid',
-        gridTemplateColumns: '1fr 360px',
-        gap: 24,
-      }}
-    >
+    <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
       <main>
         <h1>Create eBay Listing</h1>
 
-        {/* IMAGES */}
         <section style={{ marginTop: 16 }}>
           <h3>Photos</h3>
           <div
@@ -1004,15 +958,7 @@ export default function ResultsPage() {
           </div>
 
           {images.length > 1 && (
-            <div
-              style={{
-                display: 'flex',
-                gap: 8,
-                flexWrap: 'wrap',
-                justifyContent: 'center',
-                marginTop: 8,
-              }}
-            >
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
               {images.map((img, idx) => (
                 <div
                   key={idx}
@@ -1065,7 +1011,6 @@ export default function ResultsPage() {
           )}
         </section>
 
-        {/* TITLE */}
         <section style={{ marginTop: 24 }}>
           <h3>Title</h3>
           <input
@@ -1078,7 +1023,6 @@ export default function ResultsPage() {
           <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
         </section>
 
-        {/* DESCRIPTION */}
         <section style={{ marginTop: 24 }}>
           <h3>Description</h3>
           <textarea
@@ -1090,7 +1034,6 @@ export default function ResultsPage() {
           />
         </section>
 
-        {/* CATEGORY */}
         <section style={{ marginTop: 24 }}>
           <h3>Category</h3>
           <div
@@ -1130,7 +1073,6 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        {/* ITEM SPECIFICS */}
         <section style={{ marginTop: 24 }}>
           <h3>
             Item Specifics {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>}
@@ -1157,7 +1099,6 @@ export default function ResultsPage() {
           </button>
         </section>
 
-        {/* KEYWORDS */}
         <section style={{ marginTop: 24 }}>
           <h3>Keywords</h3>
           <input
@@ -1168,13 +1109,11 @@ export default function ResultsPage() {
           />
         </section>
 
-        {/* PRICE */}
         <section style={{ marginTop: 24 }}>
           <h3>Price</h3>
           <input type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }} />
         </section>
 
-        {/* BUTTONS */}
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
           <button
             type="button"
@@ -1237,20 +1176,10 @@ export default function ResultsPage() {
         </div>
       </main>
 
-      {/* PREVIEW SIDEBAR */}
       <aside>
         <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, position: 'sticky', top: 24 }}>
           <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
-          <div
-            style={{
-              height: 200,
-              background: '#f5f5f5',
-              display: 'grid',
-              placeItems: 'center',
-              marginBottom: 12,
-              borderRadius: 4,
-            }}
-          >
+          <div style={{ height: 200, background: '#f5f5f5', display: 'grid', placeItems: 'center', marginBottom: 12, borderRadius: 4 }}>
             {mainImageUrl ? (
               <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
             ) : (
