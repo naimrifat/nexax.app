@@ -750,20 +750,40 @@ export default function ResultsPage() {
       throw new Error('You must be logged in to save drafts.');
     }
 
-    // Ensure tenancy rows exist and get workspace id
-    const { data: wsData, error: ensureErr } = await withTimeout(
-      supabase.rpc('ensure_user_and_workspace'),
-      12000,
-    );
-    if (ensureErr) throw ensureErr;
+// Ensure tenancy rows exist and get workspace id
+const { data: wsData, error: ensureErr } = await withTimeout(
+  supabase.rpc("ensure_user_and_workspace"),
+  12000,
+  "ensure_user_and_workspace"
+);
+if (ensureErr) throw ensureErr;
 
-    const wsObj = Array.isArray(wsData) ? wsData[0] : wsData;
-    const workspace_id =
-      wsObj?.workspace_id || wsObj?.workspaceId || wsObj?.workspace || wsObj?.id;
+// Observability: ALWAYS log what the RPC actually returned
+console.log("[Draft] ensure_user_and_workspace raw:", wsData);
 
-    if (!workspace_id || typeof workspace_id !== 'string') {
-      throw new Error('ensure_user_and_workspace did not return workspace_id.');
-    }
+// Normalize returned shape:
+// - could be: { workspace_id: 'uuid' }
+// - could be: [{ workspace_id: 'uuid' }]
+// - could be: { data: { workspace_id: 'uuid' } } (less common)
+// - could be: { workspace: { id: 'uuid' } } depending on your function
+const wsObj: any =
+  Array.isArray(wsData) ? wsData[0] :
+  wsData?.data ? wsData.data :
+  wsData;
+
+const workspace_id =
+  wsObj?.workspace_id ??
+  wsObj?.workspaceId ??
+  wsObj?.workspace?.id ??
+  wsObj?.workspace?.workspace_id ??
+  wsObj?.id ??
+  wsObj?.workspace;
+
+if (!workspace_id || typeof workspace_id !== "string") {
+  throw new Error(
+    `ensure_user_and_workspace did not return workspace_id. Returned: ${JSON.stringify(wsData)}`
+  );
+}
 
     const listingJson = buildListingJson();
     const orderedImages = (listingJson.images || []) as string[];
