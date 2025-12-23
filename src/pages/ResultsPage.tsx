@@ -737,67 +737,27 @@ export default function ResultsPage() {
     };
   };
 
-const handleSaveDraft = async () => {
+const handleSaveDraft = () => {
   try {
-    setStatus('Saving draft...');
-    
-    // Build the payload
-    const draftData = {
-      title: listingData?.title || '',
-      description: listingData?.description || '',
-      category_id: listingData?.category?.id || '',
-      category_path: listingData?.category?.path || '',
-      item_specifics: JSON.stringify(listingData?.item_specifics || []),
-      images: JSON.stringify(images || []),
-      price: parseFloat(price) || 0,
+    const data = {
+      title: title || '',
+      description: description || '',
+      category: category || {},
+      specifics: specifics || [],
+      images: images || [],
+      price: price || '0',
       keywords: keywords || '',
-      status: 'draft',
-      created_at: new Date().toISOString(),
+      savedAt: new Date().toISOString(),
     };
-
-    console.log('Saving draft with data:', draftData);
-
-    // Save to localStorage as backup (works immediately)
-    const draftId = `draft_${Date.now()}`;
-    localStorage.setItem(draftId, JSON.stringify(draftData));
     
-    console.log('✅ Draft saved to localStorage:', draftId);
+    const id = 'draft_' + Date.now();
+    localStorage.setItem(id, JSON.stringify(data));
     
-    // Also try Supabase if available
-    try {
-      const supabaseUrl = process.env.VITE_SUPABASE_URL;
-      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
-      
-      if (supabaseUrl && supabaseKey) {
-        const response = await fetch(`${supabaseUrl}/rest/v1/listings`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Prefer': 'return=representation'
-          },
-          body: JSON.stringify(draftData)
-        });
-
-        if (response.ok) {
-          const saved = await response.json();
-          console.log('✅ Also saved to Supabase:', saved);
-        } else {
-          console.warn('Supabase save failed, but localStorage worked');
-        }
-      }
-    } catch (supabaseError) {
-      console.warn('Supabase unavailable, localStorage backup active:', supabaseError);
-    }
-
-    setStatus('Draft saved successfully!');
-    alert('Draft saved! You can close this tab and come back later.');
-    
-  } catch (error: any) {
-    console.error('Save draft error:', error);
-    setStatus('Failed to save draft');
-    alert('Failed to save draft: ' + error.message);
+    console.log('Saved:', id);
+    alert('Draft saved! ID: ' + id);
+  } catch (e) {
+    console.error(e);
+    alert('Save failed: ' + e);
   }
 };
 
