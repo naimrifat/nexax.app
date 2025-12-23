@@ -55,6 +55,26 @@ type AiData = {
   detected?: AiDetected;
 };
 
+/* ---------- Timeout helper (NO top-level await) ---------- */
+
+async function withTimeout<T>(p: Promise<T>, ms = 12000, label = 'operation'): Promise<T> {
+  let timeoutId: any;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`[Timeout] ${label} exceeded ${ms}ms`)), ms);
+  });
+
+  try {
+    const result = await Promise.race([p, timeoutPromise]);
+    clearTimeout(timeoutId);
+    return result as T;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    console.error(`[withTimeout:${label}] failed`, err);
+    throw err;
+  }
+}
+
 /* ---------- Generic helpers ---------- */
 
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
@@ -340,26 +360,6 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-// Ensure tenancy rows exist and get workspace id
-const { data: wsData, error: ensureErr } = await withTimeout(
-  supabase.rpc("ensure_user_and_workspace"),
-  12000,
-  "ensure_user_and_workspace"
-);
-if (ensureErr) throw ensureErr;
-
-// After recreating the SQL function, wsData ALWAYS has this shape:
-// [{ user_id, workspace_id, role }]
-const wsRow = Array.isArray(wsData) ? wsData[0] : wsData;
-
-const workspace_id = wsRow?.workspace_id;
-
-if (!workspace_id) {
-  throw new Error(
-    `ensure_user_and_workspace did not return workspace_id. Returned: ${JSON.stringify(wsData)}`
-  );
-}
-
 function getSessionIdFromUrl(): string {
   try {
     const urlParams = new URLSearchParams(window.location.search);
@@ -434,50 +434,55 @@ export default function ResultsPage() {
     return () => observer.disconnect();
   }, [removePreviewPane]);
 
-  const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
-    return newSpecifics.map((field) => {
-      let current: string | string[] = field.value;
-      let currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? current : '');
+  const smartFillSpecifics = useCallback(
+    (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
+      return newSpecifics.map((field) => {
+        let current: string | string[] = field.value;
+        let currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? current : '');
 
-      const lower = field.name.toLowerCase();
+        const lower = field.name.toLowerCase();
 
-      if (!currentStr) {
-        let candidate = '';
+        if (!currentStr) {
+          let candidate = '';
 
-        if (lower.includes('brand')) candidate = aiData.brand || '';
-        else if (lower.includes('size type')) candidate = aiData.type || '';
-        else if (lower === 'size' || lower.includes('size')) candidate = aiData.size || '';
-        else if (lower.includes('color') || lower.includes('colour')) candidate = aiData.color || '';
-        else if (lower.includes('condition')) candidate = aiData.condition || '';
-        else if (lower.includes('material')) candidate = aiData.material || '';
-        else if (lower.includes('style')) candidate = aiData.style || '';
-        else if (lower.includes('department')) candidate = aiData.department || '';
-        else if (lower === 'type' || lower.includes('type')) candidate = aiData.type || '';
+          if (lower.includes('brand')) candidate = aiData.brand || '';
+          else if (lower.includes('size type')) candidate = aiData.type || '';
+          else if (lower === 'size' || lower.includes('size')) candidate = aiData.size || '';
+          else if (lower.includes('color') || lower.includes('colour')) candidate = aiData.color || '';
+          else if (lower.includes('condition')) candidate = aiData.condition || '';
+          else if (lower.includes('material')) candidate = aiData.material || '';
+          else if (lower.includes('style')) candidate = aiData.style || '';
+          else if (lower.includes('department')) candidate = aiData.department || '';
+          else if (lower === 'type' || lower.includes('type')) candidate = aiData.type || '';
 
-        if (candidate) {
-          current = field.multi ? [candidate] : candidate;
-          currentStr = candidate;
+          if (candidate) {
+            current = field.multi ? [candidate] : candidate;
+            currentStr = candidate;
+          }
         }
-      }
 
-      if (field.type === 'dropdown' && field.options?.length) {
-        if (Array.isArray(current)) {
-          const snapped = current
-            .map((v) => {
-              const exact = field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase());
-              return exact || v;
-            })
-            .filter(Boolean) as string[];
-          current = snapped;
-        } else if (typeof current === 'string' && current) {
-          const exact = field.options.find((opt) => opt.toLowerCase() === String(current).toLowerCase());
-          if (exact) current = exact;
+        if (field.type === 'dropdown' && field.options?.length) {
+          if (Array.isArray(current)) {
+            const snapped = current
+              .map((v) => {
+                const exact = field.options!.find(
+                  (opt) => opt.toLowerCase() === String(v).toLowerCase(),
+                );
+                return exact || v;
+              })
+              .filter(Boolean) as string[];
+            current = snapped;
+          } else if (typeof current === 'string' && current) {
+            const exact = field.options.find((opt) => opt.toLowerCase() === String(current).toLowerCase());
+            if (exact) current = exact;
+          }
         }
-      }
 
-      return { ...field, value: current };
-    });
-  }, []);
+        return { ...field, value: current };
+      });
+    },
+    [],
+  );
 
   const fetchCategorySpecifics = useCallback(
     async (categoryId: string) => {
@@ -613,7 +618,9 @@ export default function ResultsPage() {
         setImages(imgs);
         setMainImageIndex(0);
 
-        const kw = Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? '');
+        const kw = Array.isArray(analysis.keywords)
+          ? analysis.keywords.join(', ')
+          : String(analysis.keywords ?? '');
         setKeywords(kw);
 
         setCategorySuggestions(analysis.category_suggestions ?? []);
@@ -716,165 +723,155 @@ export default function ResultsPage() {
   };
 
   const handleSaveDraft = async () => {
-  setSaveError(null);
-  setDraftStatus("");
-  setSavingDraft(true);
+    setSaveError(null);
+    setDraftStatus('');
+    setSavingDraft(true);
 
-  try {
-    const hasAnyContent =
-      title.trim() ||
-      description.trim() ||
-      keywords.trim() ||
-      specifics.some((s) => firstValue(s.value as any)) ||
-      images.length > 0;
+    try {
+      const hasAnyContent =
+        title.trim() ||
+        description.trim() ||
+        keywords.trim() ||
+        specifics.some((s) => firstValue(s.value as any)) ||
+        images.length > 0;
 
-    // IMPORTANT: avoid early return that skips finally() and leaves saving state stuck
-    if (!hasAnyContent) {
-      setDraftStatus("Nothing to save yet.");
-      return;
-    }
-
-    // Must have a logged-in user so created_by is correct (and dashboard/RLS can see it)
-    const { data: userData, error: userErr } = await withTimeout(
-      supabase.auth.getUser(),
-      8000,
-      "auth.getUser"
-    );
-    if (userErr) throw userErr;
-
-    const user = userData?.user;
-    if (!user?.id) {
-      throw new Error("You must be logged in to save drafts.");
-    }
-
-    // Ensure tenancy rows exist and get workspace id
-    const { data: wsData, error: ensureErr } = await withTimeout(
-      supabase.rpc("ensure_user_and_workspace"),
-      12000,
-      "ensure_user_and_workspace"
-    );
-    if (ensureErr) throw ensureErr;
-
-    console.log("[Draft] ensure_user_and_workspace raw:", wsData);
-
-    const wsObj: any =
-      Array.isArray(wsData) ? wsData[0] : wsData?.data ? wsData.data : wsData;
-
-    const workspace_id =
-      wsObj?.workspace_id ??
-      wsObj?.out_workspace_id ??
-      wsObj?.workspaceId ??
-      wsObj?.workspace?.id ??
-      wsObj?.workspace?.workspace_id ??
-      wsObj?.id ??
-      wsObj?.workspace;
-
-    if (!workspace_id || typeof workspace_id !== "string") {
-      throw new Error(
-        `ensure_user_and_workspace did not return workspace_id. Returned: ${JSON.stringify(
-          wsData
-        )}`
-      );
-    }
-
-    const listingJson = buildListingJson();
-    const orderedImages = (listingJson.images || []) as string[];
-
-    const p_price = (() => {
-      const n = parseFloat(price || "0");
-      return Number.isFinite(n) ? n : 0;
-    })();
-
-    const payload: any = {
-      workspace_id,
-      created_by: user.id,
-      status: "draft",
-      marketplace: "ebay",
-      title: listingJson.title || null,
-      description: listingJson.description || null,
-      category_id: category?.id || null,
-      category_path: getCategoryPathString(category) || null,
-      price: p_price,
-      currency: "USD",
-      listing_json: listingJson,
-      images: orderedImages,
-      updated_at: new Date().toISOString(),
-    };
-
-    console.log("[Draft] Saving...", {
-      listingId: listingId || null,
-      userId: user.id,
-      workspace_id,
-      title: payload.title,
-      hasImages: orderedImages.length,
-      envUrl: (import.meta as any)?.env?.VITE_SUPABASE_URL,
-    });
-
-    if (listingId) {
-      // UPDATE
-      const { data: upData, error: upErr } = await withTimeout(
-        supabase
-          .from("listings")
-          .update(payload)
-          .eq("id", listingId)
-          .eq("created_by", user.id)
-          .select("id, updated_at")
-          .single(),
-        12000,
-        "update listing draft"
-      );
-      if (upErr) throw upErr;
-
-      if (!upData?.id) {
-        throw new Error("Draft update returned no id (unexpected).");
+      if (!hasAnyContent) {
+        setDraftStatus('Nothing to save yet.');
+        return;
       }
 
-      setDraftStatus("Draft updated.");
-    } else {
-      // INSERT
-      const { data: insData, error: insErr } = await withTimeout(
-        supabase
-          .from("listings")
-          .insert(payload)
-          .select("id, created_by, workspace_id")
-          .single(),
-        12000,
-        "insert listing draft"
+      const { data: userData, error: userErr } = await withTimeout(
+        supabase.auth.getUser(),
+        8000,
+        'auth.getUser',
       );
-      if (insErr) throw insErr;
+      if (userErr) throw userErr;
 
-      const newId = insData?.id as string | undefined;
-      if (!newId) throw new Error("Draft insert succeeded but did not return an id.");
-
-      if (!insData?.created_by) {
-        throw new Error(
-          "Draft saved but created_by is NULL in DB. This indicates an environment mismatch or a DB-side trigger/constraint issue."
-        );
+      const user = userData?.user;
+      if (!user?.id) {
+        throw new Error('You must be logged in to save drafts.');
       }
-      if (insData.created_by !== user.id) {
+
+      const { data: wsData, error: ensureErr } = await withTimeout(
+        supabase.rpc('ensure_user_and_workspace'),
+        12000,
+        'ensure_user_and_workspace',
+      );
+      if (ensureErr) throw ensureErr;
+
+      console.log('[Draft] ensure_user_and_workspace raw:', wsData);
+
+      const wsObj: any = Array.isArray(wsData) ? wsData[0] : wsData?.data ? wsData.data : wsData;
+
+      const workspace_id =
+        wsObj?.workspace_id ??
+        wsObj?.out_workspace_id ??
+        wsObj?.workspaceId ??
+        wsObj?.workspace?.id ??
+        wsObj?.workspace?.workspace_id ??
+        wsObj?.id ??
+        wsObj?.workspace;
+
+      if (!workspace_id || typeof workspace_id !== 'string') {
         throw new Error(
-          `Draft saved but created_by mismatch. Expected ${user.id}, got ${insData.created_by}.`
+          `ensure_user_and_workspace did not return workspace_id. Returned: ${JSON.stringify(wsData)}`,
         );
       }
 
-      setListingId(newId);
-      try {
-        sessionStorage.setItem(getDraftStorageKey(), newId);
-      } catch {
-        // ignore
-      }
+      const listingJson = buildListingJson();
+      const orderedImages = (listingJson.images || []) as string[];
 
-      setDraftStatus("Draft saved.");
+      const p_price = (() => {
+        const n = parseFloat(price || '0');
+        return Number.isFinite(n) ? n : 0;
+      })();
+
+      const payload: any = {
+        workspace_id,
+        created_by: user.id,
+        status: 'draft',
+        marketplace: 'ebay',
+        title: listingJson.title || null,
+        description: listingJson.description || null,
+        category_id: category?.id || null,
+        category_path: getCategoryPathString(category) || null,
+        price: p_price,
+        currency: 'USD',
+        listing_json: listingJson,
+        images: orderedImages,
+        updated_at: new Date().toISOString(),
+      };
+
+      console.log('[Draft] Saving...', {
+        listingId: listingId || null,
+        userId: user.id,
+        workspace_id,
+        title: payload.title,
+        hasImages: orderedImages.length,
+        envUrl: (import.meta as any)?.env?.VITE_SUPABASE_URL,
+      });
+
+      if (listingId) {
+        const { data: upData, error: upErr } = await withTimeout(
+          supabase
+            .from('listings')
+            .update(payload)
+            .eq('id', listingId)
+            .eq('created_by', user.id)
+            .select('id, updated_at')
+            .single(),
+          12000,
+          'update listing draft',
+        );
+        if (upErr) throw upErr;
+
+        if (!upData?.id) {
+          throw new Error('Draft update returned no id (unexpected).');
+        }
+
+        setDraftStatus('Draft updated.');
+      } else {
+        const { data: insData, error: insErr } = await withTimeout(
+          supabase
+            .from('listings')
+            .insert(payload)
+            .select('id, created_by, workspace_id')
+            .single(),
+          12000,
+          'insert listing draft',
+        );
+        if (insErr) throw insErr;
+
+        const newId = insData?.id as string | undefined;
+        if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
+
+        if (!insData?.created_by) {
+          throw new Error(
+            'Draft saved but created_by is NULL in DB. This indicates an environment mismatch or a DB-side trigger/constraint issue.',
+          );
+        }
+        if (insData.created_by !== user.id) {
+          throw new Error(`Draft saved but created_by mismatch. Expected ${user.id}, got ${insData.created_by}.`);
+        }
+
+        setListingId(newId);
+        try {
+          sessionStorage.setItem(getDraftStorageKey(), newId);
+        } catch {
+          // ignore
+        }
+
+        setDraftStatus('Draft saved.');
+      }
+    } catch (err: any) {
+      console.error('[Draft] Save failed:', err);
+      const msg = err?.message || 'Failed to save draft.';
+      setSaveError(msg);
+      setDraftStatus('Failed to save draft.');
+    } finally {
+      setSavingDraft(false);
     }
-  } catch (err: any) {
-    console.error("[Draft] Save failed:", err);
-    const msg = err?.message || "Failed to save draft.";
-    setSaveError(msg);
-    setDraftStatus("Failed to save draft.");
-  } finally {
-    setSavingDraft(false);
-  }
-};
+  };
 
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
@@ -990,7 +987,11 @@ export default function ResultsPage() {
             }}
           >
             {mainImageUrl ? (
-              <img src={mainImageUrl} alt="Main" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />
+              <img
+                src={mainImageUrl}
+                alt="Main"
+                style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
+              />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
@@ -1051,7 +1052,11 @@ export default function ResultsPage() {
                     justifyContent: 'center',
                   }}
                 >
-                  <img src={img} alt={`thumb-${idx}`} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }} />
+                  <img
+                    src={img}
+                    alt={`thumb-${idx}`}
+                    style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
+                  />
                 </div>
               ))}
             </div>
@@ -1068,7 +1073,9 @@ export default function ResultsPage() {
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
             maxLength={80}
           />
-          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>
+            {title.length}/80 characters
+          </div>
         </section>
 
         {/* DESCRIPTION */}
@@ -1100,7 +1107,15 @@ export default function ResultsPage() {
           >
             <div style={{ flex: 1, marginRight: 12, overflow: 'hidden' }}>
               <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Selected Category:</div>
-              <div style={{ fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div
+                style={{
+                  fontWeight: 500,
+                  fontSize: 14,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
                 {categoryBreadcrumb}
               </div>
             </div>
@@ -1164,7 +1179,13 @@ export default function ResultsPage() {
         {/* PRICE */}
         <section style={{ marginTop: 24 }}>
           <h3>Price</h3>
-          <input type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }} />
+          <input
+            type="number"
+            step="0.01"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
+          />
         </section>
 
         {/* BUTTONS */}
@@ -1245,7 +1266,11 @@ export default function ResultsPage() {
             }}
           >
             {mainImageUrl ? (
-              <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
+              <img
+                src={mainImageUrl}
+                alt="preview"
+                style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }}
+              />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
