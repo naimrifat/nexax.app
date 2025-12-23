@@ -340,28 +340,24 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-async function withTimeout<T>(
-  p: Promise<T>,
-  ms = 12000,
-  label = "operation"
-): Promise<T> {
-  let timeoutId: any;
+// Ensure tenancy rows exist and get workspace id
+const { data: wsData, error: ensureErr } = await withTimeout(
+  supabase.rpc("ensure_user_and_workspace"),
+  12000,
+  "ensure_user_and_workspace"
+);
+if (ensureErr) throw ensureErr;
 
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`[Timeout] ${label} exceeded ${ms}ms`));
-    }, ms);
-  });
+// After recreating the SQL function, wsData ALWAYS has this shape:
+// [{ user_id, workspace_id, role }]
+const wsRow = Array.isArray(wsData) ? wsData[0] : wsData;
 
-  try {
-    const result = await Promise.race([p, timeoutPromise]);
-    clearTimeout(timeoutId);
-    return result as T;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    console.error(`[withTimeout:${label}] failed`, err);
-    throw err;
-  }
+const workspace_id = wsRow?.workspace_id;
+
+if (!workspace_id) {
+  throw new Error(
+    `ensure_user_and_workspace did not return workspace_id. Returned: ${JSON.stringify(wsData)}`
+  );
 }
 
 function getSessionIdFromUrl(): string {
