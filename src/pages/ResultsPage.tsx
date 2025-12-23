@@ -465,9 +465,7 @@ export default function ResultsPage() {
           if (Array.isArray(current)) {
             const snapped = current
               .map((v) => {
-                const exact = field.options!.find(
-                  (opt) => opt.toLowerCase() === String(v).toLowerCase(),
-                );
+                const exact = field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase());
                 return exact || v;
               })
               .filter(Boolean) as string[];
@@ -566,7 +564,6 @@ export default function ResultsPage() {
       setError(null);
 
       const sessionKey = getDraftStorageKey();
-      // load any existing listingId for this session
       try {
         const stored = sessionStorage.getItem(sessionKey);
         setListingId(stored || null);
@@ -618,9 +615,7 @@ export default function ResultsPage() {
         setImages(imgs);
         setMainImageIndex(0);
 
-        const kw = Array.isArray(analysis.keywords)
-          ? analysis.keywords.join(', ')
-          : String(analysis.keywords ?? '');
+        const kw = Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? '');
         setKeywords(kw);
 
         setCategorySuggestions(analysis.category_suggestions ?? []);
@@ -747,11 +742,12 @@ export default function ResultsPage() {
       );
       if (userErr) throw userErr;
 
-      const user = userData?.user;
-      if (!user?.id) {
+      const authUser = userData?.user;
+      if (!authUser?.id) {
         throw new Error('You must be logged in to save drafts.');
       }
 
+      // IMPORTANT: use RPC internal user_id + workspace_id (matches FK to public.users)
       const { data: wsData, error: ensureErr } = await withTimeout(
         supabase.rpc('ensure_user_and_workspace'),
         12000,
@@ -768,13 +764,19 @@ export default function ResultsPage() {
         wsObj?.out_workspace_id ??
         wsObj?.workspaceId ??
         wsObj?.workspace?.id ??
-        wsObj?.workspace?.workspace_id ??
-        wsObj?.id ??
-        wsObj?.workspace;
+        wsObj?.workspace?.workspace_id;
+
+      const internal_user_id = wsObj?.user_id ?? wsObj?.out_user_id;
 
       if (!workspace_id || typeof workspace_id !== 'string') {
         throw new Error(
           `ensure_user_and_workspace did not return workspace_id. Returned: ${JSON.stringify(wsData)}`,
+        );
+      }
+
+      if (!internal_user_id || typeof internal_user_id !== 'string') {
+        throw new Error(
+          `ensure_user_and_workspace did not return user_id. Returned: ${JSON.stringify(wsData)}`,
         );
       }
 
@@ -788,7 +790,7 @@ export default function ResultsPage() {
 
       const payload: any = {
         workspace_id,
-        created_by: user.id,
+        created_by: internal_user_id, // FIX: must reference public.users.id
         status: 'draft',
         marketplace: 'ebay',
         title: listingJson.title || null,
@@ -804,7 +806,8 @@ export default function ResultsPage() {
 
       console.log('[Draft] Saving...', {
         listingId: listingId || null,
-        userId: user.id,
+        authUserId: authUser.id,
+        internal_user_id,
         workspace_id,
         title: payload.title,
         hasImages: orderedImages.length,
@@ -817,17 +820,15 @@ export default function ResultsPage() {
             .from('listings')
             .update(payload)
             .eq('id', listingId)
-            .eq('created_by', user.id)
-            .select('id, updated_at')
+            .eq('created_by', internal_user_id)
+            .select('id, updated_at, created_by, workspace_id')
             .single(),
           12000,
           'update listing draft',
         );
         if (upErr) throw upErr;
 
-        if (!upData?.id) {
-          throw new Error('Draft update returned no id (unexpected).');
-        }
+        if (!upData?.id) throw new Error('Draft update returned no id (unexpected).');
 
         setDraftStatus('Draft updated.');
       } else {
@@ -846,12 +847,12 @@ export default function ResultsPage() {
         if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
 
         if (!insData?.created_by) {
-          throw new Error(
-            'Draft saved but created_by is NULL in DB. This indicates an environment mismatch or a DB-side trigger/constraint issue.',
-          );
+          throw new Error('Draft saved but created_by is NULL in DB (unexpected).');
         }
-        if (insData.created_by !== user.id) {
-          throw new Error(`Draft saved but created_by mismatch. Expected ${user.id}, got ${insData.created_by}.`);
+        if (insData.created_by !== internal_user_id) {
+          throw new Error(
+            `Draft saved but created_by mismatch. Expected ${internal_user_id}, got ${insData.created_by}.`,
+          );
         }
 
         setListingId(newId);
@@ -987,11 +988,7 @@ export default function ResultsPage() {
             }}
           >
             {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="Main"
-                style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
-              />
+              <img src={mainImageUrl} alt="Main" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
@@ -1052,11 +1049,7 @@ export default function ResultsPage() {
                     justifyContent: 'center',
                   }}
                 >
-                  <img
-                    src={img}
-                    alt={`thumb-${idx}`}
-                    style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
-                  />
+                  <img src={img} alt={`thumb-${idx}`} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }} />
                 </div>
               ))}
             </div>
@@ -1073,9 +1066,7 @@ export default function ResultsPage() {
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
             maxLength={80}
           />
-          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>
-            {title.length}/80 characters
-          </div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
         </section>
 
         {/* DESCRIPTION */}
@@ -1107,15 +1098,7 @@ export default function ResultsPage() {
           >
             <div style={{ flex: 1, marginRight: 12, overflow: 'hidden' }}>
               <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Selected Category:</div>
-              <div
-                style={{
-                  fontWeight: 500,
-                  fontSize: 14,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
+              <div style={{ fontWeight: 500, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {categoryBreadcrumb}
               </div>
             </div>
@@ -1179,13 +1162,7 @@ export default function ResultsPage() {
         {/* PRICE */}
         <section style={{ marginTop: 24 }}>
           <h3>Price</h3>
-          <input
-            type="number"
-            step="0.01"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
-          />
+          <input type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }} />
         </section>
 
         {/* BUTTONS */}
@@ -1266,11 +1243,7 @@ export default function ResultsPage() {
             }}
           >
             {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="preview"
-                style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }}
-              />
+              <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
