@@ -428,10 +428,10 @@ export default function ResultsPage() {
     };
   }, []);
 
+  // NOTE: kept for compatibility, but draft save should not depend on it.
   const resolveAuthUserId = useCallback(async (): Promise<string> => {
     if (authUserRef.current?.id) return authUserRef.current.id;
 
-    // Strategy A: getSession (longer timeout)
     try {
       const { data, error } = await withTimeout(supabase.auth.getSession(), 15000, 'auth.getSession');
       if (error) throw error;
@@ -444,7 +444,6 @@ export default function ResultsPage() {
       console.warn('[Auth] getSession failed:', e);
     }
 
-    // Strategy B: getUser (longer timeout)
     try {
       const { data, error } = await withTimeout(supabase.auth.getUser(), 15000, 'auth.getUser');
       if (error) throw error;
@@ -457,7 +456,6 @@ export default function ResultsPage() {
       console.warn('[Auth] getUser failed:', e);
     }
 
-    // Strategy C: wait for auth state event (bounded)
     const uid = await withTimeout(
       new Promise<string>((resolve, reject) => {
         try {
@@ -483,17 +481,14 @@ export default function ResultsPage() {
   }, []);
 
   const ensureTenancy = useCallback(async () => {
-    // 1) in-memory cache
     if (tenancyRef.current) return tenancyRef.current;
 
-    // 2) persisted cache
     const cached = readTenancyCache();
     if (cached) {
       tenancyRef.current = cached;
       return cached;
     }
 
-    // 3) single-flight RPC
     if (ensureTenancyInFlightRef.current) return await ensureTenancyInFlightRef.current;
 
     ensureTenancyInFlightRef.current = (async () => {
@@ -506,7 +501,6 @@ export default function ResultsPage() {
         if (ensureErr) throw ensureErr;
 
         const row: any = Array.isArray(wsData) ? wsData[0] : wsData;
-
         const workspace_id = row?.workspace_id ?? row?.out_workspace_id;
         const internal_user_id = row?.user_id ?? row?.out_user_id;
 
@@ -522,7 +516,6 @@ export default function ResultsPage() {
         writeTenancyCache(result);
         return result;
       } finally {
-        // CRITICAL: always clear so we never get stuck
         ensureTenancyInFlightRef.current = null;
       }
     })();
@@ -530,7 +523,6 @@ export default function ResultsPage() {
     try {
       return await ensureTenancyInFlightRef.current;
     } catch (err) {
-      // If RPC fails but we have a cache, do not block saving drafts.
       const fallback = readTenancyCache();
       if (fallback) {
         tenancyRef.current = fallback;
@@ -793,11 +785,12 @@ export default function ResultsPage() {
     setDraftStatus('');
     setSavingDraft(true);
 
+    // Give the UI longer than the request timeout(s), but still bounded.
     const uiFailsafe = setTimeout(() => {
       setSaveError('Save is taking too long. Please refresh and try again.');
       setDraftStatus('Failed to save draft.');
       setSavingDraft(false);
-    }, 25000);
+    }, 45000);
 
     try {
       const hasAnyContent =
@@ -812,7 +805,6 @@ export default function ResultsPage() {
         return;
       }
 
-      // Tenancy: internal FK ids for RLS + FK constraints
       const { workspace_id, internal_user_id } = await ensureTenancy();
 
       const listingJson = buildListingJson();
@@ -836,52 +828,69 @@ export default function ResultsPage() {
         updated_at: new Date().toISOString(),
       };
 
-      const writeOnce = async () => {
+      // IMPORTANT: update and insert are mutually exclusive.
+      // Also: on UPDATE do NOT .select().single() (reduces hang risk).
+      const writeOnce = async (): Promise<
+        | { kind: 'update'; res: any }
+        | { kind: 'insert'; res: any }
+      > => {
         if (listingId) {
-          await withTimeout(
-  supabase
-    .from('listings')
-    .update(payload)
-    .eq('id', listingId)
-    .eq('created_by', internal_user_id),
-  20000,
-  'update listing draft',
-);
+          const res = await withTimeout(
+            supabase
+              .from('listings')
+              // count exact makes "0 rows affected" observable
+              .update(payload, { count: 'exact' as any })
+              .eq('id', listingId)
+              .eq('created_by', internal_user_id),
+            30000,
+            'update listing draft',
+          );
+          return { kind: 'update', res };
         }
-        return await withTimeout(
+
+        const res = await withTimeout(
           supabase.from('listings').insert(payload).select('id, created_by, workspace_id').single(),
-          20000,
+          30000,
           'insert listing draft',
         );
+        return { kind: 'insert', res };
       };
 
-      let res: any;
+      let outcome: any;
       try {
-        res = await writeOnce();
+        outcome = await writeOnce();
       } catch (e: any) {
         const msg = String(e?.message || '');
         if (msg.includes('[Timeout]') || msg.includes('502') || msg.includes('503') || msg.includes('504')) {
-          res = await writeOnce();
+          // one retry only
+          outcome = await writeOnce();
         } else {
           throw e;
         }
       }
 
-      const { data, error } = res || {};
+      const { kind, res } = outcome || {};
+      const { data, error, count } = res || {};
       if (error) throw error;
 
-      if (listingId) {
-        if (!data?.id) throw new Error('Draft update returned no id (unexpected).');
+      if (kind === 'update') {
+        // If RLS or created_by mismatch, update affects 0 rows; count will often be 0 or null depending on PostgREST settings.
+        if (typeof count === 'number' && count === 0) {
+          throw new Error('Draft update affected 0 rows (id/created_by mismatch or RLS).');
+        }
         setDraftStatus('Draft updated.');
-      } else {
-        const newId = data?.id as string | undefined;
-        if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
-        setListingId(newId);
-        try {
-          sessionStorage.setItem(getDraftStorageKey(), newId);
-        } catch {}
-        setDraftStatus('Draft saved.');
+        return;
       }
+
+      // insert path must return id
+      const newId = data?.id as string | undefined;
+      if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
+
+      setListingId(newId);
+      try {
+        sessionStorage.setItem(getDraftStorageKey(), newId);
+      } catch {}
+      setDraftStatus('Draft saved.');
     } catch (err: any) {
       const msg = err?.message || 'Failed to save draft.';
       setSaveError(msg);
