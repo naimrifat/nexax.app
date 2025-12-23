@@ -342,6 +342,27 @@ function getSessionIdFromUrl(): string {
 
 function getDraftStorageKey(): string {
   return `nexax.currentListingId.${getSessionIdFromUrl()}`;
+
+const TENANCY_CACHE_KEY = "nexax.tenancy.v1";
+
+function readTenancyCache(): { workspace_id: string; internal_user_id: string } | null {
+  try {
+    const raw = localStorage.getItem(TENANCY_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.workspace_id && parsed?.internal_user_id) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeTenancyCache(v: { workspace_id: string; internal_user_id: string }) {
+  try {
+    localStorage.setItem(TENANCY_CACHE_KEY, JSON.stringify(v));
+  } catch {
+    // ignore
+  }
 }
 
 export default function ResultsPage() {
@@ -459,19 +480,26 @@ export default function ResultsPage() {
     return uid;
   }, []);
 
-  const ensureTenancy = useCallback(async () => {
+const ensureTenancy = useCallback(async () => {
+  // 1) in-memory cache
   if (tenancyRef.current) return tenancyRef.current;
 
-  if (ensureTenancyInFlightRef.current) {
-    return await ensureTenancyInFlightRef.current;
+  // 2) persisted cache
+  const cached = readTenancyCache();
+  if (cached) {
+    tenancyRef.current = cached;
+    return cached;
   }
+
+  // 3) single-flight RPC
+  if (ensureTenancyInFlightRef.current) return await ensureTenancyInFlightRef.current;
 
   ensureTenancyInFlightRef.current = (async () => {
     try {
       const { data: wsData, error: ensureErr } = await withTimeout(
-        supabase.rpc('ensure_user_and_workspace'),
-        20000,
-        'ensure_user_and_workspace'
+        supabase.rpc("ensure_user_and_workspace"),
+        30000,
+        "ensure_user_and_workspace"
       );
       if (ensureErr) throw ensureErr;
 
@@ -480,23 +508,33 @@ export default function ResultsPage() {
       const workspace_id = row?.workspace_id ?? row?.out_workspace_id;
       const internal_user_id = row?.user_id ?? row?.out_user_id;
 
-      if (!workspace_id || typeof workspace_id !== 'string') {
+      if (!workspace_id || typeof workspace_id !== "string") {
         throw new Error(`RPC missing workspace_id. Returned: ${JSON.stringify(wsData)}`);
       }
-      if (!internal_user_id || typeof internal_user_id !== 'string') {
+      if (!internal_user_id || typeof internal_user_id !== "string") {
         throw new Error(`RPC missing user_id. Returned: ${JSON.stringify(wsData)}`);
       }
 
       const result = { workspace_id, internal_user_id };
       tenancyRef.current = result;
+      writeTenancyCache(result);
       return result;
     } finally {
-      // CRITICAL: always clear so we never get stuck
-      ensureTenancyInFlightRef.current = null;
+      ensureTenancyInFlightRef.current = null; // CRITICAL
     }
   })();
 
-  return await ensureTenancyInFlightRef.current;
+  try {
+    return await ensureTenancyInFlightRef.current;
+  } catch (err) {
+    // If RPC fails but we have a cache, do not block saving drafts.
+    const fallback = readTenancyCache();
+    if (fallback) {
+      tenancyRef.current = fallback;
+      return fallback;
+    }
+    throw err;
+  }
 }, []);
 
   const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
@@ -593,6 +631,10 @@ export default function ResultsPage() {
     },
     [smartFillSpecifics, category?.path],
   );
+  
+  useEffect(() => {
+  ensureTenancy().catch((e) => console.warn("[Tenancy] warmup failed:", e));
+}, [ensureTenancy]);
 
   useEffect(() => {
     let isMounted = true;
