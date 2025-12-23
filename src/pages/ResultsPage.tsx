@@ -59,45 +59,18 @@ type AiData = {
 
 async function withTimeout<T>(p: Promise<T>, ms = 12000, label = 'operation'): Promise<T> {
   let timeoutId: any;
-
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => reject(new Error(`[Timeout] ${label} exceeded ${ms}ms`)), ms);
   });
 
   try {
-    const result = await Promise.race([p, timeoutPromise]);
-    clearTimeout(timeoutId);
-    return result as T;
+    return (await Promise.race([p, timeoutPromise])) as T;
   } catch (err) {
-    clearTimeout(timeoutId);
     console.error(`[withTimeout:${label}] failed`, err);
     throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-}
-
-/**
- * FIX: Avoid intermittent auth.getUser timeouts during Save Draft.
- * - Prefer getSession() (usually local + fast)
- * - Fallback to getUser() with longer timeout only when needed
- */
-async function getAuthUserOrThrow(): Promise<{ id: string }> {
-  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-  if (sessionErr) console.warn('[Auth] getSession error:', sessionErr);
-
-  const sessionUser = sessionData?.session?.user;
-  if (sessionUser?.id) return { id: sessionUser.id };
-
-  const { data: userData, error: userErr } = await withTimeout(
-    supabase.auth.getUser(),
-    20000,
-    'auth.getUser',
-  );
-  if (userErr) throw userErr;
-
-  const user = userData?.user;
-  if (!user?.id) throw new Error('You must be logged in to save drafts.');
-
-  return { id: user.id };
 }
 
 /* ---------- Generic helpers ---------- */
@@ -146,10 +119,7 @@ function filterSizeOptionsBySizeType(
   return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
 }
 
-function applySizeTypeFilterToSpecifics(
-  specs: ItemSpecific[],
-  categoryPath: string = '',
-): ItemSpecific[] {
+function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: string = ''): ItemSpecific[] {
   const sizeTypeVal = getSizeTypeValueFromSpecifics(specs);
   if (!sizeTypeVal) return specs;
 
@@ -335,13 +305,7 @@ function TokenSelect({
   );
 }
 
-function ItemSpecificControl({
-  spec,
-  onChange,
-}: {
-  spec: ItemSpecific;
-  onChange: (val: string | string[]) => void;
-}) {
+function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange: (val: string | string[]) => void }) {
   const opts = Array.isArray(spec.options) ? spec.options : [];
 
   if (opts.length > 0 || spec.type === 'dropdown') {
@@ -418,7 +382,7 @@ export default function ResultsPage() {
   const [mainImageIndex, setMainImageIndex] = useState(0);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
-  // Draft save state (ONLY here)
+  // Draft save state
   const [savingDraft, setSavingDraft] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
@@ -433,6 +397,43 @@ export default function ResultsPage() {
 
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
+
+  // Tenancy cache to avoid repeated RPC calls and reduce failure surface
+  const tenancyRef = useRef<{ workspace_id: string; internal_user_id: string } | null>(null);
+  const ensureTenancyInFlightRef = useRef<Promise<{ workspace_id: string; internal_user_id: string }> | null>(null);
+
+  const ensureTenancy = useCallback(async () => {
+    if (tenancyRef.current) return tenancyRef.current;
+    if (ensureTenancyInFlightRef.current) return await ensureTenancyInFlightRef.current;
+
+    ensureTenancyInFlightRef.current = (async () => {
+      const { data: wsData, error: ensureErr } = await withTimeout(
+        supabase.rpc('ensure_user_and_workspace'),
+        15000,
+        'ensure_user_and_workspace',
+      );
+      if (ensureErr) throw ensureErr;
+
+      const wsRow: any = Array.isArray(wsData) ? wsData[0] : wsData;
+
+      const workspace_id = wsRow?.workspace_id ?? wsRow?.out_workspace_id;
+      const internal_user_id = wsRow?.user_id ?? wsRow?.out_user_id;
+
+      if (!workspace_id || typeof workspace_id !== 'string') {
+        throw new Error(`RPC missing workspace_id. Returned: ${JSON.stringify(wsData)}`);
+      }
+      if (!internal_user_id || typeof internal_user_id !== 'string') {
+        throw new Error(`RPC missing user_id. Returned: ${JSON.stringify(wsData)}`);
+      }
+
+      const result = { workspace_id, internal_user_id };
+      tenancyRef.current = result;
+      ensureTenancyInFlightRef.current = null;
+      return result;
+    })();
+
+    return await ensureTenancyInFlightRef.current;
+  }, []);
 
   // Remove any injected preview pane
   const removePreviewPane = useCallback(() => {
@@ -689,7 +690,6 @@ export default function ResultsPage() {
   };
 
   const addSpecific = () => setSpecifics((prev) => [...prev, { name: '', value: '' }]);
-  const removeSpecific = (idx: number) => setSpecifics((prev) => prev.filter((_, i) => i !== idx));
 
   const categoryBreadcrumb = useMemo(() => {
     if (!category) return 'No category selected';
@@ -708,7 +708,9 @@ export default function ResultsPage() {
 
   const buildListingJson = () => {
     const categoryPath = getCategoryPathString(category);
-    const orderedImages = images.length ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)] : [];
+    const orderedImages = images.length
+      ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)]
+      : [];
 
     return {
       title: title.trim(),
@@ -730,36 +732,156 @@ export default function ResultsPage() {
         .split(',')
         .map((k) => k.trim())
         .filter(Boolean),
-      price_suggestion: {
-        optimal: parseFloat(price || '0') || 0,
-      },
+      price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       images: orderedImages,
     };
   };
 
-const handleSaveDraft = () => {
-  try {
-    const data = {
-      title: title || '',
-      description: description || '',
-      category: category || {},
-      specifics: specifics || [],
-      images: images || [],
-      price: price || '0',
-      keywords: keywords || '',
-      savedAt: new Date().toISOString(),
-    };
-    
-    const id = 'draft_' + Date.now();
-    localStorage.setItem(id, JSON.stringify(data));
-    
-    console.log('Saved:', id);
-    alert('Draft saved! ID: ' + id);
-  } catch (e) {
-    console.error(e);
-    alert('Save failed: ' + e);
-  }
-};
+  /**
+   * FINAL: Draft save that will NOT hang forever and uses:
+   * - auth.getSession() (fast/local)
+   * - ensure_user_and_workspace() for internal_user_id + workspace_id
+   * - NO payload.images column (avoids schema-cache / missing column failures)
+   * - hard UI failsafe + strict timeouts
+   */
+  const handleSaveDraft = async () => {
+    setSaveError(null);
+    setDraftStatus('');
+    setSavingDraft(true);
+
+    // Hard UI failsafe: even if something never returns, the button will stop spinning.
+    const uiFailsafe = setTimeout(() => {
+      console.error('[Draft] UI failsafe triggered (request likely hung)');
+      setSaveError('Save is taking too long. Please try again.');
+      setDraftStatus('Failed to save draft.');
+      setSavingDraft(false);
+    }, 20000);
+
+    try {
+      const hasAnyContent =
+        title.trim() ||
+        description.trim() ||
+        keywords.trim() ||
+        specifics.some((s) => firstValue(s.value as any)) ||
+        images.length > 0;
+
+      if (!hasAnyContent) {
+        setDraftStatus('Nothing to save yet.');
+        return;
+      }
+
+      // Use getSession (fast/local) instead of getUser (can timeout/hang)
+      const { data: sessionData, error: sessionErr } = await withTimeout(
+        supabase.auth.getSession(),
+        6000,
+        'auth.getSession',
+      );
+      if (sessionErr) throw sessionErr;
+
+      const authUser = sessionData?.session?.user;
+      if (!authUser?.id) throw new Error('You must be logged in to save drafts.');
+
+      // Ensure tenancy; cached across saves
+      const { workspace_id, internal_user_id } = await ensureTenancy();
+
+      const listingJson = buildListingJson();
+      const orderedImages = (listingJson.images || []) as string[];
+
+      const p_price = (() => {
+        const n = parseFloat(price || '0');
+        return Number.isFinite(n) ? n : 0;
+      })();
+
+      // IMPORTANT: Do NOT include `images` unless your listings table truly has that column.
+      // Keep images inside listing_json.images (always present).
+      const payload: any = {
+        workspace_id,
+        created_by: internal_user_id, // must match FK -> public.users.id
+        status: 'draft',
+        marketplace: 'ebay',
+        title: listingJson.title || null,
+        description: listingJson.description || null,
+        category_id: category?.id || null,
+        category_path: getCategoryPathString(category) || null,
+        price: p_price,
+        currency: 'USD',
+        listing_json: listingJson,
+        updated_at: new Date().toISOString(),
+      };
+
+      console.log('[Draft] Saving...', {
+        listingId: listingId || null,
+        authUserId: authUser.id,
+        internal_user_id,
+        workspace_id,
+        hasImages: orderedImages.length,
+      });
+
+      // One retry on transient timeout/5xx
+      const runWrite = async () => {
+        if (listingId) {
+          return await withTimeout(
+            supabase
+              .from('listings')
+              .update(payload)
+              .eq('id', listingId)
+              .eq('created_by', internal_user_id)
+              .select('id, updated_at')
+              .single(),
+            15000,
+            'update listing draft',
+          );
+        }
+        return await withTimeout(
+          supabase.from('listings').insert(payload).select('id, created_by, workspace_id').single(),
+          15000,
+          'insert listing draft',
+        );
+      };
+
+      let writeRes: any;
+      try {
+        writeRes = await runWrite();
+      } catch (e: any) {
+        const msg = String(e?.message || '');
+        if (msg.includes('[Timeout]') || msg.includes('502') || msg.includes('503') || msg.includes('504')) {
+          console.warn('[Draft] transient failure; retrying once...');
+          writeRes = await runWrite();
+        } else {
+          throw e;
+        }
+      }
+
+      const { data, error } = writeRes || {};
+      if (error) throw error;
+
+      if (listingId) {
+        if (!data?.id) throw new Error('Draft update returned no id (unexpected).');
+        setDraftStatus('Draft updated.');
+      } else {
+        const newId = data?.id as string | undefined;
+        if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
+
+        setListingId(newId);
+        try {
+          sessionStorage.setItem(getDraftStorageKey(), newId);
+        } catch {
+          // ignore
+        }
+        setDraftStatus('Draft saved.');
+      }
+    } catch (err: any) {
+      console.error('[Draft] Save failed:', err);
+
+      // If RLS blocks insert/update, this makes the failure explicit instead of “mystery broken”.
+      const msg = err?.message || 'Failed to save draft.';
+      setSaveError(msg);
+      setDraftStatus('Failed to save draft.');
+    } finally {
+      clearTimeout(uiFailsafe);
+      setSavingDraft(false);
+    }
+  };
 
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
