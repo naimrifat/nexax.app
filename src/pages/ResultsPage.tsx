@@ -717,7 +717,7 @@ export default function ResultsPage() {
 
   const handleSaveDraft = async () => {
   setSaveError(null);
-  setDraftStatus('');
+  setDraftStatus("");
   setSavingDraft(true);
 
   try {
@@ -730,7 +730,7 @@ export default function ResultsPage() {
 
     // IMPORTANT: avoid early return that skips finally() and leaves saving state stuck
     if (!hasAnyContent) {
-      setDraftStatus('Nothing to save yet.');
+      setDraftStatus("Nothing to save yet.");
       return;
     }
 
@@ -738,75 +738,70 @@ export default function ResultsPage() {
     const { data: userData, error: userErr } = await withTimeout(
       supabase.auth.getUser(),
       8000,
+      "auth.getUser"
     );
     if (userErr) throw userErr;
 
     const user = userData?.user;
     if (!user?.id) {
-      throw new Error('You must be logged in to save drafts.');
+      throw new Error("You must be logged in to save drafts.");
     }
 
-// Ensure tenancy rows exist and get workspace id
-const { data: wsData, error: ensureErr } = await withTimeout(
-  supabase.rpc("ensure_user_and_workspace"),
-  12000,
-  "ensure_user_and_workspace"
-);
-if (ensureErr) throw ensureErr;
+    // Ensure tenancy rows exist and get workspace id
+    const { data: wsData, error: ensureErr } = await withTimeout(
+      supabase.rpc("ensure_user_and_workspace"),
+      12000,
+      "ensure_user_and_workspace"
+    );
+    if (ensureErr) throw ensureErr;
 
-// Observability: ALWAYS log what the RPC actually returned
-console.log("[Draft] ensure_user_and_workspace raw:", wsData);
+    console.log("[Draft] ensure_user_and_workspace raw:", wsData);
 
-// Normalize returned shape:
-// - could be: { workspace_id: 'uuid' }
-// - could be: [{ workspace_id: 'uuid' }]
-// - could be: { data: { workspace_id: 'uuid' } } (less common)
-// - could be: { workspace: { id: 'uuid' } } depending on your function
-const wsObj: any =
-  Array.isArray(wsData) ? wsData[0] :
-  wsData?.data ? wsData.data :
-  wsData;
+    const wsObj: any =
+      Array.isArray(wsData) ? wsData[0] : wsData?.data ? wsData.data : wsData;
 
-const workspace_id =
-  wsObj?.workspace_id ??
-  wsObj?.workspaceId ??
-  wsObj?.workspace?.id ??
-  wsObj?.workspace?.workspace_id ??
-  wsObj?.id ??
-  wsObj?.workspace;
+    const workspace_id =
+      wsObj?.workspace_id ??
+      wsObj?.out_workspace_id ??
+      wsObj?.workspaceId ??
+      wsObj?.workspace?.id ??
+      wsObj?.workspace?.workspace_id ??
+      wsObj?.id ??
+      wsObj?.workspace;
 
-if (!workspace_id || typeof workspace_id !== "string") {
-  throw new Error(
-    `ensure_user_and_workspace did not return workspace_id. Returned: ${JSON.stringify(wsData)}`
-  );
-}
+    if (!workspace_id || typeof workspace_id !== "string") {
+      throw new Error(
+        `ensure_user_and_workspace did not return workspace_id. Returned: ${JSON.stringify(
+          wsData
+        )}`
+      );
+    }
 
     const listingJson = buildListingJson();
     const orderedImages = (listingJson.images || []) as string[];
 
     const p_price = (() => {
-      const n = parseFloat(price || '0');
+      const n = parseFloat(price || "0");
       return Number.isFinite(n) ? n : 0;
     })();
 
     const payload: any = {
       workspace_id,
-      created_by: user.id, // MUST be set; dashboard and RLS depend on this
-      status: 'draft',
-      marketplace: 'ebay',
+      created_by: user.id,
+      status: "draft",
+      marketplace: "ebay",
       title: listingJson.title || null,
       description: listingJson.description || null,
       category_id: category?.id || null,
       category_path: getCategoryPathString(category) || null,
       price: p_price,
-      currency: 'USD',
+      currency: "USD",
       listing_json: listingJson,
       images: orderedImages,
       updated_at: new Date().toISOString(),
     };
 
-    // Observability (no silent failures)
-    console.log('[Draft] Saving...', {
+    console.log("[Draft] Saving...", {
       listingId: listingId || null,
       userId: user.id,
       workspace_id,
@@ -816,53 +811,49 @@ if (!workspace_id || typeof workspace_id !== "string") {
     });
 
     if (listingId) {
-      // Update existing draft (and ensure we only update the current user's row)
+      // UPDATE
       const { data: upData, error: upErr } = await withTimeout(
         supabase
-          .from('listings')
+          .from("listings")
           .update(payload)
-          .eq('id', listingId)
-          .eq('created_by', user.id)
-          .select('id')
+          .eq("id", listingId)
+          .eq("created_by", user.id)
+          .select("id, updated_at")
           .single(),
         12000,
+        "update listing draft"
       );
       if (upErr) throw upErr;
 
       if (!upData?.id) {
-        throw new Error('Draft update returned no id (unexpected).');
+        throw new Error("Draft update returned no id (unexpected).");
       }
 
-      setDraftStatus('Draft updated.');
+      setDraftStatus("Draft updated.");
     } else {
-      // Insert new draft. Select the whole row so we can verify ownership was persisted.
-      
-const { data: upData, error: upErr } = await withTimeout(
-  supabase
-    .from("listings")
-    .update(payload)
-    .eq("id", listingId)
-    .eq("created_by", user.id)
-    .select("id, updated_at")
-    .single(),
-  12000,
-  "update listing draft"
-);
-
-if (upErr) throw upErr;
+      // INSERT
+      const { data: insData, error: insErr } = await withTimeout(
+        supabase
+          .from("listings")
+          .insert(payload)
+          .select("id, created_by, workspace_id")
+          .single(),
+        12000,
+        "insert listing draft"
+      );
+      if (insErr) throw insErr;
 
       const newId = insData?.id as string | undefined;
-      if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
+      if (!newId) throw new Error("Draft insert succeeded but did not return an id.");
 
-      // Hard check: if this ever trips, you're writing to a different project or a DB trigger is nulling fields.
       if (!insData?.created_by) {
         throw new Error(
-          'Draft saved but created_by is NULL in DB. This indicates an environment mismatch or a DB-side trigger/constraint issue.',
+          "Draft saved but created_by is NULL in DB. This indicates an environment mismatch or a DB-side trigger/constraint issue."
         );
       }
       if (insData.created_by !== user.id) {
         throw new Error(
-          `Draft saved but created_by mismatch. Expected ${user.id}, got ${insData.created_by}.`,
+          `Draft saved but created_by mismatch. Expected ${user.id}, got ${insData.created_by}.`
         );
       }
 
@@ -873,15 +864,14 @@ if (upErr) throw upErr;
         // ignore
       }
 
-      setDraftStatus('Draft saved.');
+      setDraftStatus("Draft saved.");
     }
   } catch (err: any) {
-    console.error('[Draft] Save failed:', err);
-    const msg = err?.message || 'Failed to save draft.';
+    console.error("[Draft] Save failed:", err);
+    const msg = err?.message || "Failed to save draft.";
     setSaveError(msg);
-    setDraftStatus('Failed to save draft.');
+    setDraftStatus("Failed to save draft.");
   } finally {
-    // Always clear saving state (prevents "Save timed out" UX from sticking)
     setSavingDraft(false);
   }
 };
