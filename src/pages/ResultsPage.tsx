@@ -460,14 +460,18 @@ export default function ResultsPage() {
   }, []);
 
   const ensureTenancy = useCallback(async () => {
-    if (tenancyRef.current) return tenancyRef.current;
-    if (ensureTenancyInFlightRef.current) return await ensureTenancyInFlightRef.current;
+  if (tenancyRef.current) return tenancyRef.current;
 
-    ensureTenancyInFlightRef.current = (async () => {
+  if (ensureTenancyInFlightRef.current) {
+    return await ensureTenancyInFlightRef.current;
+  }
+
+  ensureTenancyInFlightRef.current = (async () => {
+    try {
       const { data: wsData, error: ensureErr } = await withTimeout(
         supabase.rpc('ensure_user_and_workspace'),
         20000,
-        'ensure_user_and_workspace',
+        'ensure_user_and_workspace'
       );
       if (ensureErr) throw ensureErr;
 
@@ -485,12 +489,15 @@ export default function ResultsPage() {
 
       const result = { workspace_id, internal_user_id };
       tenancyRef.current = result;
-      ensureTenancyInFlightRef.current = null;
       return result;
-    })();
+    } finally {
+      // CRITICAL: always clear so we never get stuck
+      ensureTenancyInFlightRef.current = null;
+    }
+  })();
 
-    return await ensureTenancyInFlightRef.current;
-  }, []);
+  return await ensureTenancyInFlightRef.current;
+}, []);
 
   const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
     return newSpecifics.map((field) => {
