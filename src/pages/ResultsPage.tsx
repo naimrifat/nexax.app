@@ -75,6 +75,31 @@ async function withTimeout<T>(p: Promise<T>, ms = 12000, label = 'operation'): P
   }
 }
 
+/**
+ * FIX: Avoid intermittent auth.getUser timeouts during Save Draft.
+ * - Prefer getSession() (usually local + fast)
+ * - Fallback to getUser() with longer timeout only when needed
+ */
+async function getAuthUserOrThrow(): Promise<{ id: string }> {
+  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+  if (sessionErr) console.warn('[Auth] getSession error:', sessionErr);
+
+  const sessionUser = sessionData?.session?.user;
+  if (sessionUser?.id) return { id: sessionUser.id };
+
+  const { data: userData, error: userErr } = await withTimeout(
+    supabase.auth.getUser(),
+    20000,
+    'auth.getUser',
+  );
+  if (userErr) throw userErr;
+
+  const user = userData?.user;
+  if (!user?.id) throw new Error('You must be logged in to save drafts.');
+
+  return { id: user.id };
+}
+
 /* ---------- Generic helpers ---------- */
 
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
@@ -434,53 +459,50 @@ export default function ResultsPage() {
     return () => observer.disconnect();
   }, [removePreviewPane]);
 
-  const smartFillSpecifics = useCallback(
-    (newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
-      return newSpecifics.map((field) => {
-        let current: string | string[] = field.value;
-        let currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? current : '');
+  const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
+    return newSpecifics.map((field) => {
+      let current: string | string[] = field.value;
+      let currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? current : '');
 
-        const lower = field.name.toLowerCase();
+      const lower = field.name.toLowerCase();
 
-        if (!currentStr) {
-          let candidate = '';
+      if (!currentStr) {
+        let candidate = '';
 
-          if (lower.includes('brand')) candidate = aiData.brand || '';
-          else if (lower.includes('size type')) candidate = aiData.type || '';
-          else if (lower === 'size' || lower.includes('size')) candidate = aiData.size || '';
-          else if (lower.includes('color') || lower.includes('colour')) candidate = aiData.color || '';
-          else if (lower.includes('condition')) candidate = aiData.condition || '';
-          else if (lower.includes('material')) candidate = aiData.material || '';
-          else if (lower.includes('style')) candidate = aiData.style || '';
-          else if (lower.includes('department')) candidate = aiData.department || '';
-          else if (lower === 'type' || lower.includes('type')) candidate = aiData.type || '';
+        if (lower.includes('brand')) candidate = aiData.brand || '';
+        else if (lower.includes('size type')) candidate = aiData.type || '';
+        else if (lower === 'size' || lower.includes('size')) candidate = aiData.size || '';
+        else if (lower.includes('color') || lower.includes('colour')) candidate = aiData.color || '';
+        else if (lower.includes('condition')) candidate = aiData.condition || '';
+        else if (lower.includes('material')) candidate = aiData.material || '';
+        else if (lower.includes('style')) candidate = aiData.style || '';
+        else if (lower.includes('department')) candidate = aiData.department || '';
+        else if (lower === 'type' || lower.includes('type')) candidate = aiData.type || '';
 
-          if (candidate) {
-            current = field.multi ? [candidate] : candidate;
-            currentStr = candidate;
-          }
+        if (candidate) {
+          current = field.multi ? [candidate] : candidate;
+          currentStr = candidate;
         }
+      }
 
-        if (field.type === 'dropdown' && field.options?.length) {
-          if (Array.isArray(current)) {
-            const snapped = current
-              .map((v) => {
-                const exact = field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase());
-                return exact || v;
-              })
-              .filter(Boolean) as string[];
-            current = snapped;
-          } else if (typeof current === 'string' && current) {
-            const exact = field.options.find((opt) => opt.toLowerCase() === String(current).toLowerCase());
-            if (exact) current = exact;
-          }
+      if (field.type === 'dropdown' && field.options?.length) {
+        if (Array.isArray(current)) {
+          const snapped = current
+            .map((v) => {
+              const exact = field.options!.find((opt) => opt.toLowerCase() === String(v).toLowerCase());
+              return exact || v;
+            })
+            .filter(Boolean) as string[];
+          current = snapped;
+        } else if (typeof current === 'string' && current) {
+          const exact = field.options.find((opt) => opt.toLowerCase() === String(current).toLowerCase());
+          if (exact) current = exact;
         }
+      }
 
-        return { ...field, value: current };
-      });
-    },
-    [],
-  );
+      return { ...field, value: current };
+    });
+  }, []);
 
   const fetchCategorySpecifics = useCallback(
     async (categoryId: string) => {
@@ -686,9 +708,7 @@ export default function ResultsPage() {
 
   const buildListingJson = () => {
     const categoryPath = getCategoryPathString(category);
-    const orderedImages = images.length
-      ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)]
-      : [];
+    const orderedImages = images.length ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)] : [];
 
     return {
       title: title.trim(),
@@ -735,22 +755,13 @@ export default function ResultsPage() {
         return;
       }
 
-      const { data: userData, error: userErr } = await withTimeout(
-        supabase.auth.getUser(),
-        8000,
-        'auth.getUser',
-      );
-      if (userErr) throw userErr;
-
-      const authUser = userData?.user;
-      if (!authUser?.id) {
-        throw new Error('You must be logged in to save drafts.');
-      }
+      // FIX: Use session-first auth to avoid intermittent getUser timeouts
+      const authUser = await getAuthUserOrThrow();
 
       // IMPORTANT: use RPC internal user_id + workspace_id (matches FK to public.users)
       const { data: wsData, error: ensureErr } = await withTimeout(
         supabase.rpc('ensure_user_and_workspace'),
-        12000,
+        20000,
         'ensure_user_and_workspace',
       );
       if (ensureErr) throw ensureErr;
@@ -790,7 +801,7 @@ export default function ResultsPage() {
 
       const payload: any = {
         workspace_id,
-        created_by: internal_user_id, // FIX: must reference public.users.id
+        created_by: internal_user_id, // must reference public.users.id (FK)
         status: 'draft',
         marketplace: 'ebay',
         title: listingJson.title || null,
@@ -823,7 +834,7 @@ export default function ResultsPage() {
             .eq('created_by', internal_user_id)
             .select('id, updated_at, created_by, workspace_id')
             .single(),
-          12000,
+          20000,
           'update listing draft',
         );
         if (upErr) throw upErr;
@@ -838,7 +849,7 @@ export default function ResultsPage() {
             .insert(payload)
             .select('id, created_by, workspace_id')
             .single(),
-          12000,
+          20000,
           'insert listing draft',
         );
         if (insErr) throw insErr;
