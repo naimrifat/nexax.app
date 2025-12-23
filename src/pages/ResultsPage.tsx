@@ -838,17 +838,15 @@ export default function ResultsPage() {
 
       const writeOnce = async () => {
         if (listingId) {
-          return await withTimeout(
-            supabase
-              .from('listings')
-              .update(payload)
-              .eq('id', listingId)
-              .eq('created_by', internal_user_id)
-              .select('id, updated_at')
-              .single(),
-            20000,
-            'update listing draft',
-          );
+          await withTimeout(
+  supabase
+    .from('listings')
+    .update(payload)
+    .eq('id', listingId)
+    .eq('created_by', internal_user_id),
+  20000,
+  'update listing draft',
+);
         }
         return await withTimeout(
           supabase.from('listings').insert(payload).select('id, created_by, workspace_id').single(),
