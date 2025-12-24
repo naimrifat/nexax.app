@@ -123,7 +123,7 @@ function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: str
     const filtered = filterSizeOptionsBySizeType(sizeTypeVal, fullOptions, categoryPath);
 
     let value = spec.value;
-    const valueStr = firstValue(typeof value === 'string' || Array.isArray(value) ? value : '');
+    const valueStr = firstValue(typeof value === 'string' || Array.isArray(value) ? (value as any) : '');
 
     if (valueStr && !filtered.includes(valueStr)) {
       value = spec.multi ? [] : '';
@@ -210,10 +210,7 @@ function TokenSelect({
       >
         {multi &&
           selected.map((s) => (
-            <span
-              key={s}
-              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
-            >
+            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
               {s}
               <button
                 type="button"
@@ -387,7 +384,6 @@ export default function ResultsPage() {
   const [mainImageIndex, setMainImageIndex] = useState(0);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
-  const [savingDraft, setSavingDraft] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
 
@@ -535,9 +531,9 @@ export default function ResultsPage() {
   const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
     return newSpecifics.map((field) => {
       let current: string | string[] = field.value;
-      const currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? current : '');
+      const currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? (current as any) : '');
 
-      const lower = field.name.toLowerCase();
+      const lower = (field.name || '').toLowerCase();
 
       if (!currentStr) {
         let candidate = '';
@@ -570,7 +566,7 @@ export default function ResultsPage() {
   }, []);
 
   const fetchCategorySpecifics = useCallback(
-    async (categoryId: string) => {
+    async (categoryId: string, categoryPathForFilter: string) => {
       setLoadingSpecifics(true);
       try {
         const response = await fetch('/api/ebay-categories', {
@@ -594,10 +590,10 @@ export default function ResultsPage() {
         }));
 
         const aiSpecifics = aiSpecificsRef.current || [];
-        const aiMap = new Map(aiSpecifics.map((s) => [s.name.toLowerCase(), s.value]));
+        const aiMap = new Map(aiSpecifics.map((s) => [String(s.name || '').toLowerCase(), s.value]));
 
         const withAiSpecifics: ItemSpecific[] = baseSpecifics.map((field) => {
-          const aiVal = aiMap.get(field.name.toLowerCase());
+          const aiVal = aiMap.get(String(field.name || '').toLowerCase());
           if (aiVal == null || aiVal === '') return field;
 
           let value: string | string[];
@@ -616,7 +612,7 @@ export default function ResultsPage() {
         });
 
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
-        const sizeFiltered = applySizeTypeFilterToSpecifics(filled, category?.path || '');
+        const sizeFiltered = applySizeTypeFilterToSpecifics(filled, categoryPathForFilter);
         setSpecifics(sizeFiltered);
       } catch (err) {
         console.error('Error fetching specifics:', err);
@@ -624,7 +620,7 @@ export default function ResultsPage() {
         setLoadingSpecifics(false);
       }
     },
-    [smartFillSpecifics, category?.path],
+    [smartFillSpecifics],
   );
 
   // Warm tenancy once (moves RPC off the "Save Draft" click path)
@@ -694,11 +690,14 @@ export default function ResultsPage() {
         const initialCategory: CategoryWithPath | null = analysis.category ?? null;
         setCategory(initialCategory);
 
-        if (initialCategory?.id) await fetchCategorySpecifics(initialCategory.id);
-        else {
+        const initialCategoryPath = getCategoryPathString(initialCategory);
+
+        if (initialCategory?.id) {
+          await fetchCategorySpecifics(initialCategory.id, initialCategoryPath);
+        } else {
           const base = normalizeSpecifics(analysis.item_specifics);
           const filled = smartFillSpecifics(base, aiDetectedRef.current || {});
-          setSpecifics(applySizeTypeFilterToSpecifics(filled, initialCategory?.path || ''));
+          setSpecifics(applySizeTypeFilterToSpecifics(filled, initialCategoryPath));
         }
 
         setLoading(false);
@@ -720,14 +719,20 @@ export default function ResultsPage() {
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setCategory(newCategory);
     setShowCategoryModal(false);
-    await fetchCategorySpecifics(newCategory.id);
+
+    const categoryPath = getCategoryPathString(newCategory);
+    await fetchCategorySpecifics(newCategory.id, categoryPath);
   };
 
   const updateSpecific = (idx: number, value: string | string[]) => {
     setSpecifics((prev) => {
       let next = [...prev];
       next[idx] = { ...next[idx], value };
-      if (/size type/i.test(next[idx].name || '')) next = applySizeTypeFilterToSpecifics(next, category?.path || '');
+
+      if (/size type/i.test(next[idx].name || '')) {
+        const categoryPath = getCategoryPathString(category);
+        next = applySizeTypeFilterToSpecifics(next, categoryPath);
+      }
       return next;
     });
   };
@@ -749,156 +754,136 @@ export default function ResultsPage() {
 
   const mainImageUrl = images[mainImageIndex] || '';
 
-  const buildListingJson = () => {
-    const categoryPath = getCategoryPathString(category);
-    const orderedImages = images.length
-      ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)]
-      : [];
+  const handleSaveDraft = async () => {
+    setSaveError(null);
+    setDraftStatus('');
 
-    return {
-      title: title.trim(),
-      description: description.trim(),
-      marketplace: 'ebay',
-      category: category ? { id: category.id, name: category.name, path: categoryPath } : null,
-      category_id: category?.id || null,
-      category_path: categoryPath || null,
-      item_specifics: specifics.map((s) => ({
-        name: s.name,
-        value: s.value,
-        required: !!s.required,
-        multi: !!s.multi,
-        selectionOnly: !!s.selectionOnly,
-        freeTextAllowed: s.freeTextAllowed !== false,
-        options: s.options || [],
-      })),
-      keywords: keywords
-        .split(',')
-        .map((k) => k.trim())
-        .filter(Boolean),
-      price_suggestion: { optimal: parseFloat(price || '0') || 0 },
-      images: orderedImages,
-    };
+    try {
+      const draft = {
+        id: `draft_${Date.now()}`,
+        title: title || 'Untitled Listing',
+        description: description || '',
+        category: category
+          ? {
+              id: category.id,
+              name: category.name,
+              path: category.path,
+              breadcrumbs: category.breadcrumbs,
+            }
+          : null,
+        specifics: specifics || [],
+        images: images || [],
+        mainImageIndex: mainImageIndex || 0,
+        price: price || '0.00',
+        keywords: keywords || '',
+        savedAt: new Date().toISOString(),
+      };
+
+      // Save to localStorage FIRST (instant, reliable)
+      localStorage.setItem(draft.id, JSON.stringify(draft));
+
+      // Update drafts list (de-dupe)
+      const allDrafts: Array<{ id: string; title: string; savedAt: string }> = JSON.parse(
+        localStorage.getItem('drafts_list') || '[]',
+      );
+      const next = allDrafts.filter((d) => d.id !== draft.id);
+      next.unshift({ id: draft.id, title: draft.title, savedAt: draft.savedAt });
+      localStorage.setItem('drafts_list', JSON.stringify(next));
+
+      setDraftStatus(`Draft saved locally: ${draft.id}`);
+      console.log('✅ Draft saved locally:', draft.id);
+
+      // Optional: background Supabase backup (non-blocking)
+      try {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+        if (supabaseUrl && supabaseKey) {
+          fetch(`${supabaseUrl}/rest/v1/listings`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify({
+              draft_id: draft.id,
+              title: draft.title,
+              description: draft.description,
+              data: JSON.stringify(draft),
+              status: 'draft',
+            }),
+          })
+            .then(() => {
+              console.log('☁️ Also backed up to Supabase');
+            })
+            .catch(() => {
+              console.log('⚠️ Supabase backup failed (local save succeeded)');
+            });
+        }
+      } catch {
+        console.log('Background Supabase sync not available');
+      }
+    } catch (err: any) {
+      console.error('❌ Save failed:', err);
+      setSaveError(err?.message || 'Failed to save draft');
+      setDraftStatus('Draft save failed');
+    }
   };
 
-const handleSaveDraft = async () => {
-  try {
-    // Build draft object
-    const draft = {
-      id: `draft_${Date.now()}`,
-      title: title || 'Untitled Listing',
-      description: description || '',
-      category: category ? {
-        id: category.id,
-        name: category.name,
-        path: category.path,
-      } : null,
-      specifics: specifics || [],
-      images: images || [],
-      mainImageIndex: mainImageIndex || 0,
-      price: price || '0.00',
-      keywords: keywords || '',
-      savedAt: new Date().toISOString(),
-    };
+  const handleLoadDraft = (draftId: string) => {
+    setSaveError(null);
+    setDraftStatus('');
 
-    // Save to localStorage FIRST (instant, reliable)
-    localStorage.setItem(draft.id, JSON.stringify(draft));
-
-    // Update drafts list
-    const allDrafts = JSON.parse(localStorage.getItem('drafts_list') || '[]');
-    allDrafts.push({
-      id: draft.id,
-      title: draft.title,
-      savedAt: draft.savedAt,
-    });
-    localStorage.setItem('drafts_list', JSON.stringify(allDrafts));
-
-    console.log('✅ Draft saved locally:', draft.id);
-
-    // Show success immediately
-    alert(`✅ Draft saved!\n\nTitle: ${draft.title}\nID: ${draft.id}\n\nYou can close this page and come back later.`);
-
-    // Optional: Try Supabase backup in background (non-blocking)
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-      if (supabaseUrl && supabaseKey) {
-        // Fire and forget - don't await
-        fetch(`${supabaseUrl}/rest/v1/listings`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Prefer': 'return=minimal',
-          },
-          body: JSON.stringify({
-            draft_id: draft.id,
-            title: draft.title,
-            description: draft.description,
-            data: JSON.stringify(draft),
-            status: 'draft',
-          }),
-        }).then(() => {
-          console.log('☁️ Also backed up to Supabase');
-        }).catch(() => {
-          console.log('⚠️ Supabase backup failed (local save succeeded)');
-        });
+      const data = localStorage.getItem(draftId);
+      if (!data) {
+        alert('❌ Draft not found');
+        return;
       }
-    } catch (bgError) {
-      // Silently fail - local save already succeeded
-      console.log('Background Supabase sync not available');
-    }
 
-  } catch (error: any) {
-    console.error('❌ Save failed:', error);
-    alert('❌ Failed to save draft: ' + error.message);
-  }
-};
-  
-const handleLoadDraft = (draftId: string) => {
-  try {
-    const data = localStorage.getItem(draftId);
-    if (!data) {
-      alert('❌ Draft not found');
+      const draft = JSON.parse(data);
+
+      setTitle(draft.title || '');
+      setDescription(draft.description || '');
+      setCategory(draft.category || null);
+      setSpecifics(draft.specifics || []);
+      setImages(draft.images || []);
+      setMainImageIndex(draft.mainImageIndex || 0);
+      setPrice(draft.price || '0.00');
+      setKeywords(draft.keywords || '');
+
+      setDraftStatus(`Draft loaded: ${draft.id}`);
+      console.log('✅ Draft loaded:', draft.id);
+    } catch (err) {
+      console.error('❌ Load failed:', err);
+      alert('❌ Failed to load draft');
+    }
+  };
+
+  const handleViewDrafts = () => {
+    const drafts: Array<{ id: string; title: string; savedAt: string }> = JSON.parse(
+      localStorage.getItem('drafts_list') || '[]',
+    );
+
+    console.log('Saved drafts:', drafts);
+
+    if (drafts.length === 0) {
+      alert('No saved drafts');
       return;
     }
 
-    const draft = JSON.parse(data);
+    const list = drafts
+      .map((d) => `${d.id} — ${d.title} (saved ${new Date(d.savedAt).toLocaleString()})`)
+      .join('\n');
 
-    // Restore all fields
-    setTitle(draft.title || '');
-    setDescription(draft.description || '');
-    setCategory(draft.category || null);
-    setSpecifics(draft.specifics || []);
-    setImages(draft.images || []);
-    setMainImageIndex(draft.mainImageIndex || 0);
-    setPrice(draft.price || '0.00');
-    setKeywords(draft.keywords || '');
+    const pick = window.prompt(`Saved drafts:\n\n${list}\n\nEnter a draft ID to load:`);
+    if (!pick) return;
 
-    console.log('✅ Draft loaded:', draft.id);
-    alert(`✅ Draft loaded!\n\nTitle: ${draft.title}`);
+    handleLoadDraft(pick.trim());
+  };
 
-  } catch (error) {
-    console.error('❌ Load failed:', error);
-    alert('❌ Failed to load draft');
-  }
-};
-
-  const listAllDrafts = () => {
-  const drafts = JSON.parse(localStorage.getItem('drafts_list') || '[]');
-  console.log('Saved drafts:', drafts);
-  
-  if (drafts.length === 0) {
-    alert('No saved drafts');
-  } else {
-    const list = drafts.map((d: any) => 
-      `${d.title} (saved ${new Date(d.savedAt).toLocaleString()})`
-    ).join('\n');
-    alert('Saved drafts:\n\n' + list);
-  }
-};
-  
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
       alert('Title, description, and category are required.');
@@ -1004,11 +989,7 @@ const handleLoadDraft = (draftId: string) => {
             }}
           >
             {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="Main"
-                style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
-              />
+              <img src={mainImageUrl} alt="Main" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
@@ -1061,11 +1042,7 @@ const handleLoadDraft = (draftId: string) => {
                     justifyContent: 'center',
                   }}
                 >
-                  <img
-                    src={img}
-                    alt={`thumb-${idx}`}
-                    style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
-                  />
+                  <img src={img} alt={`thumb-${idx}`} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }} />
                 </div>
               ))}
             </div>
@@ -1081,9 +1058,7 @@ const handleLoadDraft = (draftId: string) => {
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
             maxLength={80}
           />
-          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>
-            {title.length}/80 characters
-          </div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
         </section>
 
         <section style={{ marginTop: 24 }}>
@@ -1191,82 +1166,83 @@ const handleLoadDraft = (draftId: string) => {
           />
         </section>
 
-<div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
-  <button
-    onClick={handleSaveDraft}
-    className="btn"
-    style={{
-      padding: '12px 24px',
-      background: '#10b981',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: 16,
-      fontWeight: 600,
-    }}
-  >
-    Save Draft
-  </button>
+        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleSaveDraft}
+            className="btn"
+            style={{
+              padding: '12px 24px',
+              background: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            Save Draft
+          </button>
 
-  <button
-    onClick={handleViewDrafts}
-    className="btn"
-    style={{
-      padding: '12px 24px',
-      background: '#3b82f6',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: 16,
-      fontWeight: 600,
-    }}
-  >
-    View Drafts
-  </button>
+          <button
+            onClick={handleViewDrafts}
+            className="btn"
+            style={{
+              padding: '12px 24px',
+              background: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            View Drafts
+          </button>
 
-  <button
-    type="button"
-    onClick={handlePublish}
-    disabled={publishing}
-    style={{
-      padding: '12px 32px',
-      background: publishing ? '#999' : '#0064d2',
-      color: 'white',
-      border: 'none',
-      borderRadius: 4,
-      cursor: publishing ? 'default' : 'pointer',
-      fontSize: 16,
-      fontWeight: 600,
-    }}
-  >
-    {publishing ? 'Publishing…' : 'Publish to eBay'}
-  </button>
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={publishing}
+            style={{
+              padding: '12px 32px',
+              background: publishing ? '#999' : '#0064d2',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: publishing ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {publishing ? 'Publishing…' : 'Publish to eBay'}
+          </button>
 
-  <button
-    type="button"
-    onClick={() => navigate('/create-listing')}
-    style={{
-      padding: '12px 32px',
-      background: '#f0f0f0',
-      color: '#333',
-      border: '1px solid #ddd',
-      borderRadius: 4,
-      cursor: 'pointer',
-      fontSize: 16,
-    }}
-  >
-    Cancel
-  </button>
-</div>
-          {saveError ? <span style={{ color: 'red', fontSize: 14 }}>{saveError}</span> : null}
-          {draftStatus ? (
-            <span style={{ fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2f855a' }}>
-              {draftStatus}
-            </span>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => navigate('/create-listing')}
+            style={{
+              padding: '12px 32px',
+              background: '#f0f0f0',
+              color: '#333',
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 16,
+            }}
+          >
+            Cancel
+          </button>
         </div>
+
+        {saveError ? <div style={{ marginTop: 10, color: 'red', fontSize: 14 }}>{saveError}</div> : null}
+
+        {draftStatus ? (
+          <div style={{ marginTop: 8, fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2f855a' }}>
+            {draftStatus}
+          </div>
+        ) : null}
       </main>
 
       <aside>
@@ -1283,11 +1259,7 @@ const handleLoadDraft = (draftId: string) => {
             }}
           >
             {mainImageUrl ? (
-              <img
-                src={mainImageUrl}
-                alt="preview"
-                style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }}
-              />
+              <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
             ) : (
               <div style={{ color: '#999' }}>No image</div>
             )}
