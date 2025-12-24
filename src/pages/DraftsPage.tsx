@@ -8,77 +8,74 @@ type Draft = {
   id: string;
   title: string;
   description: string;
-  category: any;
-  specifics: any[];
+  categoryPath?: string;
   images: string[];
   mainImageIndex: number;
-  price: string;
-  keywords: string;
-  savedAt: string; // ISO string expected
+  price: number;
+  currency: string;
+  savedAt: string; // updated_at preferred
 };
 
-/**
- * Your Supabase "listings" table may differ.
- * This matches the shape implied by your earlier "backup to Supabase" POST:
- * - id (uuid)
- * - draft_id (string)
- * - title (text)
- * - description (text)
- * - data (text/json)
- * - status (text) e.g. 'draft'
- * - workspace_id (uuid) optional
- * - user_id (uuid) optional
- * - created_at / updated_at timestamps
- */
 type ListingRow = {
   id: string;
-  draft_id?: string | null;
-  title?: string | null;
-  description?: string | null;
-  data?: any; // could be stringified JSON or jsonb
-  status?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-  workspace_id?: string | null;
-  user_id?: string | null;
+  title: string | null;
+  description: string | null;
+  category_path: string | null;
+  price: number | null;
+  currency: string | null;
+  images: string[] | null;
+  listing_json: any;
+  updated_at: string | null;
+  created_at: string | null;
+  status: string | null;
 };
 
-function safeJsonParse<T>(raw: unknown, fallback: T): T {
+function safeJson(value: any, fallback: any) {
   try {
-    if (raw == null) return fallback;
-    if (typeof raw === 'string') return JSON.parse(raw) as T;
-    // if Supabase returns jsonb, it may already be an object
-    return raw as T;
+    if (value == null) return fallback;
+    if (typeof value === 'string') return JSON.parse(value);
+    return value;
   } catch {
     return fallback;
   }
 }
 
-function normalizeDraftFromRow(row: ListingRow): Draft {
-  const payload = safeJsonParse<any>(row.data, {});
-  const images = Array.isArray(payload?.images) ? payload.images : Array.isArray(payload?.image_urls) ? payload.image_urls : [];
+async function getWorkspaceIdForAuthedUser(): Promise<string> {
+  const { data: authData, error: authErr } = await supabase.auth.getUser();
+  if (authErr) throw authErr;
+
+  const uid = authData?.user?.id;
+  if (!uid) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('workspace_id')
+    .eq('auth_provider_user_id', uid)
+    .single();
+
+  if (error) throw error;
+  if (!data?.workspace_id) throw new Error('No workspace_id found for this user');
+
+  return data.workspace_id as string;
+}
+
+function mapRowToDraft(row: ListingRow): Draft {
+  const lj = safeJson(row.listing_json, {});
+  const images = Array.isArray(row.images) ? row.images : Array.isArray(lj?.images) ? lj.images : [];
 
   const mainImageIndex =
-    typeof payload?.mainImageIndex === 'number' && Number.isFinite(payload.mainImageIndex) ? payload.mainImageIndex : 0;
-
-  const savedAt =
-    (typeof payload?.savedAt === 'string' && payload.savedAt) ||
-    row.updated_at ||
-    row.created_at ||
-    new Date().toISOString();
+    typeof lj?.mainImageIndex === 'number' && Number.isFinite(lj.mainImageIndex) ? lj.mainImageIndex : 0;
 
   return {
-    // Prefer the stable DB primary key for delete/edit routes
     id: row.id,
-    title: (row.title ?? payload?.title ?? 'Untitled Draft') as string,
-    description: (row.description ?? payload?.description ?? '') as string,
-    category: payload?.category ?? null,
-    specifics: Array.isArray(payload?.specifics) ? payload.specifics : Array.isArray(payload?.item_specifics) ? payload.item_specifics : [],
+    title: row.title?.trim() || lj?.title?.trim() || 'Untitled Draft',
+    description: row.description || lj?.description || '',
+    categoryPath: row.category_path || lj?.category_path || lj?.category?.path || '',
     images,
     mainImageIndex,
-    price: String(payload?.price ?? payload?.price_suggestion?.optimal ?? '0.00'),
-    keywords: typeof payload?.keywords === 'string' ? payload.keywords : Array.isArray(payload?.keywords) ? payload.keywords.join(', ') : '',
-    savedAt,
+    price: typeof row.price === 'number' ? row.price : Number(lj?.price_suggestion?.optimal ?? 0) || 0,
+    currency: row.currency || 'USD',
+    savedAt: row.updated_at || row.created_at || new Date().toISOString(),
   };
 }
 
@@ -94,53 +91,24 @@ export default function DraftsPage() {
     setLoadError(null);
 
     try {
-      // Auth gate
-      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-      if (sessionErr) throw sessionErr;
+      const workspaceId = await getWorkspaceIdForAuthedUser();
 
-      const uid = sessionData?.session?.user?.id;
-      if (!uid) {
-        setDrafts([]);
-        setLoadError('You must be logged in to view drafts.');
-        setLoading(false);
-        return;
-      }
-
-      // Workspace scoping (recommended). If you don't have this RPC, remove this and filter by user_id only.
-      let workspaceId: string | null = null;
-      try {
-        const { data: wsData, error: wsErr } = await supabase.rpc('ensure_user_and_workspace');
-        if (wsErr) throw wsErr;
-        const row: any = Array.isArray(wsData) ? wsData[0] : wsData;
-        workspaceId = row?.workspace_id ?? row?.out_workspace_id ?? null;
-      } catch (e) {
-        // If RPC isn't available in this env, we still proceed with user scope.
-        console.warn('[DraftsPage] ensure_user_and_workspace failed; falling back to user_id scope:', e);
-      }
-
-      // Query drafts from DB (REAL DATA)
-      // Adjust the table name/columns if yours differ.
-      let q = supabase
+      const { data, error } = await supabase
         .from('listings')
-        .select('id,draft_id,title,description,data,status,created_at,updated_at,workspace_id,user_id')
+        .select('id,title,description,category_path,price,currency,images,listing_json,updated_at,created_at,status')
+        .eq('workspace_id', workspaceId)
         .eq('status', 'draft')
-        .order('updated_at', { ascending: false, nullsFirst: false });
+        .order('updated_at', { ascending: false });
 
-      if (workspaceId) q = q.eq('workspace_id', workspaceId);
-      else q = q.eq('user_id', uid);
-
-      const { data, error } = await q;
       if (error) throw error;
 
       const rows = Array.isArray(data) ? (data as ListingRow[]) : [];
-      const normalized = rows
-        .map(normalizeDraftFromRow)
-        .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+      const normalized = rows.map(mapRowToDraft);
 
-      console.log('[DraftsPage] drafts fetched:', { count: normalized.length, scope: workspaceId ? 'workspace' : 'user' });
+      console.log('[DraftsPage] loaded drafts:', { count: normalized.length, workspaceId });
       setDrafts(normalized);
     } catch (e: any) {
-      console.error('[DraftsPage] failed to load drafts:', e);
+      console.error('[DraftsPage] load failed:', e);
       setDrafts([]);
       setLoadError(e?.message || 'Failed to load drafts.');
     } finally {
@@ -153,14 +121,9 @@ export default function DraftsPage() {
   }, [fetchDrafts]);
 
   const handleEditDraft = useCallback(
-    (draft: Draft) => {
-      /**
-       * Keep your current flow: ResultsPage expects to load the draft from sessionStorage.
-       * If you later change ResultsPage to load by listingId from DB, you can switch to:
-       *   navigate(`/results?mode=edit&listingId=${draft.id}`)
-       */
-      sessionStorage.setItem('loadedDraft', JSON.stringify(draft));
-      navigate('/results?mode=edit');
+    async (draft: Draft) => {
+      // Option A (best): ResultsPage loads by listingId from DB
+      navigate(`/results?mode=edit&listingId=${draft.id}`);
     },
     [navigate]
   );
@@ -170,16 +133,13 @@ export default function DraftsPage() {
       if (!window.confirm('Are you sure you want to delete this draft?')) return;
 
       try {
-        // Delete from DB (REAL DATA)
         const { error } = await supabase.from('listings').delete().eq('id', draftId);
         if (error) throw error;
 
         console.log('✅ Draft deleted:', draftId);
-
-        // Refresh UI
         await fetchDrafts();
       } catch (e: any) {
-        console.error('[DraftsPage] failed to delete draft:', e);
+        console.error('[DraftsPage] delete failed:', e);
         window.alert(e?.message || 'Failed to delete draft');
       }
     },
@@ -208,9 +168,7 @@ export default function DraftsPage() {
     });
   }, []);
 
-  const countLabel = useMemo(() => {
-    return `${drafts.length} saved ${drafts.length === 1 ? 'draft' : 'drafts'}`;
-  }, [drafts.length]);
+  const countLabel = useMemo(() => `${drafts.length} saved ${drafts.length === 1 ? 'draft' : 'drafts'}`, [drafts.length]);
 
   if (loading) {
     return (
@@ -226,7 +184,6 @@ export default function DraftsPage() {
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="container mx-auto px-4 max-w-6xl">
-        {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -239,7 +196,7 @@ export default function DraftsPage() {
 
             <div className="flex items-center gap-3">
               <button
-                onClick={() => fetchDrafts()}
+                onClick={fetchDrafts}
                 className="btn border border-gray-300 text-gray-700 hover:bg-gray-100 px-4 py-3 rounded-lg font-semibold"
                 type="button"
               >
@@ -263,7 +220,6 @@ export default function DraftsPage() {
           )}
         </div>
 
-        {/* Drafts List */}
         {drafts.length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
             <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -293,15 +249,9 @@ export default function DraftsPage() {
                   key={draft.id}
                   className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-lg transition-shadow"
                 >
-                  {/* Image */}
                   <div className="relative h-48 bg-gray-100">
                     {coverSrc ? (
-                      <img
-                        src={coverSrc}
-                        alt={draft.title || 'Draft image'}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
+                      <img src={coverSrc} alt={draft.title} className="w-full h-full object-cover" loading="lazy" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <ImageIcon className="w-12 h-12 text-gray-300" />
@@ -315,26 +265,22 @@ export default function DraftsPage() {
                     )}
                   </div>
 
-                  {/* Content */}
                   <div className="p-4">
-                    <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2 min-h-[3rem]">
-                      {draft.title?.trim() ? draft.title : 'Untitled Draft'}
-                    </h3>
+                    <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2 min-h-[3rem]">{draft.title}</h3>
 
                     <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
                       <Clock className="w-4 h-4" />
                       <span>{formatDate(draft.savedAt)}</span>
                     </div>
 
-                    {draft.category && (
-                      <div className="text-xs text-gray-500 mb-3 truncate">
-                        📁 {draft.category?.path || draft.category?.name || 'No category'}
-                      </div>
-                    )}
+                    {draft.categoryPath ? (
+                      <div className="text-xs text-gray-500 mb-3 truncate">📁 {draft.categoryPath}</div>
+                    ) : null}
 
-                    <div className="text-sm font-semibold text-teal-600 mb-4">${draft.price || '0.00'}</div>
+                    <div className="text-sm font-semibold text-teal-600 mb-4">
+                      {draft.currency} ${draft.price.toFixed(2)}
+                    </div>
 
-                    {/* Actions */}
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleEditDraft(draft)}
