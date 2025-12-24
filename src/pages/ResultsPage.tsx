@@ -780,127 +780,45 @@ export default function ResultsPage() {
     };
   };
 
-  const handleSaveDraft = async () => {
-    setSaveError(null);
-    setDraftStatus('');
-    setSavingDraft(true);
+  const handleSaveDraft = () => {
+  try {
+    // Create draft object
+    const draft = {
+      id: `draft_${Date.now()}`,
+      title: title || 'Untitled Listing',
+      description: description || '',
+      category: category || null,
+      specifics: specifics || [],
+      images: images || [],
+      mainImageIndex: mainImageIndex || 0,
+      price: price || '0.00',
+      keywords: keywords || '',
+      savedAt: new Date().toISOString(),
+    };
 
-    // Give the UI longer than the request timeout(s), but still bounded.
-    const uiFailsafe = setTimeout(() => {
-      setSaveError('Save is taking too long. Please refresh and try again.');
-      setDraftStatus('Failed to save draft.');
-      setSavingDraft(false);
-    }, 45000);
+    // Save to localStorage
+    localStorage.setItem(draft.id, JSON.stringify(draft));
 
-    try {
-      const hasAnyContent =
-        title.trim() ||
-        description.trim() ||
-        keywords.trim() ||
-        specifics.some((s) => firstValue(s.value as any)) ||
-        images.length > 0;
+    // Update drafts list
+    const allDrafts = JSON.parse(localStorage.getItem('drafts_list') || '[]');
+    allDrafts.push({
+      id: draft.id,
+      title: draft.title,
+      savedAt: draft.savedAt,
+    });
+    localStorage.setItem('drafts_list', JSON.stringify(allDrafts));
 
-      if (!hasAnyContent) {
-        setDraftStatus('Nothing to save yet.');
-        return;
-      }
+    console.log('✅ Draft saved:', draft.id);
+    
+    // Show success message
+    const message = `✅ Draft saved successfully!\n\nTitle: ${draft.title}\nSaved at: ${new Date().toLocaleTimeString()}`;
+    alert(message);
 
-      const { workspace_id, internal_user_id } = await ensureTenancy();
-
-      const listingJson = buildListingJson();
-      const p_price = (() => {
-        const n = parseFloat(price || '0');
-        return Number.isFinite(n) ? n : 0;
-      })();
-
-      const payload: any = {
-        workspace_id,
-        created_by: internal_user_id,
-        status: 'draft',
-        marketplace: 'ebay',
-        title: listingJson.title || null,
-        description: listingJson.description || null,
-        category_id: category?.id || null,
-        category_path: getCategoryPathString(category) || null,
-        price: p_price,
-        currency: 'USD',
-        listing_json: listingJson,
-        updated_at: new Date().toISOString(),
-      };
-
-      // IMPORTANT: update and insert are mutually exclusive.
-      // Also: on UPDATE do NOT .select().single() (reduces hang risk).
-      const writeOnce = async (): Promise<
-        | { kind: 'update'; res: any }
-        | { kind: 'insert'; res: any }
-      > => {
-        if (listingId) {
-          const res = await withTimeout(
-            supabase
-              .from('listings')
-              // count exact makes "0 rows affected" observable
-              .update(payload, { count: 'exact' as any })
-              .eq('id', listingId)
-              .eq('created_by', internal_user_id),
-            30000,
-            'update listing draft',
-          );
-          return { kind: 'update', res };
-        }
-
-        const res = await withTimeout(
-          supabase.from('listings').insert(payload).select('id, created_by, workspace_id').single(),
-          30000,
-          'insert listing draft',
-        );
-        return { kind: 'insert', res };
-      };
-
-      let outcome: any;
-      try {
-        outcome = await writeOnce();
-      } catch (e: any) {
-        const msg = String(e?.message || '');
-        if (msg.includes('[Timeout]') || msg.includes('502') || msg.includes('503') || msg.includes('504')) {
-          // one retry only
-          outcome = await writeOnce();
-        } else {
-          throw e;
-        }
-      }
-
-      const { kind, res } = outcome || {};
-      const { data, error, count } = res || {};
-      if (error) throw error;
-
-      if (kind === 'update') {
-        // If RLS or created_by mismatch, update affects 0 rows; count will often be 0 or null depending on PostgREST settings.
-        if (typeof count === 'number' && count === 0) {
-          throw new Error('Draft update affected 0 rows (id/created_by mismatch or RLS).');
-        }
-        setDraftStatus('Draft updated.');
-        return;
-      }
-
-      // insert path must return id
-      const newId = data?.id as string | undefined;
-      if (!newId) throw new Error('Draft insert succeeded but did not return an id.');
-
-      setListingId(newId);
-      try {
-        sessionStorage.setItem(getDraftStorageKey(), newId);
-      } catch {}
-      setDraftStatus('Draft saved.');
-    } catch (err: any) {
-      const msg = err?.message || 'Failed to save draft.';
-      setSaveError(msg);
-      setDraftStatus('Failed to save draft.');
-      console.error('[Draft] Save failed:', err);
-    } finally {
-      clearTimeout(uiFailsafe);
-      setSavingDraft(false);
-    }
-  };
+  } catch (error: any) {
+    console.error('❌ Save failed:', error);
+    alert('❌ Failed to save draft: ' + error.message);
+  }
+};
 
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
@@ -1195,23 +1113,20 @@ export default function ResultsPage() {
         </section>
 
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
-          <button
-            type="button"
-            onClick={handleSaveDraft}
-            disabled={savingDraft}
-            style={{
-              padding: '12px 32px',
-              background: savingDraft ? '#999' : '#2f855a',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: savingDraft ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {savingDraft ? 'Saving…' : 'Save Draft'}
-          </button>
+<button
+  onClick={handleSaveDraft}
+  className="btn"
+  style={{
+    padding: '12px 24px',
+    background: '#10b981',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+  }}
+>
+  Save Draft
+</button>
 
           <button
             type="button"
