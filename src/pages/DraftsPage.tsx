@@ -5,77 +5,71 @@ import { FileText, Trash2, Edit, Clock, Image as ImageIcon } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient';
 
 type Draft = {
-  id: string;
+  id: string; // listings.id (uuid)
   title: string;
   description: string;
-  categoryPath?: string;
+  categoryPath: string;
   images: string[];
   mainImageIndex: number;
-  price: number;
-  currency: string;
-  savedAt: string; // updated_at preferred
+  price: string;
+  savedAt: string;
+  marketplace: string;
 };
 
 type ListingRow = {
   id: string;
+  workspace_id: string | null;
+  created_by: string | null;
+  status: string | null;
+  marketplace: string | null;
   title: string | null;
   description: string | null;
   category_path: string | null;
   price: number | null;
   currency: string | null;
-  images: string[] | null;
-  listing_json: any;
-  updated_at: string | null;
+  ebay_item_id: string | null;
+  ebay_listing_url: string | null;
+  listing_json: any; // jsonb
+  images: string[] | null; // text[]
   created_at: string | null;
-  status: string | null;
+  updated_at: string | null;
 };
 
-function safeJson(value: any, fallback: any) {
-  try {
-    if (value == null) return fallback;
-    if (typeof value === 'string') return JSON.parse(value);
-    return value;
-  } catch {
-    return fallback;
-  }
+function safeArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x) => typeof x === 'string') as string[];
+  return [];
 }
 
-async function getWorkspaceIdForAuthedUser(): Promise<string> {
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr) throw authErr;
-
-  const uid = authData?.user?.id;
-  if (!uid) throw new Error('Not authenticated');
-
-  const { data, error } = await supabase
-    .from('users')
-    .select('workspace_id')
-    .eq('auth_provider_user_id', uid)
-    .single();
-
-  if (error) throw error;
-  if (!data?.workspace_id) throw new Error('No workspace_id found for this user');
-
-  return data.workspace_id as string;
+function toMoneyString(n: unknown, fallback = '0.00'): string {
+  if (typeof n === 'number' && Number.isFinite(n)) return n.toFixed(2);
+  const parsed = typeof n === 'string' ? Number(n) : NaN;
+  if (Number.isFinite(parsed)) return parsed.toFixed(2);
+  return fallback;
 }
 
-function mapRowToDraft(row: ListingRow): Draft {
-  const lj = safeJson(row.listing_json, {});
-  const images = Array.isArray(row.images) ? row.images : Array.isArray(lj?.images) ? lj.images : [];
+function normalizeDraftFromRow(row: ListingRow): Draft {
+  // listing_json is your canonical payload; images is also stored as a top-level column.
+  const lj = row.listing_json || {};
+
+  const imagesFromColumn = safeArray(row.images);
+  const imagesFromJson = safeArray(lj?.images) || safeArray(lj?.image_urls);
+  const images = imagesFromColumn.length ? imagesFromColumn : imagesFromJson;
 
   const mainImageIndex =
     typeof lj?.mainImageIndex === 'number' && Number.isFinite(lj.mainImageIndex) ? lj.mainImageIndex : 0;
 
+  const savedAt = row.updated_at || row.created_at || new Date().toISOString();
+
   return {
     id: row.id,
-    title: row.title?.trim() || lj?.title?.trim() || 'Untitled Draft',
-    description: row.description || lj?.description || '',
-    categoryPath: row.category_path || lj?.category_path || lj?.category?.path || '',
+    title: (row.title ?? lj?.title ?? 'Untitled Draft') as string,
+    description: (row.description ?? lj?.description ?? '') as string,
+    categoryPath: (row.category_path ?? lj?.category_path ?? lj?.category?.path ?? '') as string,
     images,
     mainImageIndex,
-    price: typeof row.price === 'number' ? row.price : Number(lj?.price_suggestion?.optimal ?? 0) || 0,
-    currency: row.currency || 'USD',
-    savedAt: row.updated_at || row.created_at || new Date().toISOString(),
+    price: toMoneyString(row.price ?? lj?.price ?? lj?.price_suggestion?.optimal ?? '0.00', '0.00'),
+    savedAt,
+    marketplace: (row.marketplace ?? lj?.marketplace ?? 'ebay') as string,
   };
 }
 
@@ -91,24 +85,43 @@ export default function DraftsPage() {
     setLoadError(null);
 
     try {
-      const workspaceId = await getWorkspaceIdForAuthedUser();
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
 
+      const uid = sessionData?.session?.user?.id;
+      if (!uid) {
+        setDrafts([]);
+        setLoadError('You must be logged in to view drafts.');
+        setLoading(false);
+        return;
+      }
+
+      // Your RLS policy already restricts by workspace_id based on auth.uid()
+      // so we do NOT need to compute workspaceId here for correctness.
+      // (Filtering again is fine, but not required.)
       const { data, error } = await supabase
         .from('listings')
-        .select('id,title,description,category_path,price,currency,images,listing_json,updated_at,created_at,status')
-        .eq('workspace_id', workspaceId)
+        .select(
+          'id,workspace_id,created_by,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at'
+        )
         .eq('status', 'draft')
-        .order('updated_at', { ascending: false });
+        .order('updated_at', { ascending: false, nullsFirst: false });
 
       if (error) throw error;
 
-      const rows = Array.isArray(data) ? (data as ListingRow[]) : [];
-      const normalized = rows.map(mapRowToDraft);
+      const rows = (data ?? []) as ListingRow[];
+      const normalized = rows.map(normalizeDraftFromRow).sort((a, b) => {
+        return new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime();
+      });
 
-      console.log('[DraftsPage] loaded drafts:', { count: normalized.length, workspaceId });
+      console.log('[DraftsPage] Loaded drafts:', {
+        count: normalized.length,
+        sample: normalized[0]?.id,
+      });
+
       setDrafts(normalized);
     } catch (e: any) {
-      console.error('[DraftsPage] load failed:', e);
+      console.error('[DraftsPage] Failed to load drafts:', e);
       setDrafts([]);
       setLoadError(e?.message || 'Failed to load drafts.');
     } finally {
@@ -121,9 +134,9 @@ export default function DraftsPage() {
   }, [fetchDrafts]);
 
   const handleEditDraft = useCallback(
-    async (draft: Draft) => {
-      // Option A (best): ResultsPage loads by listingId from DB
-      navigate(`/results?mode=edit&listingId=${draft.id}`);
+    (draftId: string) => {
+      // Recommended: edit by DB id (single source of truth)
+      navigate(`/results?mode=edit&listingId=${encodeURIComponent(draftId)}`);
     },
     [navigate]
   );
@@ -136,11 +149,11 @@ export default function DraftsPage() {
         const { error } = await supabase.from('listings').delete().eq('id', draftId);
         if (error) throw error;
 
-        console.log('✅ Draft deleted:', draftId);
+        console.log('[DraftsPage] Draft deleted:', draftId);
         await fetchDrafts();
       } catch (e: any) {
-        console.error('[DraftsPage] delete failed:', e);
-        window.alert(e?.message || 'Failed to delete draft');
+        console.error('[DraftsPage] Failed to delete draft:', e);
+        window.alert(e?.message || 'Failed to delete draft.');
       }
     },
     [fetchDrafts]
@@ -168,7 +181,9 @@ export default function DraftsPage() {
     });
   }, []);
 
-  const countLabel = useMemo(() => `${drafts.length} saved ${drafts.length === 1 ? 'draft' : 'drafts'}`, [drafts.length]);
+  const countLabel = useMemo(() => {
+    return `${drafts.length} saved ${drafts.length === 1 ? 'draft' : 'drafts'}`;
+  }, [drafts.length]);
 
   if (loading) {
     return (
@@ -184,6 +199,7 @@ export default function DraftsPage() {
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="container mx-auto px-4 max-w-6xl">
+        {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -196,7 +212,7 @@ export default function DraftsPage() {
 
             <div className="flex items-center gap-3">
               <button
-                onClick={fetchDrafts}
+                onClick={() => fetchDrafts()}
                 className="btn border border-gray-300 text-gray-700 hover:bg-gray-100 px-4 py-3 rounded-lg font-semibold"
                 type="button"
               >
@@ -220,6 +236,7 @@ export default function DraftsPage() {
           )}
         </div>
 
+        {/* Drafts List */}
         {drafts.length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
             <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -249,9 +266,15 @@ export default function DraftsPage() {
                   key={draft.id}
                   className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-lg transition-shadow"
                 >
+                  {/* Image */}
                   <div className="relative h-48 bg-gray-100">
                     {coverSrc ? (
-                      <img src={coverSrc} alt={draft.title} className="w-full h-full object-cover" loading="lazy" />
+                      <img
+                        src={coverSrc}
+                        alt={draft.title || 'Draft image'}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <ImageIcon className="w-12 h-12 text-gray-300" />
@@ -265,25 +288,27 @@ export default function DraftsPage() {
                     )}
                   </div>
 
+                  {/* Content */}
                   <div className="p-4">
-                    <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2 min-h-[3rem]">{draft.title}</h3>
+                    <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2 min-h-[3rem]">
+                      {draft.title?.trim() ? draft.title : 'Untitled Draft'}
+                    </h3>
 
                     <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
                       <Clock className="w-4 h-4" />
                       <span>{formatDate(draft.savedAt)}</span>
                     </div>
 
-                    {draft.categoryPath ? (
+                    {draft.categoryPath && (
                       <div className="text-xs text-gray-500 mb-3 truncate">📁 {draft.categoryPath}</div>
-                    ) : null}
+                    )}
 
-                    <div className="text-sm font-semibold text-teal-600 mb-4">
-                      {draft.currency} ${draft.price.toFixed(2)}
-                    </div>
+                    <div className="text-sm font-semibold text-teal-600 mb-4">${draft.price || '0.00'}</div>
 
+                    {/* Actions */}
                     <div className="flex gap-2">
                       <button
-                        onClick={() => handleEditDraft(draft)}
+                        onClick={() => handleEditDraft(draft.id)}
                         className="flex-1 btn bg-teal-600 text-white hover:bg-teal-700 py-2 rounded-lg font-medium flex items-center justify-center gap-2"
                         type="button"
                       >
