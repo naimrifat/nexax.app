@@ -371,6 +371,30 @@ export default function ResultsPage() {
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.00');
   const [keywords, setKeywords] = useState('');
+    const loadedDraft = sessionStorage.getItem('loadedDraft');
+  if (loadedDraft) {
+    try {
+      const draft = JSON.parse(loadedDraft);
+      
+      // Restore all fields
+      setTitle(draft.title || '');
+      setDescription(draft.description || '');
+      setCategory(draft.category || null);
+      setSpecifics(draft.specifics || []);
+      setImages(draft.images || []);
+      setMainImageIndex(draft.mainImageIndex || 0);
+      setPrice(draft.price || '0.00');
+      setKeywords(draft.keywords || '');
+      
+      // Clear from sessionStorage
+      sessionStorage.removeItem('loadedDraft');
+      
+      console.log('✅ Draft loaded from DraftsPage');
+    } catch (error) {
+      console.error('Failed to load draft:', error);
+    }
+  }
+}, []);
   const [category, setCategory] = useState<CategoryWithPath | null>(null);
   const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
@@ -1166,75 +1190,75 @@ export default function ResultsPage() {
           />
         </section>
 
-        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleSaveDraft}
-            className="btn"
-            style={{
-              padding: '12px 24px',
-              background: '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            Save Draft
-          </button>
+<div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
+  <button
+    onClick={handleSaveDraft}
+    className="btn"
+    style={{
+      padding: '12px 24px',
+      background: '#10b981',
+      color: 'white',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontSize: 16,
+      fontWeight: 600,
+    }}
+  >
+    Save Draft
+  </button>
 
-          <button
-            onClick={handleViewDrafts}
-            className="btn"
-            style={{
-              padding: '12px 24px',
-              background: '#3b82f6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            View Drafts
-          </button>
+  <button
+    onClick={() => navigate('/drafts')}
+    className="btn"
+    style={{
+      padding: '12px 24px',
+      background: '#3b82f6',
+      color: 'white',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontSize: 16,
+      fontWeight: 600,
+    }}
+  >
+    View All Drafts
+  </button>
 
-          <button
-            type="button"
-            onClick={handlePublish}
-            disabled={publishing}
-            style={{
-              padding: '12px 32px',
-              background: publishing ? '#999' : '#0064d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: publishing ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {publishing ? 'Publishing…' : 'Publish to eBay'}
-          </button>
+  <button
+    type="button"
+    onClick={handlePublish}
+    disabled={publishing}
+    style={{
+      padding: '12px 32px',
+      background: publishing ? '#999' : '#0064d2',
+      color: 'white',
+      border: 'none',
+      borderRadius: 4,
+      cursor: publishing ? 'default' : 'pointer',
+      fontSize: 16,
+      fontWeight: 600,
+    }}
+  >
+    {publishing ? 'Publishing…' : 'Publish to eBay'}
+  </button>
 
-          <button
-            type="button"
-            onClick={() => navigate('/create-listing')}
-            style={{
-              padding: '12px 32px',
-              background: '#f0f0f0',
-              color: '#333',
-              border: '1px solid #ddd',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 16,
-            }}
-          >
-            Cancel
-          </button>
-        </div>
+  <button
+    type="button"
+    onClick={() => navigate('/create-listing')}
+    style={{
+      padding: '12px 32px',
+      background: '#f0f0f0',
+      color: '#333',
+      border: '1px solid #ddd',
+      borderRadius: 4,
+      cursor: 'pointer',
+      fontSize: 16,
+    }}
+  >
+    Cancel
+  </button>
+</div>
 
         {saveError ? <div style={{ marginTop: 10, color: 'red', fontSize: 14 }}>{saveError}</div> : null}
 
