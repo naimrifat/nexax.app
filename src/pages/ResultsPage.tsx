@@ -56,6 +56,7 @@ type AiData = {
 };
 
 /* ---------- Timeout helper ---------- */
+
 async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): Promise<T> {
   let timeoutId: any;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -70,6 +71,7 @@ async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): P
 }
 
 /* ---------- Generic helpers ---------- */
+
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
   if (Array.isArray(s)) {
@@ -95,6 +97,7 @@ function firstValue(v: string | string[] | undefined): string {
 }
 
 /* ---------- Size helpers ---------- */
+
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
   const st = specs.find((s) => /size type/i.test(s.name || ''));
   if (!st) return '';
@@ -131,6 +134,7 @@ function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: str
 }
 
 /* ---------- Compact token selector ---------- */
+
 function TokenSelect({
   value,
   options,
@@ -206,10 +210,7 @@ function TokenSelect({
       >
         {multi &&
           selected.map((s) => (
-            <span
-              key={s}
-              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
-            >
+            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
               {s}
               <button
                 type="button"
@@ -312,6 +313,7 @@ function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange:
 }
 
 /* ---------- Category path helper ---------- */
+
 function getCategoryPathString(cat: CategoryWithPath | null): string {
   if (!cat) return '';
   if (cat.breadcrumbs && cat.breadcrumbs.length) return cat.breadcrumbs.join(' > ');
@@ -325,29 +327,27 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-/* ---------- Workspace resolver (matches your RLS policy) ---------- */
-async function getWorkspaceIdForAuthedUser(): Promise<{ workspaceId: string; userId: string }> {
-  const { data: authData, error: authErr } = await withTimeout(supabase.auth.getUser(), 15000, 'auth.getUser');
-  if (authErr) throw authErr;
+/* ---------- Tenancy (RPC) ---------- */
 
-  const userId = authData?.user?.id;
-  if (!userId) throw new Error('Not authenticated');
+type Tenancy = { workspaceId: string; internalUserId: string };
 
+async function ensureTenancyRpc(): Promise<Tenancy> {
   const { data, error } = await withTimeout(
-    supabase
-      .from('users')
-      .select('workspace_id')
-      .eq('auth_provider_user_id', userId)
-      .single(),
-    15000,
-    'select users.workspace_id',
+    supabase.rpc('ensure_user_and_workspace'),
+    20000,
+    'ensure_user_and_workspace'
   );
-
   if (error) throw error;
-  const workspaceId = (data as any)?.workspace_id;
-  if (!workspaceId) throw new Error('No workspace_id found for this user');
 
-  return { workspaceId, userId };
+  const row: any = Array.isArray(data) ? data[0] : data;
+
+  const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
+  const internalUserId = row?.user_id ?? row?.out_user_id;
+
+  if (!workspaceId) throw new Error('ensure_user_and_workspace did not return workspace_id');
+  if (!internalUserId) throw new Error('ensure_user_and_workspace did not return user_id');
+
+  return { workspaceId, internalUserId };
 }
 
 export default function ResultsPage() {
@@ -377,6 +377,8 @@ export default function ResultsPage() {
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
+
+  // This is the DB listing id (uuid)
   const [listingId, setListingId] = useState<string | null>(null);
 
   // ----------------------------
@@ -386,15 +388,18 @@ export default function ResultsPage() {
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
   const didInitialLoadRef = useRef(false);
 
-  const tenancyRef = useRef<{ workspaceId: string; userId: string } | null>(null);
+  const tenancyRef = useRef<Tenancy | null>(null);
 
   const ensureTenancy = useCallback(async () => {
     if (tenancyRef.current) return tenancyRef.current;
-    const t = await getWorkspaceIdForAuthedUser();
+    const t = await ensureTenancyRpc();
     tenancyRef.current = t;
     return t;
   }, []);
 
+  // ----------------------------
+  // Helpers
+  // ----------------------------
   const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
     return newSpecifics.map((field) => {
       let current: string | string[] = field.value;
@@ -443,6 +448,7 @@ export default function ResultsPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
         });
+
         if (!response.ok) throw new Error('Failed to fetch category specifics');
         const data = await response.json();
 
@@ -495,7 +501,7 @@ export default function ResultsPage() {
         setLoadingSpecifics(false);
       }
     },
-    [smartFillSpecifics],
+    [smartFillSpecifics]
   );
 
   const mainImageUrl = images[mainImageIndex] || '';
@@ -510,7 +516,9 @@ export default function ResultsPage() {
       title: title.trim(),
       description: description.trim(),
       marketplace: 'ebay',
-      category: category ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs } : null,
+      category: category
+        ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs }
+        : null,
       category_id: category?.id || null,
       category_path: categoryPath || null,
       item_specifics: specifics.map((s) => ({
@@ -521,6 +529,9 @@ export default function ResultsPage() {
         selectionOnly: !!s.selectionOnly,
         freeTextAllowed: s.freeTextAllowed !== false,
         options: s.options || [],
+        // keep allOptions if you stored it
+        allOptions: s.allOptions || undefined,
+        type: s.type || undefined,
       })),
       keywords: keywords
         .split(',')
@@ -528,12 +539,12 @@ export default function ResultsPage() {
         .filter(Boolean),
       price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       images: orderedImages,
-      mainImageIndex: 0, // because orderedImages has main image first
+      mainImageIndex: 0, // because orderedImages puts main image first
     };
   }, [category, images, mainImageIndex, price, specifics, keywords, title, description]);
 
   // ----------------------------
-  // Initial load: either edit existing listingId, or load AI session data
+  // Initial load
   // ----------------------------
   useEffect(() => {
     if (didInitialLoadRef.current) return;
@@ -549,6 +560,7 @@ export default function ResultsPage() {
         const listingIdParam = urlParams.get('listingId');
         const sessionId = urlParams.get('session');
 
+        // Warm tenancy (also validates auth)
         await ensureTenancy();
 
         // EDIT MODE: load from Supabase by listingId
@@ -558,11 +570,13 @@ export default function ResultsPage() {
           const { data, error: readErr } = await withTimeout(
             supabase
               .from('listings')
-              .select('id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at')
+              .select(
+                'id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at'
+              )
               .eq('id', listingIdParam)
               .single(),
             20000,
-            'read listing',
+            'read listing'
           );
 
           if (readErr) throw readErr;
@@ -574,19 +588,23 @@ export default function ResultsPage() {
 
           setTitle((row.title ?? lj.title ?? '') as string);
           setDescription((row.description ?? lj.description ?? '') as string);
-          setPrice(typeof row.price === 'number' ? row.price.toFixed(2) : String(lj?.price_suggestion?.optimal ?? '0.00'));
+
+          const priceVal =
+            typeof row.price === 'number'
+              ? row.price.toFixed(2)
+              : typeof lj?.price_suggestion?.optimal === 'number'
+                ? lj.price_suggestion.optimal.toFixed(2)
+                : String(lj?.price_suggestion?.optimal ?? '0.00');
+          setPrice(priceVal);
 
           // Images: prefer column, else listing_json.images
-          const imgs: string[] = Array.isArray(row.images)
-            ? row.images
-            : Array.isArray(lj.images)
-              ? lj.images
-              : [];
+          const imgs: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
           setImages(imgs);
           setMainImageIndex(0);
 
           // Keywords
-          const kws = Array.isArray(lj.keywords) ? lj.keywords.join(', ') : '';
+          const kws =
+            Array.isArray(lj.keywords) ? lj.keywords.join(', ') : typeof lj.keywords === 'string' ? lj.keywords : '';
           setKeywords(kws);
 
           // Category
@@ -595,14 +613,14 @@ export default function ResultsPage() {
             catFromJson && (catFromJson.id || catFromJson.name)
               ? {
                   id: String(catFromJson.id ?? row.category_id ?? ''),
-                  name: String(catFromJson.name ?? ''),
+                  name: String(catFromJson.name ?? 'Selected Category'),
                   path: String(catFromJson.path ?? row.category_path ?? ''),
                   breadcrumbs: Array.isArray(catFromJson.breadcrumbs) ? catFromJson.breadcrumbs : undefined,
                 }
               : row.category_id
                 ? {
                     id: String(row.category_id),
-                    name: String(catFromJson?.name ?? 'Selected Category'),
+                    name: 'Selected Category',
                     path: String(row.category_path ?? ''),
                   }
                 : null;
@@ -735,17 +753,16 @@ export default function ResultsPage() {
     setDraftStatus('');
 
     try {
-      const { workspaceId, userId } = await ensureTenancy();
+      const { workspaceId, internalUserId } = await ensureTenancy();
       const listingData = buildListingJson();
 
       const orderedImages: string[] = Array.isArray(listingData.images) ? listingData.images : [];
-
       const categoryPath = listingData.category_path || '';
       const priceNum = Number(listingData.price_suggestion?.optimal ?? 0) || 0;
 
-      const row: any = {
+      const payload: any = {
         workspace_id: workspaceId,
-        created_by: userId,
+        created_by: internalUserId, // IMPORTANT: internal user id, not auth.uid()
         status: 'draft',
         marketplace: 'ebay',
         title: listingData.title || 'Untitled Listing',
@@ -756,37 +773,42 @@ export default function ResultsPage() {
         currency: 'USD',
         images: orderedImages,
         listing_json: listingData,
-        updated_at: new Date().toISOString(),
       };
 
-      // Upsert: if listingId exists, update; else insert new
-      if (listingId) row.id = listingId;
+      let savedId = listingId;
 
-      console.log('[Draft] upsert start:', { hasId: !!listingId, workspaceId, userId });
+      if (!listingId) {
+        // INSERT
+        console.log('[Draft] insert start:', { workspaceId, internalUserId });
+        const { data, error: insertErr } = await withTimeout(
+          supabase.from('listings').insert(payload).select('id').single(),
+          25000,
+          'insert draft'
+        );
+        if (insertErr) throw insertErr;
+        savedId = (data as any)?.id;
+      } else {
+        // UPDATE
+        console.log('[Draft] update start:', { id: listingId, workspaceId, internalUserId });
+        const { data, error: updateErr } = await withTimeout(
+          supabase.from('listings').update(payload).eq('id', listingId).select('id').single(),
+          25000,
+          'update draft'
+        );
+        if (updateErr) throw updateErr;
+        savedId = (data as any)?.id ?? listingId;
+      }
 
-      const { data, error: upsertErr } = await withTimeout(
-        supabase
-          .from('listings')
-          .upsert(row, { onConflict: 'id' })
-          .select('id')
-          .single(),
-        25000,
-        'upsert draft',
-      );
+      if (!savedId) throw new Error('Draft saved but no id was returned');
 
-      if (upsertErr) throw upsertErr;
-
-      const newId = (data as any)?.id;
-      if (!newId) throw new Error('Draft saved but no id was returned');
-
-      setListingId(newId);
-      setDraftStatus(`Draft saved.`);
-      console.log('[Draft] upsert success:', { id: newId });
+      setListingId(savedId);
+      setDraftStatus('Draft saved.');
+      console.log('[Draft] save success:', { id: savedId });
 
       // Keep URL consistent so “Edit” continues to work
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
-      url.searchParams.set('listingId', newId);
+      url.searchParams.set('listingId', savedId);
       window.history.replaceState({}, '', url.toString());
     } catch (err: any) {
       console.error('[Draft] save failed:', err);
@@ -796,7 +818,7 @@ export default function ResultsPage() {
   };
 
   // ----------------------------
-  // Publish (unchanged endpoint call; you’ll later update DB status on success)
+  // Publish
   // ----------------------------
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
@@ -857,6 +879,9 @@ export default function ResultsPage() {
     }
   };
 
+  // ----------------------------
+  // Render
+  // ----------------------------
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
