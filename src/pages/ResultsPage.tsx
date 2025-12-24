@@ -819,7 +819,47 @@ export default function ResultsPage() {
     alert('❌ Failed to save draft: ' + error.message);
   }
 };
+  
+  const handleLoadDraft = (draftId: string) => {
+  try {
+    const data = localStorage.getItem(draftId);
+    if (!data) {
+      alert('Draft not found');
+      return;
+    }
 
+    const draft = JSON.parse(data);
+
+    // Restore all fields
+    setTitle(draft.title);
+    setDescription(draft.description);
+    setCategory(draft.category);
+    setSpecifics(draft.specifics);
+    setImages(draft.images);
+    setMainImageIndex(draft.mainImageIndex);
+    setPrice(draft.price);
+    setKeywords(draft.keywords);
+
+    alert('Draft loaded: ' + draft.title);
+  } catch (error) {
+    alert('Failed to load draft');
+  }
+};
+
+  const listAllDrafts = () => {
+  const drafts = JSON.parse(localStorage.getItem('drafts_list') || '[]');
+  console.log('Saved drafts:', drafts);
+  
+  if (drafts.length === 0) {
+    alert('No saved drafts');
+  } else {
+    const list = drafts.map((d: any) => 
+      `${d.title} (saved ${new Date(d.savedAt).toLocaleString()})`
+    ).join('\n');
+    alert('Saved drafts:\n\n' + list);
+  }
+};
+  
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
       alert('Title, description, and category are required.');
