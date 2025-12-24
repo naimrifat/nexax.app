@@ -780,14 +780,18 @@ export default function ResultsPage() {
     };
   };
 
-  const handleSaveDraft = () => {
+const handleSaveDraft = async () => {
   try {
-    // Create draft object
+    // Build draft object
     const draft = {
       id: `draft_${Date.now()}`,
       title: title || 'Untitled Listing',
       description: description || '',
-      category: category || null,
+      category: category ? {
+        id: category.id,
+        name: category.name,
+        path: category.path,
+      } : null,
       specifics: specifics || [],
       images: images || [],
       mainImageIndex: mainImageIndex || 0,
@@ -796,7 +800,7 @@ export default function ResultsPage() {
       savedAt: new Date().toISOString(),
     };
 
-    // Save to localStorage
+    // Save to localStorage FIRST (instant, reliable)
     localStorage.setItem(draft.id, JSON.stringify(draft));
 
     // Update drafts list
@@ -808,11 +812,43 @@ export default function ResultsPage() {
     });
     localStorage.setItem('drafts_list', JSON.stringify(allDrafts));
 
-    console.log('✅ Draft saved:', draft.id);
-    
-    // Show success message
-    const message = `✅ Draft saved successfully!\n\nTitle: ${draft.title}\nSaved at: ${new Date().toLocaleTimeString()}`;
-    alert(message);
+    console.log('✅ Draft saved locally:', draft.id);
+
+    // Show success immediately
+    alert(`✅ Draft saved!\n\nTitle: ${draft.title}\nID: ${draft.id}\n\nYou can close this page and come back later.`);
+
+    // Optional: Try Supabase backup in background (non-blocking)
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (supabaseUrl && supabaseKey) {
+        // Fire and forget - don't await
+        fetch(`${supabaseUrl}/rest/v1/listings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({
+            draft_id: draft.id,
+            title: draft.title,
+            description: draft.description,
+            data: JSON.stringify(draft),
+            status: 'draft',
+          }),
+        }).then(() => {
+          console.log('☁️ Also backed up to Supabase');
+        }).catch(() => {
+          console.log('⚠️ Supabase backup failed (local save succeeded)');
+        });
+      }
+    } catch (bgError) {
+      // Silently fail - local save already succeeded
+      console.log('Background Supabase sync not available');
+    }
 
   } catch (error: any) {
     console.error('❌ Save failed:', error);
@@ -820,29 +856,32 @@ export default function ResultsPage() {
   }
 };
   
-  const handleLoadDraft = (draftId: string) => {
+const handleLoadDraft = (draftId: string) => {
   try {
     const data = localStorage.getItem(draftId);
     if (!data) {
-      alert('Draft not found');
+      alert('❌ Draft not found');
       return;
     }
 
     const draft = JSON.parse(data);
 
     // Restore all fields
-    setTitle(draft.title);
-    setDescription(draft.description);
-    setCategory(draft.category);
-    setSpecifics(draft.specifics);
-    setImages(draft.images);
-    setMainImageIndex(draft.mainImageIndex);
-    setPrice(draft.price);
-    setKeywords(draft.keywords);
+    setTitle(draft.title || '');
+    setDescription(draft.description || '');
+    setCategory(draft.category || null);
+    setSpecifics(draft.specifics || []);
+    setImages(draft.images || []);
+    setMainImageIndex(draft.mainImageIndex || 0);
+    setPrice(draft.price || '0.00');
+    setKeywords(draft.keywords || '');
 
-    alert('Draft loaded: ' + draft.title);
+    console.log('✅ Draft loaded:', draft.id);
+    alert(`✅ Draft loaded!\n\nTitle: ${draft.title}`);
+
   } catch (error) {
-    alert('Failed to load draft');
+    console.error('❌ Load failed:', error);
+    alert('❌ Failed to load draft');
   }
 };
 
@@ -1152,56 +1191,75 @@ export default function ResultsPage() {
           />
         </section>
 
-        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
-<button
-  onClick={handleSaveDraft}
-  className="btn"
-  style={{
-    padding: '12px 24px',
-    background: '#10b981',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-  }}
->
-  Save Draft
-</button>
+<div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
+  <button
+    onClick={handleSaveDraft}
+    className="btn"
+    style={{
+      padding: '12px 24px',
+      background: '#10b981',
+      color: 'white',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontSize: 16,
+      fontWeight: 600,
+    }}
+  >
+    Save Draft
+  </button>
 
-          <button
-            type="button"
-            onClick={handlePublish}
-            disabled={publishing}
-            style={{
-              padding: '12px 32px',
-              background: publishing ? '#999' : '#0064d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: publishing ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {publishing ? 'Publishing…' : 'Publish to eBay'}
-          </button>
+  <button
+    onClick={handleViewDrafts}
+    className="btn"
+    style={{
+      padding: '12px 24px',
+      background: '#3b82f6',
+      color: 'white',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontSize: 16,
+      fontWeight: 600,
+    }}
+  >
+    View Drafts
+  </button>
 
-          <button
-            type="button"
-            onClick={() => navigate('/create-listing')}
-            style={{
-              padding: '12px 32px',
-              background: '#f0f0f0',
-              color: '#333',
-              border: '1px solid #ddd',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 16,
-            }}
-          >
-            Cancel
-          </button>
+  <button
+    type="button"
+    onClick={handlePublish}
+    disabled={publishing}
+    style={{
+      padding: '12px 32px',
+      background: publishing ? '#999' : '#0064d2',
+      color: 'white',
+      border: 'none',
+      borderRadius: 4,
+      cursor: publishing ? 'default' : 'pointer',
+      fontSize: 16,
+      fontWeight: 600,
+    }}
+  >
+    {publishing ? 'Publishing…' : 'Publish to eBay'}
+  </button>
 
+  <button
+    type="button"
+    onClick={() => navigate('/create-listing')}
+    style={{
+      padding: '12px 32px',
+      background: '#f0f0f0',
+      color: '#333',
+      border: '1px solid #ddd',
+      borderRadius: 4,
+      cursor: 'pointer',
+      fontSize: 16,
+    }}
+  >
+    Cancel
+  </button>
+</div>
           {saveError ? <span style={{ color: 'red', fontSize: 14 }}>{saveError}</span> : null}
           {draftStatus ? (
             <span style={{ fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2f855a' }}>
