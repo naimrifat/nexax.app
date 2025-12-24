@@ -56,8 +56,7 @@ type AiData = {
 };
 
 /* ---------- Timeout helper ---------- */
-
-async function withTimeout<T>(p: Promise<T>, ms = 12000, label = 'operation'): Promise<T> {
+async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): Promise<T> {
   let timeoutId: any;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => reject(new Error(`[Timeout] ${label} exceeded ${ms}ms`)), ms);
@@ -71,7 +70,6 @@ async function withTimeout<T>(p: Promise<T>, ms = 12000, label = 'operation'): P
 }
 
 /* ---------- Generic helpers ---------- */
-
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
   if (Array.isArray(s)) {
@@ -97,7 +95,6 @@ function firstValue(v: string | string[] | undefined): string {
 }
 
 /* ---------- Size helpers ---------- */
-
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
   const st = specs.find((s) => /size type/i.test(s.name || ''));
   if (!st) return '';
@@ -134,7 +131,6 @@ function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: str
 }
 
 /* ---------- Compact token selector ---------- */
-
 function TokenSelect({
   value,
   options,
@@ -210,7 +206,10 @@ function TokenSelect({
       >
         {multi &&
           selected.map((s) => (
-            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
+            <span
+              key={s}
+              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
+            >
               {s}
               <button
                 type="button"
@@ -312,8 +311,7 @@ function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange:
   );
 }
 
-/* ---------- Draft helpers ---------- */
-
+/* ---------- Category path helper ---------- */
 function getCategoryPathString(cat: CategoryWithPath | null): string {
   if (!cat) return '';
   if (cat.breadcrumbs && cat.breadcrumbs.length) return cat.breadcrumbs.join(' > ');
@@ -327,48 +325,36 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-function getSessionIdFromUrl(): string {
-  try {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('session') || 'local';
-  } catch {
-    return 'local';
-  }
-}
+/* ---------- Workspace resolver (matches your RLS policy) ---------- */
+async function getWorkspaceIdForAuthedUser(): Promise<{ workspaceId: string; userId: string }> {
+  const { data: authData, error: authErr } = await withTimeout(supabase.auth.getUser(), 15000, 'auth.getUser');
+  if (authErr) throw authErr;
 
-function getDraftStorageKey(): string {
-  return `nexax.currentListingId.${getSessionIdFromUrl()}`;
-}
+  const userId = authData?.user?.id;
+  if (!userId) throw new Error('Not authenticated');
 
-/* ---------- Tenancy cache helpers ---------- */
+  const { data, error } = await withTimeout(
+    supabase
+      .from('users')
+      .select('workspace_id')
+      .eq('auth_provider_user_id', userId)
+      .single(),
+    15000,
+    'select users.workspace_id',
+  );
 
-const TENANCY_CACHE_KEY = 'nexax.tenancy.v1';
+  if (error) throw error;
+  const workspaceId = (data as any)?.workspace_id;
+  if (!workspaceId) throw new Error('No workspace_id found for this user');
 
-function readTenancyCache(): { workspace_id: string; internal_user_id: string } | null {
-  try {
-    const raw = localStorage.getItem(TENANCY_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed?.workspace_id && parsed?.internal_user_id) return parsed;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function writeTenancyCache(v: { workspace_id: string; internal_user_id: string }) {
-  try {
-    localStorage.setItem(TENANCY_CACHE_KEY, JSON.stringify(v));
-  } catch {
-    // ignore
-  }
+  return { workspaceId, userId };
 }
 
 export default function ResultsPage() {
   const navigate = useNavigate();
 
   // ----------------------------
-  // State (declare ALL state first)
+  // State
   // ----------------------------
   const [category, setCategory] = useState<CategoryWithPath | null>(null);
   const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
@@ -391,184 +377,22 @@ export default function ResultsPage() {
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
-
-  const [listingId, setListingId] = useState<string | null>(() => {
-    try {
-      return sessionStorage.getItem(getDraftStorageKey());
-    } catch {
-      return null;
-    }
-  });
+  const [listingId, setListingId] = useState<string | null>(null);
 
   // ----------------------------
   // Refs
   // ----------------------------
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
+  const didInitialLoadRef = useRef(false);
 
-  const loadedDraftAppliedRef = useRef(false);
-
-  // Cache: avoid repeated auth/RPC calls
-  const authUserRef = useRef<{ id: string } | null>(null);
-  const tenancyRef = useRef<{ workspace_id: string; internal_user_id: string } | null>(null);
-  const ensureTenancyInFlightRef = useRef<Promise<{ workspace_id: string; internal_user_id: string }> | null>(null);
-
-  // ----------------------------
-  // ✅ Draft restore hook (this is what you attempted to add)
-  // Runs once, inside the component, AFTER state exists.
-  // ----------------------------
-  useEffect(() => {
-    const loadedDraft = sessionStorage.getItem('loadedDraft');
-    if (!loadedDraft) return;
-
-    try {
-      const draft = JSON.parse(loadedDraft);
-
-      setTitle(draft.title || '');
-      setDescription(draft.description || '');
-      setCategory(draft.category || null);
-      setSpecifics(draft.specifics || []);
-      setImages(draft.images || []);
-      setMainImageIndex(draft.mainImageIndex || 0);
-      setPrice(draft.price || '0.00');
-      setKeywords(draft.keywords || '');
-
-      sessionStorage.removeItem('loadedDraft');
-
-      loadedDraftAppliedRef.current = true;
-      setError(null);
-      setLoading(false);
-
-      console.log('✅ Draft loaded from DraftsPage');
-    } catch (e) {
-      console.error('Failed to load draft:', e);
-      sessionStorage.removeItem('loadedDraft');
-    }
-  }, []);
-
-  // Track auth state once; populate authUserRef when possible
-  useEffect(() => {
-    let unsub: any = null;
-    try {
-      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-        const u = session?.user;
-        if (u?.id) authUserRef.current = { id: u.id };
-      });
-      unsub = data?.subscription;
-    } catch {
-      // ignore
-    }
-    return () => {
-      try {
-        unsub?.unsubscribe?.();
-      } catch {
-        // ignore
-      }
-    };
-  }, []);
-
-  // NOTE: kept for compatibility, but draft save should not depend on it.
-  const resolveAuthUserId = useCallback(async (): Promise<string> => {
-    if (authUserRef.current?.id) return authUserRef.current.id;
-
-    try {
-      const { data, error } = await withTimeout(supabase.auth.getSession(), 15000, 'auth.getSession');
-      if (error) throw error;
-      const uid = data?.session?.user?.id;
-      if (uid) {
-        authUserRef.current = { id: uid };
-        return uid;
-      }
-    } catch (e) {
-      console.warn('[Auth] getSession failed:', e);
-    }
-
-    try {
-      const { data, error } = await withTimeout(supabase.auth.getUser(), 15000, 'auth.getUser');
-      if (error) throw error;
-      const uid = data?.user?.id;
-      if (uid) {
-        authUserRef.current = { id: uid };
-        return uid;
-      }
-    } catch (e) {
-      console.warn('[Auth] getUser failed:', e);
-    }
-
-    const uid = await withTimeout(
-      new Promise<string>((resolve, reject) => {
-        try {
-          const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-            const u = session?.user;
-            if (u?.id) {
-              try {
-                data?.subscription?.unsubscribe?.();
-              } catch {}
-              resolve(u.id);
-            }
-          });
-        } catch (err) {
-          reject(err);
-        }
-      }),
-      12000,
-      'auth.onAuthStateChange'
-    );
-
-    authUserRef.current = { id: uid };
-    return uid;
-  }, []);
+  const tenancyRef = useRef<{ workspaceId: string; userId: string } | null>(null);
 
   const ensureTenancy = useCallback(async () => {
     if (tenancyRef.current) return tenancyRef.current;
-
-    const cached = readTenancyCache();
-    if (cached) {
-      tenancyRef.current = cached;
-      return cached;
-    }
-
-    if (ensureTenancyInFlightRef.current) return await ensureTenancyInFlightRef.current;
-
-    ensureTenancyInFlightRef.current = (async () => {
-      try {
-        const { data: wsData, error: ensureErr } = await withTimeout(
-          supabase.rpc('ensure_user_and_workspace'),
-          30000,
-          'ensure_user_and_workspace'
-        );
-        if (ensureErr) throw ensureErr;
-
-        const row: any = Array.isArray(wsData) ? wsData[0] : wsData;
-        const workspace_id = row?.workspace_id ?? row?.out_workspace_id;
-        const internal_user_id = row?.user_id ?? row?.out_user_id;
-
-        if (!workspace_id || typeof workspace_id !== 'string') {
-          throw new Error(`RPC missing workspace_id. Returned: ${JSON.stringify(wsData)}`);
-        }
-        if (!internal_user_id || typeof internal_user_id !== 'string') {
-          throw new Error(`RPC missing user_id. Returned: ${JSON.stringify(wsData)}`);
-        }
-
-        const result = { workspace_id, internal_user_id };
-        tenancyRef.current = result;
-        writeTenancyCache(result);
-        return result;
-      } finally {
-        ensureTenancyInFlightRef.current = null;
-      }
-    })();
-
-    try {
-      return await ensureTenancyInFlightRef.current;
-    } catch (err) {
-      const fallback = readTenancyCache();
-      if (fallback) {
-        tenancyRef.current = fallback;
-        return fallback;
-      }
-      throw err;
-    }
+    const t = await getWorkspaceIdForAuthedUser();
+    tenancyRef.current = t;
+    return t;
   }, []);
 
   const smartFillSpecifics = useCallback((newSpecifics: ItemSpecific[], aiData: AiDetected): ItemSpecific[] => {
@@ -612,6 +436,8 @@ export default function ResultsPage() {
     async (categoryId: string, categoryPathForFilter: string) => {
       setLoadingSpecifics(true);
       try {
+        console.log('[Specifics] Fetching category specifics:', { categoryId, categoryPathForFilter });
+
         const response = await fetch('/api/ebay-categories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -656,41 +482,142 @@ export default function ResultsPage() {
 
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
         const sizeFiltered = applySizeTypeFilterToSpecifics(filled, categoryPathForFilter);
+
+        console.log('[Specifics] Loaded specifics:', {
+          total: sizeFiltered.length,
+          requiredMissing: sizeFiltered.filter((s) => s.required && !firstValue(s.value)).length,
+        });
+
         setSpecifics(sizeFiltered);
       } catch (err) {
-        console.error('Error fetching specifics:', err);
+        console.error('[Specifics] Error:', err);
       } finally {
         setLoadingSpecifics(false);
       }
     },
-    [smartFillSpecifics]
+    [smartFillSpecifics],
   );
 
-  // Warm tenancy once (moves RPC off the "Save Draft" click path)
+  const mainImageUrl = images[mainImageIndex] || '';
+
+  const buildListingJson = useCallback(() => {
+    const categoryPath = getCategoryPathString(category);
+    const orderedImages = images.length
+      ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean)
+      : [];
+
+    return {
+      title: title.trim(),
+      description: description.trim(),
+      marketplace: 'ebay',
+      category: category ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs } : null,
+      category_id: category?.id || null,
+      category_path: categoryPath || null,
+      item_specifics: specifics.map((s) => ({
+        name: s.name,
+        value: s.value,
+        required: !!s.required,
+        multi: !!s.multi,
+        selectionOnly: !!s.selectionOnly,
+        freeTextAllowed: s.freeTextAllowed !== false,
+        options: s.options || [],
+      })),
+      keywords: keywords
+        .split(',')
+        .map((k) => k.trim())
+        .filter(Boolean),
+      price_suggestion: { optimal: parseFloat(price || '0') || 0 },
+      images: orderedImages,
+      mainImageIndex: 0, // because orderedImages has main image first
+    };
+  }, [category, images, mainImageIndex, price, specifics, keywords, title, description]);
+
+  // ----------------------------
+  // Initial load: either edit existing listingId, or load AI session data
+  // ----------------------------
   useEffect(() => {
-    ensureTenancy().catch((e) => console.warn('[Tenancy] warmup failed:', e));
-  }, [ensureTenancy]);
+    if (didInitialLoadRef.current) return;
+    didInitialLoadRef.current = true;
 
-  // Main data load (AI session load). If we already restored a draft, skip this.
-  useEffect(() => {
-    if (loadedDraftAppliedRef.current) return;
-
-    let isMounted = true;
-
-    const loadData = async () => {
+    const run = async () => {
       setLoading(true);
       setError(null);
 
-      const sessionKey = getDraftStorageKey();
       try {
-        const stored = sessionStorage.getItem(sessionKey);
-        setListingId(stored || null);
-      } catch {}
+        const urlParams = new URLSearchParams(window.location.search);
+        const mode = urlParams.get('mode');
+        const listingIdParam = urlParams.get('listingId');
+        const sessionId = urlParams.get('session');
 
-      const urlParams = new URLSearchParams(window.location.search);
-      const sessionId = urlParams.get('session');
+        await ensureTenancy();
 
-      try {
+        // EDIT MODE: load from Supabase by listingId
+        if (mode === 'edit' && listingIdParam) {
+          console.log('[ResultsPage] Edit mode loading listing:', { listingId: listingIdParam });
+
+          const { data, error: readErr } = await withTimeout(
+            supabase
+              .from('listings')
+              .select('id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at')
+              .eq('id', listingIdParam)
+              .single(),
+            20000,
+            'read listing',
+          );
+
+          if (readErr) throw readErr;
+
+          const row: any = data || {};
+          const lj: any = row.listing_json || {};
+
+          setListingId(row.id);
+
+          setTitle((row.title ?? lj.title ?? '') as string);
+          setDescription((row.description ?? lj.description ?? '') as string);
+          setPrice(typeof row.price === 'number' ? row.price.toFixed(2) : String(lj?.price_suggestion?.optimal ?? '0.00'));
+
+          // Images: prefer column, else listing_json.images
+          const imgs: string[] = Array.isArray(row.images)
+            ? row.images
+            : Array.isArray(lj.images)
+              ? lj.images
+              : [];
+          setImages(imgs);
+          setMainImageIndex(0);
+
+          // Keywords
+          const kws = Array.isArray(lj.keywords) ? lj.keywords.join(', ') : '';
+          setKeywords(kws);
+
+          // Category
+          const catFromJson = lj.category || null;
+          const cat: CategoryWithPath | null =
+            catFromJson && (catFromJson.id || catFromJson.name)
+              ? {
+                  id: String(catFromJson.id ?? row.category_id ?? ''),
+                  name: String(catFromJson.name ?? ''),
+                  path: String(catFromJson.path ?? row.category_path ?? ''),
+                  breadcrumbs: Array.isArray(catFromJson.breadcrumbs) ? catFromJson.breadcrumbs : undefined,
+                }
+              : row.category_id
+                ? {
+                    id: String(row.category_id),
+                    name: String(catFromJson?.name ?? 'Selected Category'),
+                    path: String(row.category_path ?? ''),
+                  }
+                : null;
+
+          setCategory(cat);
+
+          // Specifics
+          const baseSpecs: ItemSpecific[] = Array.isArray(lj.item_specifics) ? lj.item_specifics : [];
+          setSpecifics(applySizeTypeFilterToSpecifics(baseSpecs, getCategoryPathString(cat)));
+
+          setLoading(false);
+          return;
+        }
+
+        // CREATE MODE: load AI analysis
         let wrapper: any = null;
         let analysis: any = null;
 
@@ -708,8 +635,6 @@ export default function ResultsPage() {
           wrapper = JSON.parse(raw);
           analysis = wrapper.data || wrapper.analysis || wrapper;
         }
-
-        if (!isMounted) return;
 
         aiSpecificsRef.current = normalizeSpecifics(analysis.item_specifics);
         aiDetectedRef.current = analysis.detected || {};
@@ -748,24 +673,18 @@ export default function ResultsPage() {
 
         setLoading(false);
       } catch (err: any) {
-        console.error('Error loading listing data:', err);
-        if (isMounted) {
-          setError(err?.message || 'Failed to load data');
-          setLoading(false);
-        }
+        console.error('[ResultsPage] load error:', err);
+        setError(err?.message || 'Failed to load data');
+        setLoading(false);
       }
     };
 
-    loadData();
-    return () => {
-      isMounted = false;
-    };
-  }, [navigate, fetchCategorySpecifics, smartFillSpecifics]);
+    run();
+  }, [ensureTenancy, fetchCategorySpecifics, smartFillSpecifics, navigate]);
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setCategory(newCategory);
     setShowCategoryModal(false);
-
     const categoryPath = getCategoryPathString(newCategory);
     await fetchCategorySpecifics(newCategory.id, categoryPath);
   };
@@ -798,86 +717,87 @@ export default function ResultsPage() {
     return category.name;
   }, [category]);
 
-  const mainImageUrl = images[mainImageIndex] || '';
+  const normalizedCategoryPathForSelector =
+    (category?.breadcrumbs && category.breadcrumbs.length ? category.breadcrumbs.join(' > ') : '') ||
+    (category?.path
+      ? category.path
+          .split('>')
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .join(' > ')
+      : '');
 
+  // ----------------------------
+  // Save Draft (Supabase canonical)
+  // ----------------------------
   const handleSaveDraft = async () => {
     setSaveError(null);
     setDraftStatus('');
 
     try {
-      const draft = {
-        id: `draft_${Date.now()}`,
-        title: title || 'Untitled Listing',
-        description: description || '',
-        category: category
-          ? {
-              id: category.id,
-              name: category.name,
-              path: category.path,
-              breadcrumbs: category.breadcrumbs,
-            }
-          : null,
-        specifics: specifics || [],
-        images: images || [],
-        mainImageIndex: mainImageIndex || 0,
-        price: price || '0.00',
-        keywords: keywords || '',
-        savedAt: new Date().toISOString(),
+      const { workspaceId, userId } = await ensureTenancy();
+      const listingData = buildListingJson();
+
+      const orderedImages: string[] = Array.isArray(listingData.images) ? listingData.images : [];
+
+      const categoryPath = listingData.category_path || '';
+      const priceNum = Number(listingData.price_suggestion?.optimal ?? 0) || 0;
+
+      const row: any = {
+        workspace_id: workspaceId,
+        created_by: userId,
+        status: 'draft',
+        marketplace: 'ebay',
+        title: listingData.title || 'Untitled Listing',
+        description: listingData.description || '',
+        category_id: listingData.category_id ? String(listingData.category_id) : null,
+        category_path: categoryPath || null,
+        price: priceNum,
+        currency: 'USD',
+        images: orderedImages,
+        listing_json: listingData,
+        updated_at: new Date().toISOString(),
       };
 
-      // Save to localStorage FIRST (instant, reliable)
-      localStorage.setItem(draft.id, JSON.stringify(draft));
+      // Upsert: if listingId exists, update; else insert new
+      if (listingId) row.id = listingId;
 
-      // Update drafts list (de-dupe)
-      const allDrafts: Array<{ id: string; title: string; savedAt: string }> = JSON.parse(
-        localStorage.getItem('drafts_list') || '[]'
+      console.log('[Draft] upsert start:', { hasId: !!listingId, workspaceId, userId });
+
+      const { data, error: upsertErr } = await withTimeout(
+        supabase
+          .from('listings')
+          .upsert(row, { onConflict: 'id' })
+          .select('id')
+          .single(),
+        25000,
+        'upsert draft',
       );
-      const next = allDrafts.filter((d) => d.id !== draft.id);
-      next.unshift({ id: draft.id, title: draft.title, savedAt: draft.savedAt });
-      localStorage.setItem('drafts_list', JSON.stringify(next));
 
-      setDraftStatus(`Draft saved locally: ${draft.id}`);
-      console.log('✅ Draft saved locally:', draft.id);
+      if (upsertErr) throw upsertErr;
 
-      // Optional: background Supabase backup (non-blocking)
-      try {
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const newId = (data as any)?.id;
+      if (!newId) throw new Error('Draft saved but no id was returned');
 
-        if (supabaseUrl && supabaseKey) {
-          fetch(`${supabaseUrl}/rest/v1/listings`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify({
-              draft_id: draft.id,
-              title: draft.title,
-              description: draft.description,
-              data: JSON.stringify(draft),
-              status: 'draft',
-            }),
-          })
-            .then(() => {
-              console.log('☁️ Also backed up to Supabase');
-            })
-            .catch(() => {
-              console.log('⚠️ Supabase backup failed (local save succeeded)');
-            });
-        }
-      } catch {
-        console.log('Background Supabase sync not available');
-      }
+      setListingId(newId);
+      setDraftStatus(`Draft saved.`);
+      console.log('[Draft] upsert success:', { id: newId });
+
+      // Keep URL consistent so “Edit” continues to work
+      const url = new URL(window.location.href);
+      url.searchParams.set('mode', 'edit');
+      url.searchParams.set('listingId', newId);
+      window.history.replaceState({}, '', url.toString());
     } catch (err: any) {
-      console.error('❌ Save failed:', err);
+      console.error('[Draft] save failed:', err);
       setSaveError(err?.message || 'Failed to save draft');
       setDraftStatus('Draft save failed');
     }
   };
 
+  // ----------------------------
+  // Publish (unchanged endpoint call; you’ll later update DB status on success)
+  // ----------------------------
   const handlePublish = async () => {
     if (!title.trim() || !description.trim() || !category) {
       alert('Title, description, and category are required.');
@@ -890,7 +810,8 @@ export default function ResultsPage() {
 
     try {
       setPublishing(true);
-      const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)];
+
+      const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
 
       const listing_data = {
         title: title.trim(),
@@ -912,22 +833,24 @@ export default function ResultsPage() {
         price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       };
 
+      console.log('[Publish] start:', { listingId, images: orderedImages.length });
+
       const res = await fetch('/api/publish-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listing_data, images: orderedImages }),
+        body: JSON.stringify({ listing_data, images: orderedImages, listingId }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        console.error('Publish error:', data);
+        console.error('[Publish] error:', data);
         alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
         return;
       }
 
       alert('Your listing has been sent to eBay! It may take a minute to appear.');
     } catch (err: any) {
-      console.error('Publish error:', err);
+      console.error('[Publish] unexpected error:', err);
       alert(`An unexpected error occurred while publishing: ${err?.message || String(err)}`);
     } finally {
       setPublishing(false);
@@ -950,16 +873,6 @@ export default function ResultsPage() {
       </div>
     );
   }
-
-  const normalizedCategoryPathForSelector =
-    (category?.breadcrumbs && category.breadcrumbs.length ? category.breadcrumbs.join(' > ') : '') ||
-    (category?.path
-      ? category.path
-          .split('>')
-          .map((p) => p.trim())
-          .filter(Boolean)
-          .join(' > ')
-      : '');
 
   return (
     <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
@@ -1008,6 +921,7 @@ export default function ResultsPage() {
                   onDrop={(e) => {
                     e.preventDefault();
                     if (dragIndex === null || dragIndex === idx) return;
+
                     setImages((prevImages) => {
                       const next = [...prevImages];
                       const [moved] = next.splice(dragIndex, 1);
@@ -1261,6 +1175,7 @@ export default function ResultsPage() {
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{title || 'Your Product Title'}</div>
           <div style={{ color: '#c93', fontWeight: 700, fontSize: 20 }}>US ${price || '0.00'}</div>
           <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Category: {category?.name || 'Not selected'}</div>
+          {listingId ? <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>Draft ID: {listingId}</div> : null}
         </div>
       </aside>
 
