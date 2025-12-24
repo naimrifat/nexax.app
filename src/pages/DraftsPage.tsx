@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Trash2, Edit, Clock, Image as ImageIcon } from 'lucide-react';
+import { supabase } from '../../lib/supabaseClient';
 
 type Draft = {
   id: string;
@@ -16,92 +17,148 @@ type Draft = {
   savedAt: string; // ISO string expected
 };
 
-type DraftListItem = {
+/**
+ * Your Supabase "listings" table may differ.
+ * This matches the shape implied by your earlier "backup to Supabase" POST:
+ * - id (uuid)
+ * - draft_id (string)
+ * - title (text)
+ * - description (text)
+ * - data (text/json)
+ * - status (text) e.g. 'draft'
+ * - workspace_id (uuid) optional
+ * - user_id (uuid) optional
+ * - created_at / updated_at timestamps
+ */
+type ListingRow = {
   id: string;
+  draft_id?: string | null;
+  title?: string | null;
+  description?: string | null;
+  data?: any; // could be stringified JSON or jsonb
+  status?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  workspace_id?: string | null;
+  user_id?: string | null;
 };
 
-function safeJsonParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
+function safeJsonParse<T>(raw: unknown, fallback: T): T {
   try {
-    return JSON.parse(raw) as T;
+    if (raw == null) return fallback;
+    if (typeof raw === 'string') return JSON.parse(raw) as T;
+    // if Supabase returns jsonb, it may already be an object
+    return raw as T;
   } catch {
     return fallback;
   }
 }
 
-function isDraft(value: unknown): value is Draft {
-  if (!value || typeof value !== 'object') return false;
-  const d = value as Partial<Draft>;
-  return typeof d.id === 'string';
+function normalizeDraftFromRow(row: ListingRow): Draft {
+  const payload = safeJsonParse<any>(row.data, {});
+  const images = Array.isArray(payload?.images) ? payload.images : Array.isArray(payload?.image_urls) ? payload.image_urls : [];
+
+  const mainImageIndex =
+    typeof payload?.mainImageIndex === 'number' && Number.isFinite(payload.mainImageIndex) ? payload.mainImageIndex : 0;
+
+  const savedAt =
+    (typeof payload?.savedAt === 'string' && payload.savedAt) ||
+    row.updated_at ||
+    row.created_at ||
+    new Date().toISOString();
+
+  return {
+    // Prefer the stable DB primary key for delete/edit routes
+    id: row.id,
+    title: (row.title ?? payload?.title ?? 'Untitled Draft') as string,
+    description: (row.description ?? payload?.description ?? '') as string,
+    category: payload?.category ?? null,
+    specifics: Array.isArray(payload?.specifics) ? payload.specifics : Array.isArray(payload?.item_specifics) ? payload.item_specifics : [],
+    images,
+    mainImageIndex,
+    price: String(payload?.price ?? payload?.price_suggestion?.optimal ?? '0.00'),
+    keywords: typeof payload?.keywords === 'string' ? payload.keywords : Array.isArray(payload?.keywords) ? payload.keywords.join(', ') : '',
+    savedAt,
+  };
 }
 
 export default function DraftsPage() {
   const navigate = useNavigate();
+
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const loadDrafts = useCallback(() => {
+  const fetchDrafts = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
 
     try {
-      // drafts_list is expected to be an array like [{ id: "draft_..." }, ...]
-      const draftsList = safeJsonParse<DraftListItem[]>(
-        localStorage.getItem('drafts_list'),
-        []
-      );
+      // Auth gate
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
 
-      const loaded: Draft[] = draftsList
-        .map((item) => {
-          const raw = localStorage.getItem(item.id);
-          const parsed = safeJsonParse<unknown>(raw, null);
+      const uid = sessionData?.session?.user?.id;
+      if (!uid) {
+        setDrafts([]);
+        setLoadError('You must be logged in to view drafts.');
+        setLoading(false);
+        return;
+      }
 
-          if (!isDraft(parsed)) return null;
+      // Workspace scoping (recommended). If you don't have this RPC, remove this and filter by user_id only.
+      let workspaceId: string | null = null;
+      try {
+        const { data: wsData, error: wsErr } = await supabase.rpc('ensure_user_and_workspace');
+        if (wsErr) throw wsErr;
+        const row: any = Array.isArray(wsData) ? wsData[0] : wsData;
+        workspaceId = row?.workspace_id ?? row?.out_workspace_id ?? null;
+      } catch (e) {
+        // If RPC isn't available in this env, we still proceed with user scope.
+        console.warn('[DraftsPage] ensure_user_and_workspace failed; falling back to user_id scope:', e);
+      }
 
-          // Normalize + harden against partial/old shapes
-          const normalized: Draft = {
-            id: parsed.id,
-            title: (parsed.title ?? '') as string,
-            description: (parsed.description ?? '') as string,
-            category: (parsed.category ?? null) as any,
-            specifics: (parsed.specifics ?? []) as any[],
-            images: Array.isArray(parsed.images) ? (parsed.images as string[]) : [],
-            mainImageIndex:
-              typeof parsed.mainImageIndex === 'number' && Number.isFinite(parsed.mainImageIndex)
-                ? parsed.mainImageIndex
-                : 0,
-            price: (parsed.price ?? '0.00') as string,
-            keywords: (parsed.keywords ?? '') as string,
-            savedAt:
-              typeof parsed.savedAt === 'string' && parsed.savedAt
-                ? parsed.savedAt
-                : new Date().toISOString(),
-          };
+      // Query drafts from DB (REAL DATA)
+      // Adjust the table name/columns if yours differ.
+      let q = supabase
+        .from('listings')
+        .select('id,draft_id,title,description,data,status,created_at,updated_at,workspace_id,user_id')
+        .eq('status', 'draft')
+        .order('updated_at', { ascending: false, nullsFirst: false });
 
-          return normalized;
-        })
-        .filter((d): d is Draft => d !== null)
-        .sort((a, b) => {
-          const aTime = new Date(a.savedAt).getTime();
-          const bTime = new Date(b.savedAt).getTime();
-          return bTime - aTime;
-        });
+      if (workspaceId) q = q.eq('workspace_id', workspaceId);
+      else q = q.eq('user_id', uid);
 
-      setDrafts(loaded);
-    } catch (error) {
-      console.error('Failed to load drafts:', error);
+      const { data, error } = await q;
+      if (error) throw error;
+
+      const rows = Array.isArray(data) ? (data as ListingRow[]) : [];
+      const normalized = rows
+        .map(normalizeDraftFromRow)
+        .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+
+      console.log('[DraftsPage] drafts fetched:', { count: normalized.length, scope: workspaceId ? 'workspace' : 'user' });
+      setDrafts(normalized);
+    } catch (e: any) {
+      console.error('[DraftsPage] failed to load drafts:', e);
       setDrafts([]);
+      setLoadError(e?.message || 'Failed to load drafts.');
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadDrafts();
-  }, [loadDrafts]);
+    fetchDrafts();
+  }, [fetchDrafts]);
 
-  const handleLoadDraft = useCallback(
+  const handleEditDraft = useCallback(
     (draft: Draft) => {
-      // Store draft data in sessionStorage for ResultsPage to pick up
+      /**
+       * Keep your current flow: ResultsPage expects to load the draft from sessionStorage.
+       * If you later change ResultsPage to load by listingId from DB, you can switch to:
+       *   navigate(`/results?mode=edit&listingId=${draft.id}`)
+       */
       sessionStorage.setItem('loadedDraft', JSON.stringify(draft));
       navigate('/results?mode=edit');
     },
@@ -109,38 +166,29 @@ export default function DraftsPage() {
   );
 
   const handleDeleteDraft = useCallback(
-    (draftId: string) => {
+    async (draftId: string) => {
       if (!window.confirm('Are you sure you want to delete this draft?')) return;
 
       try {
-        // Remove the draft payload
-        localStorage.removeItem(draftId);
-
-        // Remove from index
-        const draftsList = safeJsonParse<DraftListItem[]>(
-          localStorage.getItem('drafts_list'),
-          []
-        );
-        const updated = draftsList.filter((d) => d.id !== draftId);
-        localStorage.setItem('drafts_list', JSON.stringify(updated));
-
-        // Refresh UI
-        loadDrafts();
+        // Delete from DB (REAL DATA)
+        const { error } = await supabase.from('listings').delete().eq('id', draftId);
+        if (error) throw error;
 
         console.log('✅ Draft deleted:', draftId);
-      } catch (error) {
-        console.error('Failed to delete draft:', error);
-        window.alert('Failed to delete draft');
+
+        // Refresh UI
+        await fetchDrafts();
+      } catch (e: any) {
+        console.error('[DraftsPage] failed to delete draft:', e);
+        window.alert(e?.message || 'Failed to delete draft');
       }
     },
-    [loadDrafts]
+    [fetchDrafts]
   );
 
   const formatDate = useCallback((dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
-
-    // Guard against invalid dates
     if (Number.isNaN(date.getTime())) return 'Unknown date';
 
     const diffMs = now.getTime() - date.getTime();
@@ -189,14 +237,30 @@ export default function DraftsPage() {
               <p className="text-gray-600 mt-2">{countLabel}</p>
             </div>
 
-            <button
-              onClick={() => navigate('/create-listing')}
-              className="btn bg-teal-600 text-white hover:bg-teal-700 px-6 py-3 rounded-lg font-semibold"
-              type="button"
-            >
-              + Create New Listing
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => fetchDrafts()}
+                className="btn border border-gray-300 text-gray-700 hover:bg-gray-100 px-4 py-3 rounded-lg font-semibold"
+                type="button"
+              >
+                Refresh
+              </button>
+
+              <button
+                onClick={() => navigate('/create-listing')}
+                className="btn bg-teal-600 text-white hover:bg-teal-700 px-6 py-3 rounded-lg font-semibold"
+                type="button"
+              >
+                + Create New Listing
+              </button>
+            </div>
           </div>
+
+          {loadError && (
+            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+              {loadError}
+            </div>
+          )}
         </div>
 
         {/* Drafts List */}
@@ -204,9 +268,7 @@ export default function DraftsPage() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
             <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <h3 className="text-xl font-semibold text-gray-900 mb-2">No drafts yet</h3>
-            <p className="text-gray-600 mb-6">
-              Start creating a listing and save it as a draft to continue later
-            </p>
+            <p className="text-gray-600 mb-6">Start creating a listing and save it as a draft to continue later</p>
             <button
               onClick={() => navigate('/create-listing')}
               className="btn bg-teal-600 text-white hover:bg-teal-700 px-6 py-3 rounded-lg font-semibold"
@@ -270,14 +332,12 @@ export default function DraftsPage() {
                       </div>
                     )}
 
-                    <div className="text-sm font-semibold text-teal-600 mb-4">
-                      ${draft.price || '0.00'}
-                    </div>
+                    <div className="text-sm font-semibold text-teal-600 mb-4">${draft.price || '0.00'}</div>
 
                     {/* Actions */}
                     <div className="flex gap-2">
                       <button
-                        onClick={() => handleLoadDraft(draft)}
+                        onClick={() => handleEditDraft(draft)}
                         className="flex-1 btn bg-teal-600 text-white hover:bg-teal-700 py-2 rounded-lg font-medium flex items-center justify-center gap-2"
                         type="button"
                       >
