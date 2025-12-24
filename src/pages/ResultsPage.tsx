@@ -367,45 +367,26 @@ function writeTenancyCache(v: { workspace_id: string; internal_user_id: string }
 export default function ResultsPage() {
   const navigate = useNavigate();
 
+  // ----------------------------
+  // State (declare ALL state first)
+  // ----------------------------
+  const [category, setCategory] = useState<CategoryWithPath | null>(null);
+  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
+  const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
+  const [images, setImages] = useState<string[]>([]);
+  const [mainImageIndex, setMainImageIndex] = useState(0);
+
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.00');
   const [keywords, setKeywords] = useState('');
-    const loadedDraft = sessionStorage.getItem('loadedDraft');
-  if (loadedDraft) {
-    try {
-      const draft = JSON.parse(loadedDraft);
-      
-      // Restore all fields
-      setTitle(draft.title || '');
-      setDescription(draft.description || '');
-      setCategory(draft.category || null);
-      setSpecifics(draft.specifics || []);
-      setImages(draft.images || []);
-      setMainImageIndex(draft.mainImageIndex || 0);
-      setPrice(draft.price || '0.00');
-      setKeywords(draft.keywords || '');
-      
-      // Clear from sessionStorage
-      sessionStorage.removeItem('loadedDraft');
-      
-      console.log('✅ Draft loaded from DraftsPage');
-    } catch (error) {
-      console.error('Failed to load draft:', error);
-    }
-  }
-}, []);
-  const [category, setCategory] = useState<CategoryWithPath | null>(null);
-  const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
-  const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
   const [publishing, setPublishing] = useState(false);
 
-  const [images, setImages] = useState<string[]>([]);
-  const [mainImageIndex, setMainImageIndex] = useState(0);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -419,13 +400,51 @@ export default function ResultsPage() {
     }
   });
 
+  // ----------------------------
+  // Refs
+  // ----------------------------
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
+
+  const loadedDraftAppliedRef = useRef(false);
 
   // Cache: avoid repeated auth/RPC calls
   const authUserRef = useRef<{ id: string } | null>(null);
   const tenancyRef = useRef<{ workspace_id: string; internal_user_id: string } | null>(null);
   const ensureTenancyInFlightRef = useRef<Promise<{ workspace_id: string; internal_user_id: string }> | null>(null);
+
+  // ----------------------------
+  // ✅ Draft restore hook (this is what you attempted to add)
+  // Runs once, inside the component, AFTER state exists.
+  // ----------------------------
+  useEffect(() => {
+    const loadedDraft = sessionStorage.getItem('loadedDraft');
+    if (!loadedDraft) return;
+
+    try {
+      const draft = JSON.parse(loadedDraft);
+
+      setTitle(draft.title || '');
+      setDescription(draft.description || '');
+      setCategory(draft.category || null);
+      setSpecifics(draft.specifics || []);
+      setImages(draft.images || []);
+      setMainImageIndex(draft.mainImageIndex || 0);
+      setPrice(draft.price || '0.00');
+      setKeywords(draft.keywords || '');
+
+      sessionStorage.removeItem('loadedDraft');
+
+      loadedDraftAppliedRef.current = true;
+      setError(null);
+      setLoading(false);
+
+      console.log('✅ Draft loaded from DraftsPage');
+    } catch (e) {
+      console.error('Failed to load draft:', e);
+      sessionStorage.removeItem('loadedDraft');
+    }
+  }, []);
 
   // Track auth state once; populate authUserRef when possible
   useEffect(() => {
@@ -493,7 +512,7 @@ export default function ResultsPage() {
         }
       }),
       12000,
-      'auth.onAuthStateChange',
+      'auth.onAuthStateChange'
     );
 
     authUserRef.current = { id: uid };
@@ -516,7 +535,7 @@ export default function ResultsPage() {
         const { data: wsData, error: ensureErr } = await withTimeout(
           supabase.rpc('ensure_user_and_workspace'),
           30000,
-          'ensure_user_and_workspace',
+          'ensure_user_and_workspace'
         );
         if (ensureErr) throw ensureErr;
 
@@ -644,7 +663,7 @@ export default function ResultsPage() {
         setLoadingSpecifics(false);
       }
     },
-    [smartFillSpecifics],
+    [smartFillSpecifics]
   );
 
   // Warm tenancy once (moves RPC off the "Save Draft" click path)
@@ -652,7 +671,10 @@ export default function ResultsPage() {
     ensureTenancy().catch((e) => console.warn('[Tenancy] warmup failed:', e));
   }, [ensureTenancy]);
 
+  // Main data load (AI session load). If we already restored a draft, skip this.
   useEffect(() => {
+    if (loadedDraftAppliedRef.current) return;
+
     let isMounted = true;
 
     const loadData = async () => {
@@ -808,7 +830,7 @@ export default function ResultsPage() {
 
       // Update drafts list (de-dupe)
       const allDrafts: Array<{ id: string; title: string; savedAt: string }> = JSON.parse(
-        localStorage.getItem('drafts_list') || '[]',
+        localStorage.getItem('drafts_list') || '[]'
       );
       const next = allDrafts.filter((d) => d.id !== draft.id);
       next.unshift({ id: draft.id, title: draft.title, savedAt: draft.savedAt });
@@ -854,58 +876,6 @@ export default function ResultsPage() {
       setSaveError(err?.message || 'Failed to save draft');
       setDraftStatus('Draft save failed');
     }
-  };
-
-  const handleLoadDraft = (draftId: string) => {
-    setSaveError(null);
-    setDraftStatus('');
-
-    try {
-      const data = localStorage.getItem(draftId);
-      if (!data) {
-        alert('❌ Draft not found');
-        return;
-      }
-
-      const draft = JSON.parse(data);
-
-      setTitle(draft.title || '');
-      setDescription(draft.description || '');
-      setCategory(draft.category || null);
-      setSpecifics(draft.specifics || []);
-      setImages(draft.images || []);
-      setMainImageIndex(draft.mainImageIndex || 0);
-      setPrice(draft.price || '0.00');
-      setKeywords(draft.keywords || '');
-
-      setDraftStatus(`Draft loaded: ${draft.id}`);
-      console.log('✅ Draft loaded:', draft.id);
-    } catch (err) {
-      console.error('❌ Load failed:', err);
-      alert('❌ Failed to load draft');
-    }
-  };
-
-  const handleViewDrafts = () => {
-    const drafts: Array<{ id: string; title: string; savedAt: string }> = JSON.parse(
-      localStorage.getItem('drafts_list') || '[]',
-    );
-
-    console.log('Saved drafts:', drafts);
-
-    if (drafts.length === 0) {
-      alert('No saved drafts');
-      return;
-    }
-
-    const list = drafts
-      .map((d) => `${d.id} — ${d.title} (saved ${new Date(d.savedAt).toLocaleString()})`)
-      .join('\n');
-
-    const pick = window.prompt(`Saved drafts:\n\n${list}\n\nEnter a draft ID to load:`);
-    if (!pick) return;
-
-    handleLoadDraft(pick.trim());
   };
 
   const handlePublish = async () => {
@@ -1190,75 +1160,75 @@ export default function ResultsPage() {
           />
         </section>
 
-<div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
-  <button
-    onClick={handleSaveDraft}
-    className="btn"
-    style={{
-      padding: '12px 24px',
-      background: '#10b981',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: 16,
-      fontWeight: 600,
-    }}
-  >
-    Save Draft
-  </button>
+        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button
+            onClick={handleSaveDraft}
+            className="btn"
+            style={{
+              padding: '12px 24px',
+              background: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            Save Draft
+          </button>
 
-  <button
-    onClick={() => navigate('/drafts')}
-    className="btn"
-    style={{
-      padding: '12px 24px',
-      background: '#3b82f6',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: 16,
-      fontWeight: 600,
-    }}
-  >
-    View All Drafts
-  </button>
+          <button
+            onClick={() => navigate('/drafts')}
+            className="btn"
+            style={{
+              padding: '12px 24px',
+              background: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            View All Drafts
+          </button>
 
-  <button
-    type="button"
-    onClick={handlePublish}
-    disabled={publishing}
-    style={{
-      padding: '12px 32px',
-      background: publishing ? '#999' : '#0064d2',
-      color: 'white',
-      border: 'none',
-      borderRadius: 4,
-      cursor: publishing ? 'default' : 'pointer',
-      fontSize: 16,
-      fontWeight: 600,
-    }}
-  >
-    {publishing ? 'Publishing…' : 'Publish to eBay'}
-  </button>
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={publishing}
+            style={{
+              padding: '12px 32px',
+              background: publishing ? '#999' : '#0064d2',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: publishing ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {publishing ? 'Publishing…' : 'Publish to eBay'}
+          </button>
 
-  <button
-    type="button"
-    onClick={() => navigate('/create-listing')}
-    style={{
-      padding: '12px 32px',
-      background: '#f0f0f0',
-      color: '#333',
-      border: '1px solid #ddd',
-      borderRadius: 4,
-      cursor: 'pointer',
-      fontSize: 16,
-    }}
-  >
-    Cancel
-  </button>
-</div>
+          <button
+            type="button"
+            onClick={() => navigate('/create-listing')}
+            style={{
+              padding: '12px 32px',
+              background: '#f0f0f0',
+              color: '#333',
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 16,
+            }}
+          >
+            Cancel
+          </button>
+        </div>
 
         {saveError ? <div style={{ marginTop: 10, color: 'red', fontSize: 14 }}>{saveError}</div> : null}
 
