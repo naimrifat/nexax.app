@@ -11,6 +11,7 @@ import ListingStyleSettingsPage from './pages/ListingStyleSettingsPage';
 import AuthPage from './pages/AuthPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import './App.css';
+import DraftsPage from './pages/DraftsPage';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Layout>
             <Routes>
               <Route path="/" element={<HomePage />} />
+              <Route path="/drafts" element={<DraftsPage />} />
               <Route path="/pricing" element={<PricingPage />} />
               <Route path="/login" element={<AuthPage />} />
 
