@@ -332,17 +332,27 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
  * - authUserId MUST be the authenticated Supabase user id (auth.uid())
  * - internalUserId is optional (your app's internal users table id)
  */
-type Tenancy = { workspaceId: string; authUserId: string; internalUserId?: string };
+type Tenancy = { workspaceId: string; internalUserId: string; authUserId: string };
 
 async function ensureTenancyRpc(): Promise<Tenancy> {
-  // Always anchor to Supabase auth user id for RLS correctness
-  const { data: authData, error: authErr } = await withTimeout(supabase.auth.getUser(), 15000, 'auth.getUser');
-  if (authErr) throw authErr;
+  // 1) Fast local check (no network call like getUser())
+  const { data: sessionData, error: sessionErr } = await withTimeout(
+    supabase.auth.getSession(),
+    5000,
+    'auth.getSession'
+  );
+  console.log('[Tenancy] session ok', { authUserId });
+  if (sessionErr) throw sessionErr;
 
-  const authUserId = authData?.user?.id;
+  const authUserId = sessionData?.session?.user?.id;
   if (!authUserId) throw new Error('Not authenticated');
 
-  const { data, error } = await withTimeout(supabase.rpc('ensure_user_and_workspace'), 20000, 'ensure_user_and_workspace');
+  // 2) RPC (DB) — should be quick; if it’s slow, we’ll surface that separately
+  const { data, error } = await withTimeout(
+    supabase.rpc('ensure_user_and_workspace'),
+    8000,
+    'ensure_user_and_workspace'
+  );
   if (error) throw error;
 
   const row: any = Array.isArray(data) ? data[0] : data;
@@ -351,8 +361,9 @@ async function ensureTenancyRpc(): Promise<Tenancy> {
   const internalUserId = row?.user_id ?? row?.out_user_id;
 
   if (!workspaceId) throw new Error('ensure_user_and_workspace did not return workspace_id');
+  if (!internalUserId) throw new Error('ensure_user_and_workspace did not return user_id');
 
-  return { workspaceId, authUserId, internalUserId };
+  return { workspaceId, internalUserId, authUserId };
 }
 
 export default function ResultsPage() {
@@ -748,7 +759,7 @@ export default function ResultsPage() {
     setDraftStatus('');
 
     try {
-      const { workspaceId, authUserId, internalUserId } = await ensureTenancy();
+      const { workspaceId, internalUserId } = await ensureTenancy();
       if (!workspaceId) throw new Error('No workspaceId resolved');
 
       const listingData = buildListingJson();
@@ -787,7 +798,7 @@ export default function ResultsPage() {
         console.log('[Draft] insert start:', { workspaceId, authUserId });
         const { data, error: insertErr } = await withTimeout(
           supabase.from('listings').insert(payload).select('id').single(),
-          25000,
+          7000,
           'insert draft'
         );
         if (insertErr) throw insertErr;
