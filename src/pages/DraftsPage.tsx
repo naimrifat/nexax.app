@@ -55,16 +55,22 @@ function normalizeDraftFromRow(row: ListingRow): Draft {
   const imagesFromJson = safeArray(lj?.images) || safeArray(lj?.image_urls);
   const images = imagesFromColumn.length ? imagesFromColumn : imagesFromJson;
 
+  // Prefer explicit mainImageIndex from listing_json.
+  // If invalid, default to 0.
   const mainImageIndex =
     typeof lj?.mainImageIndex === 'number' && Number.isFinite(lj.mainImageIndex) ? lj.mainImageIndex : 0;
 
   const savedAt = row.updated_at || row.created_at || new Date().toISOString();
 
+  // Category path: prefer column, fallback to listing_json, then listing_json.category.path
+  const categoryPath =
+    (row.category_path ?? lj?.category_path ?? lj?.category?.path ?? lj?.category?.breadcrumbs?.join?.(' > ') ?? '') as string;
+
   return {
     id: row.id,
     title: (row.title ?? lj?.title ?? 'Untitled Draft') as string,
     description: (row.description ?? lj?.description ?? '') as string,
-    categoryPath: (row.category_path ?? lj?.category_path ?? lj?.category?.path ?? '') as string,
+    categoryPath,
     images,
     mainImageIndex,
     price: toMoneyString(row.price ?? lj?.price ?? lj?.price_suggestion?.optimal ?? '0.00', '0.00'),
@@ -85,6 +91,7 @@ export default function DraftsPage() {
     setLoadError(null);
 
     try {
+      // Ensure user is logged in (good UX). RLS may still block reads if not.
       const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
       if (sessionErr) throw sessionErr;
 
@@ -92,13 +99,12 @@ export default function DraftsPage() {
       if (!uid) {
         setDrafts([]);
         setLoadError('You must be logged in to view drafts.');
-        setLoading(false);
         return;
       }
 
-      // Your RLS policy already restricts by workspace_id based on auth.uid()
-      // so we do NOT need to compute workspaceId here for correctness.
-      // (Filtering again is fine, but not required.)
+      // IMPORTANT:
+      // - Do NOT select draft_id or data (those columns do not exist in your table)
+      // - Use listing_json and images columns (matches your schema screenshots)
       const { data, error } = await supabase
         .from('listings')
         .select(
@@ -110,14 +116,9 @@ export default function DraftsPage() {
       if (error) throw error;
 
       const rows = (data ?? []) as ListingRow[];
-      const normalized = rows.map(normalizeDraftFromRow).sort((a, b) => {
-        return new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime();
-      });
-
-      console.log('[DraftsPage] Loaded drafts:', {
-        count: normalized.length,
-        sample: normalized[0]?.id,
-      });
+      const normalized = rows
+        .map(normalizeDraftFromRow)
+        .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
 
       setDrafts(normalized);
     } catch (e: any) {
@@ -135,7 +136,7 @@ export default function DraftsPage() {
 
   const handleEditDraft = useCallback(
     (draftId: string) => {
-      // Recommended: edit by DB id (single source of truth)
+      // Canonical: edit by DB row id
       navigate(`/results?mode=edit&listingId=${encodeURIComponent(draftId)}`);
     },
     [navigate]
@@ -149,7 +150,6 @@ export default function DraftsPage() {
         const { error } = await supabase.from('listings').delete().eq('id', draftId);
         if (error) throw error;
 
-        console.log('[DraftsPage] Draft deleted:', draftId);
         await fetchDrafts();
       } catch (e: any) {
         console.error('[DraftsPage] Failed to delete draft:', e);
