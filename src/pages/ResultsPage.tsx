@@ -56,7 +56,6 @@ type AiData = {
 };
 
 /* ---------- Timeout helper ---------- */
-
 async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): Promise<T> {
   let timeoutId: any;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -71,7 +70,6 @@ async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): P
 }
 
 /* ---------- Generic helpers ---------- */
-
 function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
   if (!s) return [];
   if (Array.isArray(s)) {
@@ -97,7 +95,6 @@ function firstValue(v: string | string[] | undefined): string {
 }
 
 /* ---------- Size helpers ---------- */
-
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
   const st = specs.find((s) => /size type/i.test(s.name || ''));
   if (!st) return '';
@@ -134,7 +131,6 @@ function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: str
 }
 
 /* ---------- Compact token selector ---------- */
-
 function TokenSelect({
   value,
   options,
@@ -210,7 +206,10 @@ function TokenSelect({
       >
         {multi &&
           selected.map((s) => (
-            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
+            <span
+              key={s}
+              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
+            >
               {s}
               <button
                 type="button"
@@ -313,7 +312,6 @@ function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange:
 }
 
 /* ---------- Category path helper ---------- */
-
 function getCategoryPathString(cat: CategoryWithPath | null): string {
   if (!cat) return '';
   if (cat.breadcrumbs && cat.breadcrumbs.length) return cat.breadcrumbs.join(' > ');
@@ -327,16 +325,24 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-/* ---------- Tenancy (RPC) ---------- */
-
-type Tenancy = { workspaceId: string; internalUserId: string };
+/* ---------- Tenancy (RPC + auth) ---------- */
+/**
+ * IMPORTANT:
+ * - workspaceId is used by your RLS to scope rows
+ * - authUserId MUST be the authenticated Supabase user id (auth.uid())
+ * - internalUserId is optional (your app's internal users table id)
+ */
+type Tenancy = { workspaceId: string; authUserId: string; internalUserId?: string };
 
 async function ensureTenancyRpc(): Promise<Tenancy> {
-  const { data, error } = await withTimeout(
-    supabase.rpc('ensure_user_and_workspace'),
-    20000,
-    'ensure_user_and_workspace'
-  );
+  // Always anchor to Supabase auth user id for RLS correctness
+  const { data: authData, error: authErr } = await withTimeout(supabase.auth.getUser(), 15000, 'auth.getUser');
+  if (authErr) throw authErr;
+
+  const authUserId = authData?.user?.id;
+  if (!authUserId) throw new Error('Not authenticated');
+
+  const { data, error } = await withTimeout(supabase.rpc('ensure_user_and_workspace'), 20000, 'ensure_user_and_workspace');
   if (error) throw error;
 
   const row: any = Array.isArray(data) ? data[0] : data;
@@ -345,9 +351,8 @@ async function ensureTenancyRpc(): Promise<Tenancy> {
   const internalUserId = row?.user_id ?? row?.out_user_id;
 
   if (!workspaceId) throw new Error('ensure_user_and_workspace did not return workspace_id');
-  if (!internalUserId) throw new Error('ensure_user_and_workspace did not return user_id');
 
-  return { workspaceId, internalUserId };
+  return { workspaceId, authUserId, internalUserId };
 }
 
 export default function ResultsPage() {
@@ -516,9 +521,7 @@ export default function ResultsPage() {
       title: title.trim(),
       description: description.trim(),
       marketplace: 'ebay',
-      category: category
-        ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs }
-        : null,
+      category: category ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs } : null,
       category_id: category?.id || null,
       category_path: categoryPath || null,
       item_specifics: specifics.map((s) => ({
@@ -529,7 +532,6 @@ export default function ResultsPage() {
         selectionOnly: !!s.selectionOnly,
         freeTextAllowed: s.freeTextAllowed !== false,
         options: s.options || [],
-        // keep allOptions if you stored it
         allOptions: s.allOptions || undefined,
         type: s.type || undefined,
       })),
@@ -539,7 +541,7 @@ export default function ResultsPage() {
         .filter(Boolean),
       price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       images: orderedImages,
-      mainImageIndex: 0, // because orderedImages puts main image first
+      mainImageIndex: 0,
     };
   }, [category, images, mainImageIndex, price, specifics, keywords, title, description]);
 
@@ -570,9 +572,7 @@ export default function ResultsPage() {
           const { data, error: readErr } = await withTimeout(
             supabase
               .from('listings')
-              .select(
-                'id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at'
-              )
+              .select('id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at')
               .eq('id', listingIdParam)
               .single(),
             20000,
@@ -597,17 +597,13 @@ export default function ResultsPage() {
                 : String(lj?.price_suggestion?.optimal ?? '0.00');
           setPrice(priceVal);
 
-          // Images: prefer column, else listing_json.images
           const imgs: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
           setImages(imgs);
           setMainImageIndex(0);
 
-          // Keywords
-          const kws =
-            Array.isArray(lj.keywords) ? lj.keywords.join(', ') : typeof lj.keywords === 'string' ? lj.keywords : '';
+          const kws = Array.isArray(lj.keywords) ? lj.keywords.join(', ') : typeof lj.keywords === 'string' ? lj.keywords : '';
           setKeywords(kws);
 
-          // Category
           const catFromJson = lj.category || null;
           const cat: CategoryWithPath | null =
             catFromJson && (catFromJson.id || catFromJson.name)
@@ -627,7 +623,6 @@ export default function ResultsPage() {
 
           setCategory(cat);
 
-          // Specifics
           const baseSpecs: ItemSpecific[] = Array.isArray(lj.item_specifics) ? lj.item_specifics : [];
           setSpecifics(applySizeTypeFilterToSpecifics(baseSpecs, getCategoryPathString(cat)));
 
@@ -753,16 +748,23 @@ export default function ResultsPage() {
     setDraftStatus('');
 
     try {
-      const { workspaceId, internalUserId } = await ensureTenancy();
+      const { workspaceId, authUserId, internalUserId } = await ensureTenancy();
+      if (!workspaceId) throw new Error('No workspaceId resolved');
+
       const listingData = buildListingJson();
 
       const orderedImages: string[] = Array.isArray(listingData.images) ? listingData.images : [];
       const categoryPath = listingData.category_path || '';
       const priceNum = Number(listingData.price_suggestion?.optimal ?? 0) || 0;
 
+      /**
+       * IMPORTANT RLS FIX:
+       * created_by should be auth.uid() unless your DB column explicitly stores internal user ids.
+       * This aligns saving with reading under your current RLS approach.
+       */
       const payload: any = {
         workspace_id: workspaceId,
-        created_by: internalUserId, // IMPORTANT: internal user id, not auth.uid()
+        created_by: authUserId, // <-- FIX (was internalUserId)
         status: 'draft',
         marketplace: 'ebay',
         title: listingData.title || 'Untitled Listing',
@@ -772,14 +774,17 @@ export default function ResultsPage() {
         price: priceNum,
         currency: 'USD',
         images: orderedImages,
-        listing_json: listingData,
+        listing_json: {
+          ...listingData,
+          // Optional: keep internal id for debugging/analytics without breaking RLS
+          internal_user_id: internalUserId,
+        },
       };
 
       let savedId = listingId;
 
       if (!listingId) {
-        // INSERT
-        console.log('[Draft] insert start:', { workspaceId, internalUserId });
+        console.log('[Draft] insert start:', { workspaceId, authUserId });
         const { data, error: insertErr } = await withTimeout(
           supabase.from('listings').insert(payload).select('id').single(),
           25000,
@@ -788,8 +793,7 @@ export default function ResultsPage() {
         if (insertErr) throw insertErr;
         savedId = (data as any)?.id;
       } else {
-        // UPDATE
-        console.log('[Draft] update start:', { id: listingId, workspaceId, internalUserId });
+        console.log('[Draft] update start:', { id: listingId, workspaceId, authUserId });
         const { data, error: updateErr } = await withTimeout(
           supabase.from('listings').update(payload).eq('id', listingId).select('id').single(),
           25000,
@@ -805,7 +809,6 @@ export default function ResultsPage() {
       setDraftStatus('Draft saved.');
       console.log('[Draft] save success:', { id: savedId });
 
-      // Keep URL consistent so “Edit” continues to work
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
       url.searchParams.set('listingId', savedId);
