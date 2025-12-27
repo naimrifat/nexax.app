@@ -70,14 +70,10 @@ function chooseOptionValue(
   const exactIdx = options.findIndex((o) => n(o) === n(raw));
   if (exactIdx >= 0) return options[exactIdx];
 
-  const startsIdx = options.findIndex(
-    (o) => n(o).startsWith(n(raw)) || n(raw).startsWith(n(o))
-  );
+  const startsIdx = options.findIndex((o) => n(o).startsWith(n(raw)) || n(raw).startsWith(n(o)));
   if (startsIdx >= 0) return options[startsIdx];
 
-  const containsIdx = options.findIndex(
-    (o) => n(o).includes(n(raw)) || n(raw).includes(n(o))
-  );
+  const containsIdx = options.findIndex((o) => n(o).includes(n(raw)) || n(raw).includes(n(o)));
   if (containsIdx >= 0) return options[containsIdx];
 
   return selectionOnly ? '' : raw;
@@ -321,15 +317,24 @@ export default function HomePage() {
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
 
+  // Revoke blob URLs on unmount (prevents memory leaks)
+  useEffect(() => {
+    return () => {
+      photoPreviewUrls.forEach((u) => {
+        try {
+          URL.revokeObjectURL(u);
+        } catch {
+          // ignore
+        }
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const normalizeAiToListing = (raw: any) => {
-    const categoryId =
-      raw?.category?.id || raw?.category_id || raw?.ebay_category_id || '';
+    const categoryId = raw?.category?.id || raw?.category_id || raw?.ebay_category_id || '';
     const categoryPath =
-      raw?.category?.path ||
-      raw?.category?.name ||
-      raw?.category_path ||
-      raw?.categoryName ||
-      '';
+      raw?.category?.path || raw?.category?.name || raw?.category_path || raw?.categoryName || '';
 
     const specificsSource: any[] = Array.isArray(raw?.item_specifics)
       ? raw.item_specifics
@@ -468,7 +473,6 @@ export default function HomePage() {
       [field]: value,
     }));
 
-    // Clear validation errors when user starts editing
     if (validationErrors.length > 0) {
       setValidationErrors([]);
     }
@@ -505,10 +509,8 @@ export default function HomePage() {
             const stSpec = next[sizeTypeIdx];
             const stOptions = Array.isArray(stSpec.options) ? stSpec.options : [];
             if (stOptions.includes(detectedType)) {
-              // update size type value
               next[sizeTypeIdx] = { ...stSpec, value: detectedType };
 
-              // also re-filter the size options for that detected type
               const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
               if (sizeIdx !== -1) {
                 const sizeSpec = next[sizeIdx];
@@ -557,14 +559,19 @@ export default function HomePage() {
 
   const handlePhotoUpload = (files: FileList | null) => {
     if (!files) return;
+
     const newFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
     if (photos.length + newFiles.length > 12) {
       alert('You can upload a maximum of 12 photos.');
       return;
     }
+
     const newUrls = newFiles.map((f) => URL.createObjectURL(f));
     setPhotos((prev) => [...prev, ...newFiles]);
     setPhotoPreviewUrls((prev) => [...prev, ...newUrls]);
+
+    // If user uploads new images after a previous run, force a fresh analysis/publish cycle
+    if (cloudinaryUrls.length) setCloudinaryUrls([]);
   };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -574,8 +581,12 @@ export default function HomePage() {
   const removePhoto = (indexToRemove: number) => {
     const url = photoPreviewUrls[indexToRemove];
     if (url) URL.revokeObjectURL(url);
+
     setPhotos((prev) => prev.filter((_, i) => i !== indexToRemove));
     setPhotoPreviewUrls((prev) => prev.filter((_, i) => i !== indexToRemove));
+
+    // Removing photos invalidates previous Cloudinary uploads
+    if (cloudinaryUrls.length) setCloudinaryUrls([]);
   };
 
   const triggerFileInput = () => fileInputRef.current?.click();
@@ -602,17 +613,31 @@ export default function HomePage() {
     setResults(null);
     setListingData(null);
     setCloudinaryUrls([]);
+    setValidationErrors([]);
     setStatus('Preparing images...');
 
     try {
       // 1) Compress + upload all images to Cloudinary (sequential for better status + fewer spikes)
       const uploadedUrls: string[] = [];
 
+      // Safety: keep under Cloudinary limits (and avoid edge payload sizes later)
+      const MAX_BYTES = 9.5 * 1024 * 1024; // 9.5MB
+
       for (let i = 0; i < photos.length; i++) {
         const file = photos[i];
 
         setStatus(`Compressing image ${i + 1}/${photos.length}...`);
         const { file: compressed, meta } = await compressForUpload(file);
+
+        // Hard guard: do not proceed with an oversized file
+        if (compressed.size > MAX_BYTES) {
+          throw new Error(
+            `Image "${file.name}" is still too large after compression (${(
+              compressed.size /
+              (1024 * 1024)
+            ).toFixed(2)}MB). Please upload a smaller image.`
+          );
+        }
 
         // Observability (dev)
         console.log('[compress]', {
@@ -726,8 +751,9 @@ export default function HomePage() {
       navigate('/results');
     } catch (error: any) {
       console.error('Error:', error);
-      setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-      setValidationErrors([error?.message ?? 'Unknown error']);
+      const msg = error?.message ?? 'Unknown error';
+      setStatus(`Error: ${msg}`);
+      setValidationErrors([msg]);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setIsLoading(false);
@@ -768,7 +794,6 @@ export default function HomePage() {
   const handlePublishToEbay = async () => {
     if (!listingData) return;
 
-    // Run validation
     const validation = validateListing();
     setValidationErrors(validation.errors);
 
@@ -786,7 +811,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           listing_data: listingData,
-          images: cloudinaryUrls,
+          images: cloudinaryUrls, // MUST be hosted URLs
         }),
       });
 
@@ -799,8 +824,9 @@ export default function HomePage() {
       alert('Your listing has been sent to eBay! It may take a minute to appear.');
     } catch (error: any) {
       console.error('Error publishing listing:', error);
-      setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-      setValidationErrors([error?.message || 'Unknown error occurred']);
+      const msg = error?.message ?? 'Unknown error';
+      setStatus(`Error: ${msg}`);
+      setValidationErrors([msg]);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -880,17 +906,13 @@ export default function HomePage() {
                     <h3 className="text-base font-bold text-red-900 mb-3 flex items-center gap-2">
                       <span>⚠️ Cannot Publish</span>
                       <span className="text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded-full">
-                        {validationErrors.length}{' '}
-                        {validationErrors.length === 1 ? 'error' : 'errors'}
+                        {validationErrors.length} {validationErrors.length === 1 ? 'error' : 'errors'}
                       </span>
                     </h3>
                     <div className="bg-white border border-red-200 rounded-md p-3 mb-3">
                       <ul className="space-y-2">
                         {validationErrors.map((error, index) => (
-                          <li
-                            key={index}
-                            className="text-sm text-red-800 flex items-start gap-2"
-                          >
+                          <li key={index} className="text-sm text-red-800 flex items-start gap-2">
                             <span className="text-red-500 font-black text-base">✗</span>
                             <span className="flex-1">{error}</span>
                           </li>
@@ -1049,9 +1071,17 @@ export default function HomePage() {
                           setResults(null);
                           setListingData(null);
                           setPhotos([]);
+                          photoPreviewUrls.forEach((u) => {
+                            try {
+                              URL.revokeObjectURL(u);
+                            } catch {
+                              // ignore
+                            }
+                          });
                           setPhotoPreviewUrls([]);
                           setCloudinaryUrls([]);
                           setStatus('');
+                          setValidationErrors([]);
                         }}
                         className="btn btn-outline"
                       >
@@ -1060,7 +1090,7 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  {/* ⭐ ADD THIS ENTIRE ERROR DISPLAY BLOCK HERE ⭐ */}
+                  {/* Error display block */}
                   {validationErrors.length > 0 && (
                     <div className="bg-red-50 border-2 border-red-300 rounded-lg p-5 mb-6 shadow-lg animate-fade-in">
                       <div className="flex items-start gap-3">
@@ -1087,10 +1117,7 @@ export default function HomePage() {
                           </h3>
                           <ul className="space-y-1.5">
                             {validationErrors.map((error, index) => (
-                              <li
-                                key={index}
-                                className="text-sm text-red-700 flex items-start gap-2"
-                              >
+                              <li key={index} className="text-sm text-red-700 flex items-start gap-2">
                                 <span className="text-red-500 font-bold mt-0.5">•</span>
                                 <span>{error}</span>
                               </li>
@@ -1124,9 +1151,7 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">
-                        Category
-                      </label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">Category</label>
                       <div
                         onClick={() => setShowCategorySelector(true)}
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
@@ -1150,9 +1175,7 @@ export default function HomePage() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">
-                        Description
-                      </label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">Description</label>
                       <textarea
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
                         rows={5}
@@ -1163,9 +1186,7 @@ export default function HomePage() {
 
                     {!!listingData?.item_specifics?.length && (
                       <div>
-                        <label className="block text-sm font-semibold text-gray-600 mb-2">
-                          Item Specifics
-                        </label>
+                        <label className="block text-sm font-semibold text-gray-600 mb-2">Item Specifics</label>
 
                         {listingData.item_specifics.map((spec: any, index: number) =>
                           renderSpecificRow(spec, index)
