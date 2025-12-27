@@ -38,6 +38,27 @@ function normalizeStringArray(input: any): string[] {
     .filter((v) => v.length > 0);
 }
 
+/**
+ * Cloudinary optimization for vision requests:
+ * - downscale to 1024 max dimension (good tradeoff for OCR/details vs tokens)
+ * - q_auto and f_auto (lets Cloudinary choose efficient encoding)
+ *
+ * IMPORTANT: Only apply if it's a Cloudinary URL that includes /upload/
+ */
+function toOptimizedVisionUrl(url: string): string {
+  try {
+    const u = url.trim();
+    if (!u.includes('cloudinary.com')) return u;
+    if (!u.includes('/upload/')) return u;
+
+    // Keep your earlier approach but prefer f_auto over forcing jpg.
+    // c_limit avoids cropping.
+    return u.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_auto/');
+  } catch {
+    return url;
+  }
+}
+
 /* ----------------------------------------
    Small helpers
 -----------------------------------------*/
@@ -378,19 +399,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const blobOrObject = incoming.filter(isBlobOrObjectUrl);
     const nonHttp = incoming.filter((u) => !isBlobOrObjectUrl(u) && !isHttpUrl(u));
-    const images = incoming.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u)).slice(0, 12);
+    const hostedImages = incoming.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u)).slice(0, 12);
 
-    // Observability: always log what we got
+    // Apply Cloudinary optimizations for vision (reduces tokens / bandwidth)
+    const visionImages = hostedImages.map(toOptimizedVisionUrl);
+
+    // Observability
     console.log('[analyze-listing]', {
       requestId,
       session_id,
       imagesReceivedCount: incoming.length,
-      imagesValidCount: images.length,
+      imagesValidCount: hostedImages.length,
+      imagesVisionCount: visionImages.length,
       blobOrObjectCount: blobOrObject.length,
       nonHttpCount: nonHttp.length,
       sampleInvalidBlobOrObject: blobOrObject.slice(0, 2),
       sampleInvalidNonHttp: nonHttp.slice(0, 2),
-      sampleValid: images.slice(0, 2),
+      sampleValid: hostedImages.slice(0, 2),
+      sampleVision: visionImages.slice(0, 2),
     });
 
     if (!incoming.length) {
@@ -403,7 +429,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         requestId,
         imageDiagnostics: {
           receivedCount: incoming.length,
-          validCount: images.length,
+          validCount: hostedImages.length,
           blobOrObjectCount: blobOrObject.length,
           nonHttpCount: nonHttp.length,
           sampleBlobOrObject: blobOrObject.slice(0, 2),
@@ -416,44 +442,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         requestId,
         imageDiagnostics: {
           receivedCount: incoming.length,
-          validCount: images.length,
+          validCount: hostedImages.length,
           nonHttpCount: nonHttp.length,
           sampleNonHttp: nonHttp.slice(0, 2),
         },
       });
     }
-    if (!images.length) {
+    if (!hostedImages.length) {
       return res.status(400).json({
         error: 'No valid hosted image URLs provided.',
         requestId,
       });
     }
 
-    // 1) Download images (<=12) and convert to base64
-    const base64Images = await Promise.all(
-      images.map(async (url: string, idx: number) => {
-        const optimizedUrl =
-          url.includes('cloudinary.com') && url.includes('/upload/')
-            ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
-            : url;
-
-        const resp = await fetch(optimizedUrl);
-        if (!resp.ok) {
-          throw new Error(`Failed to download image ${idx + 1}/${images.length}: ${resp.status}`);
-        }
-
-        const buf = await resp.arrayBuffer();
-        const base64 = Buffer.from(buf).toString('base64');
-        const mimeType = resp.headers.get('content-type') || 'image/jpeg';
-        return `data:${mimeType};base64,${base64}`;
-      })
-    );
-
     /* ----------------------------------------
        Stage A: Vision analysis (broad)
+       IMPORTANT CHANGE: send URLs directly to OpenAI (no base64 download)
     -----------------------------------------*/
 
-    // build seller-style instruction block for the vision model
+    // Build seller-style instruction block for the vision model
     let listingStyleInstructions = '';
     if (listing_style && typeof listing_style === 'object') {
       const {
@@ -495,9 +502,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           role: 'user',
           content: [
-            ...base64Images.map((img) => ({
+            ...visionImages.map((url) => ({
               type: 'image_url' as const,
-              image_url: { url: img, detail: 'low' as const },
+              image_url: { url, detail: 'low' as const },
             })),
             {
               type: 'text' as const,
@@ -812,7 +819,7 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
       success: true,
       requestId,
       data: payload,
-      images_processed: base64Images.length,
+      images_processed: visionImages.length,
       session_id,
     });
   } catch (err: any) {
