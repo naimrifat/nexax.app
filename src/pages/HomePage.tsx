@@ -2,10 +2,8 @@ import React, { useState, useRef, useEffect, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
-import {
-  filterSizesForFamilyAndSizeType,
-  detectSizeTypeForFamily,
-} from '../utils/sizeMaps';
+import {filterSizesForFamilyAndSizeType,  detectSizeTypeForFamily,} from '../utils/sizeMaps';
+import { compressForUpload } from '../utils/compressImage';
 
 /* -------------------------------------------------------
    Listing style settings (optional)
@@ -607,29 +605,43 @@ const handleInputChange = (field: string, value: any) => {
     setStatus('Uploading images to Cloudinary...');
 
     try {
-      // 1) Upload all images to Cloudinary
-      const uploadedUrls = await Promise.all(
-        photos.map(async (file) => {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('upload_preset', 'ebay_listings');
+// 1) Compress + upload all images to Cloudinary (sequential for better status + fewer spikes)
+const uploadedUrls: string[] = [];
 
-          const res = await fetch(
-            'https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload',
-            {
-              method: 'POST',
-              body: formData,
-            }
-          );
+for (let i = 0; i < photos.length; i++) {
+  const file = photos[i];
 
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data?.error?.message ?? 'Image upload failed');
-          }
+  setStatus(`Compressing image ${i + 1}/${photos.length}...`);
+  const { file: compressed, meta } = await compressForUpload(file);
 
-          return data.secure_url as string;
-        })
-      );
+  // Observability (dev)
+  console.log('[compress]', {
+    index: i,
+    name: file.name,
+    originalMB: (meta.originalBytes / (1024 * 1024)).toFixed(2),
+    finalMB: (meta.finalBytes / (1024 * 1024)).toFixed(2),
+    maxDimUsed: meta.maxDimUsed,
+    outputType: meta.outputType,
+  });
+
+  setStatus(`Uploading image ${i + 1}/${photos.length} to Cloudinary...`);
+
+  const formData = new FormData();
+  formData.append('file', compressed);
+  formData.append('upload_preset', 'ebay_listings');
+
+  const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.error?.message ?? 'Image upload failed');
+  }
+
+  uploadedUrls.push(data.secure_url as string);
+};
 
       setStatus('Images uploaded! Analyzing with AI...');
 
