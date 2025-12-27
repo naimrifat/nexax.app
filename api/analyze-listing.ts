@@ -7,11 +7,40 @@ export const config = {
 };
 
 /* ----------------------------------------
-   Small helpers
+   Request + URL validation helpers
 -----------------------------------------*/
+function makeRequestId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 const norm = (s: any) => String(s ?? '').toLowerCase().trim();
 const tokens = (s: string) => norm(s).split(/[\s\/,&-]+/).filter(Boolean);
 
+function isBlobOrObjectUrl(u: string): boolean {
+  const s = norm(u);
+  return s.startsWith('blob:') || s.startsWith('data:') || s.startsWith('file:');
+}
+
+function isHttpUrl(u: string): boolean {
+  try {
+    const url = new URL(u);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeStringArray(input: any): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((v) => typeof v === 'string')
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
+}
+
+/* ----------------------------------------
+   Small helpers
+-----------------------------------------*/
 function safeJSON<T = any>(txt: string, fallback: T): T {
   try {
     return JSON.parse(txt) as T;
@@ -330,30 +359,89 @@ async function callOpenAIChat(body: any) {
    MAIN HANDLER
 -----------------------------------------*/
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const requestId = makeRequestId();
+
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed', requestId });
 
   try {
-    // 🔹 NEW: normalize body & pull listing_style
     const body: any = req.body || {};
-    const { images, session_id, listing_style } = body;
+    const { session_id, listing_style } = body;
 
-    if (!images || !Array.isArray(images) || images.length === 0) {
-      return res.status(400).json({ error: 'No images provided' });
+    // Normalize images from common keys (be permissive, validate strictly)
+    const rawImages = body.images ?? body.image_urls ?? [];
+    const incoming = normalizeStringArray(rawImages);
+
+    const blobOrObject = incoming.filter(isBlobOrObjectUrl);
+    const nonHttp = incoming.filter((u) => !isBlobOrObjectUrl(u) && !isHttpUrl(u));
+    const images = incoming.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u)).slice(0, 12);
+
+    // Observability: always log what we got
+    console.log('[analyze-listing]', {
+      requestId,
+      session_id,
+      imagesReceivedCount: incoming.length,
+      imagesValidCount: images.length,
+      blobOrObjectCount: blobOrObject.length,
+      nonHttpCount: nonHttp.length,
+      sampleInvalidBlobOrObject: blobOrObject.slice(0, 2),
+      sampleInvalidNonHttp: nonHttp.slice(0, 2),
+      sampleValid: images.slice(0, 2),
+    });
+
+    if (!incoming.length) {
+      return res.status(400).json({ error: 'No images provided', requestId });
+    }
+    if (blobOrObject.length > 0) {
+      return res.status(400).json({
+        error:
+          'Invalid image URL(s) received (blob/data/file URLs are not allowed). Upload images to Cloudinary and send the hosted URLs.',
+        requestId,
+        imageDiagnostics: {
+          receivedCount: incoming.length,
+          validCount: images.length,
+          blobOrObjectCount: blobOrObject.length,
+          nonHttpCount: nonHttp.length,
+          sampleBlobOrObject: blobOrObject.slice(0, 2),
+        },
+      });
+    }
+    if (nonHttp.length > 0) {
+      return res.status(400).json({
+        error: 'Invalid image URL(s) received (must be http/https).',
+        requestId,
+        imageDiagnostics: {
+          receivedCount: incoming.length,
+          validCount: images.length,
+          nonHttpCount: nonHttp.length,
+          sampleNonHttp: nonHttp.slice(0, 2),
+        },
+      });
+    }
+    if (!images.length) {
+      return res.status(400).json({
+        error: 'No valid hosted image URLs provided.',
+        requestId,
+      });
     }
 
     // 1) Download images (<=12) and convert to base64
     const base64Images = await Promise.all(
-      images.slice(0, 12).map(async (url: string) => {
-        const optimizedUrl = url.includes('cloudinary.com')
-          ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
-          : url;
+      images.map(async (url: string, idx: number) => {
+        const optimizedUrl =
+          url.includes('cloudinary.com') && url.includes('/upload/')
+            ? url.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_jpg/')
+            : url;
+
         const resp = await fetch(optimizedUrl);
-        if (!resp.ok) throw new Error(`Failed to download image: ${resp.status}`);
+        if (!resp.ok) {
+          throw new Error(`Failed to download image ${idx + 1}/${images.length}: ${resp.status}`);
+        }
+
         const buf = await resp.arrayBuffer();
         const base64 = Buffer.from(buf).toString('base64');
         const mimeType = resp.headers.get('content-type') || 'image/jpeg';
@@ -365,7 +453,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
        Stage A: Vision analysis (broad)
     -----------------------------------------*/
 
-    // 🔹 NEW: build a seller-style instruction block for the vision model
+    // build seller-style instruction block for the vision model
     let listingStyleInstructions = '';
     if (listing_style && typeof listing_style === 'object') {
       const {
@@ -384,24 +472,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'When you generate the "title", "description", and "keywords" fields in the JSON, follow these seller instructions as long as they do not contradict the actual item details in the photos, eBay marketplace rules, or the JSON structure described below.'
       );
 
-      if (titleExample) {
-        lines.push('\nExample title:', String(titleExample));
-      }
-      if (titleRules) {
-        lines.push('\nTitle rules:', String(titleRules));
-      }
-      if (descriptionExample) {
-        lines.push('\nExample description:', String(descriptionExample));
-      }
-      if (descriptionRules) {
-        lines.push('\nDescription rules:', String(descriptionRules));
-      }
-      if (keywordsRules) {
-        lines.push('\nKeyword rules:', String(keywordsRules));
-      }
-      if (extraInstructions) {
-        lines.push('\nAdditional instructions:', String(extraInstructions));
-      }
+      if (titleExample) lines.push('\nExample title:', String(titleExample));
+      if (titleRules) lines.push('\nTitle rules:', String(titleRules));
+      if (descriptionExample) lines.push('\nExample description:', String(descriptionExample));
+      if (descriptionRules) lines.push('\nDescription rules:', String(descriptionRules));
+      if (keywordsRules) lines.push('\nKeyword rules:', String(keywordsRules));
+      if (extraInstructions) lines.push('\nAdditional instructions:', String(extraInstructions));
 
       listingStyleInstructions = lines.join('\n');
     }
@@ -640,12 +716,9 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
 
       if (!isEmpty) continue;
 
-      const options: string[] = a.values ?? [];
-      const selOnly = a.selectionOnly;
-      let guess: any = '';
-
       const td = title + description;
       const n = norm(a.name);
+      let guess: any = '';
 
       if (n.includes('brand')) guess = detected.brand || '';
       else if (n === 'department') guess = department;
@@ -657,8 +730,7 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
         guess = detected.outerShellMaterial || detected.materials?.[0] || '';
       else if (n.includes('lining') && n.includes('material')) guess = detected.liningMaterial || '';
       else if (n.includes('insulation') && n.includes('material'))
-        guess =
-          detected.insulationMaterial || (includesAny(td, ['puffer', 'down']) ? 'Down' : '');
+        guess = detected.insulationMaterial || (includesAny(td, ['puffer', 'down']) ? 'Down' : '');
       else if (n === 'style') guess = detected.style || '';
       else if (n === 'type') guess = detected.type || '';
       else if (n.includes('pattern')) guess = detected.pattern || '';
@@ -668,31 +740,17 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
         else if (h.includes('midi') || h.includes('mid')) guess = 'Midi';
         else if (h.includes('knee')) guess = 'Knee Length';
         else if (h.includes('short') || h.includes('hip') || h.includes('cropped')) guess = 'Short';
-      } else if (n.includes('closure'))
-        guess = detected.closure || (includesAny(td, ['zip', 'zipper']) ? 'Zip' : '');
+      } else if (n.includes('closure')) guess = detected.closure || (includesAny(td, ['zip', 'zipper']) ? 'Zip' : '');
       else if (n.includes('theme'))
-        guess = Array.isArray(detected.theme)
-          ? detected.theme
-          : detected.theme
-          ? [detected.theme]
-          : [];
+        guess = Array.isArray(detected.theme) ? detected.theme : detected.theme ? [detected.theme] : [];
       else if (n.includes('features'))
-        guess = Array.isArray(detected.features)
-          ? detected.features
-          : detected.features
-          ? [detected.features]
-          : [];
+        guess = Array.isArray(detected.features) ? detected.features : detected.features ? [detected.features] : [];
       else if (n.includes('country') && n.includes('origin')) guess = detected.countryOfOrigin || '';
       else if (n.includes('model')) guess = detected.model || '';
       else if (n.includes('sleeve') && n.includes('length')) guess = detected.sleeveLength || '';
       else if (n === 'fit') guess = detected.fit || '';
 
-      const snappedArr = normalizeValueForAspect(
-        a,
-        guess,
-        optionSets.get(k),
-        canonicalValue.get(k)
-      );
+      const snappedArr = normalizeValueForAspect(a, guess, optionSets.get(k), canonicalValue.get(k));
 
       if (snappedArr.length) {
         const v = a.multi ? snappedArr : snappedArr[0];
@@ -723,7 +781,6 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
       ebay_category_name: category.name,
       ebay_category_path: category.path,
       detected,
-      // schema for UI rendering
       category_specifics_schema: aspects.map((a) => ({
         name: a.name,
         required: !!a.required,
@@ -733,7 +790,6 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
         freeTextAllowed: a.freeTextAllowed,
         values: a.values ?? [],
       })),
-      // initial values for UI
       item_specifics: finalSpecifics.map((s) => {
         const a = aspects.find((x) => norm(x.name) === norm(s.name));
         return {
@@ -749,18 +805,21 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
       keywords: visionJSON.keywords || [],
       confidence_score: visionJSON.confidence_score ?? undefined,
       reconcile_notes: recJSON.notes ?? undefined,
-      mapping_log: mappingLog, // optional: remove or trim for prod
+      mapping_log: mappingLog,
     };
 
     return res.status(200).json({
       success: true,
+      requestId,
       data: payload,
       images_processed: base64Images.length,
       session_id,
     });
   } catch (err: any) {
+    console.error('❌ /api/analyze-listing error:', { requestId, err });
     return res.status(500).json({
       error: err?.message || 'Internal server error',
+      requestId,
     });
   }
 }
