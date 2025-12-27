@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
-import {filterSizesForFamilyAndSizeType,  detectSizeTypeForFamily,} from '../utils/sizeMaps';
+import { filterSizesForFamilyAndSizeType, detectSizeTypeForFamily } from '../utils/sizeMaps';
 import { compressForUpload } from '../utils/compressImage';
 
 /* -------------------------------------------------------
@@ -106,7 +106,7 @@ function TokenSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
-  const selected = Array.isArray(value) ? value : (value ? [value] : []);
+  const selected = Array.isArray(value) ? value : value ? [value] : [];
   const lowerQuery = query.trim().toLowerCase();
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
@@ -303,11 +303,14 @@ function ItemSpecificControl({
 export default function HomePage() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
+  const [cloudinaryUrls, setCloudinaryUrls] = useState<string[]>([]);
+
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState('');
   const [results, setResults] = useState<any>(null);
   const [listingData, setListingData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showCategorySelector, setShowCategorySelector] = useState(false);
   const [ebaySpecifics, setEbaySpecifics] = useState<any[]>([]);
@@ -459,17 +462,17 @@ export default function HomePage() {
     }
   };
 
-const handleInputChange = (field: string, value: any) => {
-  setListingData((prevData: any) => ({
-    ...(prevData ?? {}),
-    [field]: value,
-  }));
-  
-  // Clear validation errors when user starts editing
-  if (validationErrors.length > 0) {
-    setValidationErrors([]);
-  }
-};
+  const handleInputChange = (field: string, value: any) => {
+    setListingData((prevData: any) => ({
+      ...(prevData ?? {}),
+      [field]: value,
+    }));
+
+    // Clear validation errors when user starts editing
+    if (validationErrors.length > 0) {
+      setValidationErrors([]);
+    }
+  };
 
   // main change handler with dependency logic between Size, Size Type and category
   const handleItemSpecificsChange = (index: number, value: string | string[]) => {
@@ -497,9 +500,7 @@ const handleInputChange = (field: string, value: any) => {
         const detectedType = detectSizeTypeForFamily(categoryPath, sizeVal);
 
         if (detectedType) {
-          const sizeTypeIdx = next.findIndex((s: any) =>
-            /size type/i.test(s?.name || '')
-          );
+          const sizeTypeIdx = next.findIndex((s: any) => /size type/i.test(s?.name || ''));
           if (sizeTypeIdx !== -1) {
             const stSpec = next[sizeTypeIdx];
             const stOptions = Array.isArray(stSpec.options) ? stSpec.options : [];
@@ -508,9 +509,7 @@ const handleInputChange = (field: string, value: any) => {
               next[sizeTypeIdx] = { ...stSpec, value: detectedType };
 
               // also re-filter the size options for that detected type
-              const sizeIdx = next.findIndex((s: any) =>
-                isSizeAspectName(s?.name || '')
-              );
+              const sizeIdx = next.findIndex((s: any) => isSizeAspectName(s?.name || ''));
               if (sizeIdx !== -1) {
                 const sizeSpec = next[sizeIdx];
                 const filtered = filterSizeOptionsBySizeType(
@@ -602,46 +601,50 @@ const handleInputChange = (field: string, value: any) => {
     setIsLoading(true);
     setResults(null);
     setListingData(null);
-    setStatus('Uploading images to Cloudinary...');
+    setCloudinaryUrls([]);
+    setStatus('Preparing images...');
 
     try {
-// 1) Compress + upload all images to Cloudinary (sequential for better status + fewer spikes)
-const uploadedUrls: string[] = [];
+      // 1) Compress + upload all images to Cloudinary (sequential for better status + fewer spikes)
+      const uploadedUrls: string[] = [];
 
-for (let i = 0; i < photos.length; i++) {
-  const file = photos[i];
+      for (let i = 0; i < photos.length; i++) {
+        const file = photos[i];
 
-  setStatus(`Compressing image ${i + 1}/${photos.length}...`);
-  const { file: compressed, meta } = await compressForUpload(file);
+        setStatus(`Compressing image ${i + 1}/${photos.length}...`);
+        const { file: compressed, meta } = await compressForUpload(file);
 
-  // Observability (dev)
-  console.log('[compress]', {
-    index: i,
-    name: file.name,
-    originalMB: (meta.originalBytes / (1024 * 1024)).toFixed(2),
-    finalMB: (meta.finalBytes / (1024 * 1024)).toFixed(2),
-    maxDimUsed: meta.maxDimUsed,
-    outputType: meta.outputType,
-  });
+        // Observability (dev)
+        console.log('[compress]', {
+          index: i,
+          name: file.name,
+          originalMB: (meta.originalBytes / (1024 * 1024)).toFixed(2),
+          finalMB: (meta.finalBytes / (1024 * 1024)).toFixed(2),
+          maxDimUsed: meta.maxDimUsed,
+          outputType: meta.outputType,
+        });
 
-  setStatus(`Uploading image ${i + 1}/${photos.length} to Cloudinary...`);
+        setStatus(`Uploading image ${i + 1}/${photos.length} to Cloudinary...`);
 
-  const formData = new FormData();
-  formData.append('file', compressed);
-  formData.append('upload_preset', 'ebay_listings');
+        const formData = new FormData();
+        formData.append('file', compressed);
+        formData.append('upload_preset', 'ebay_listings');
 
-  const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
-    method: 'POST',
-    body: formData,
-  });
+        const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
+          method: 'POST',
+          body: formData,
+        });
 
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data?.error?.message ?? 'Image upload failed');
-  }
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error?.message ?? 'Image upload failed');
+        }
 
-  uploadedUrls.push(data.secure_url as string);
-};
+        uploadedUrls.push(data.secure_url as string);
+      }
+
+      // Persist hosted URLs for publishing
+      setCloudinaryUrls(uploadedUrls);
 
       setStatus('Images uploaded! Analyzing with AI...');
 
@@ -669,11 +672,7 @@ for (let i = 0; i < photos.length; i++) {
       }
 
       const analysisResult = await analysisResponse.json();
-      const aiData =
-        analysisResult?.data ||
-        analysisResult?.analysis ||
-        analysisResult ||
-        {};
+      const aiData = analysisResult?.data || analysisResult?.analysis || analysisResult || {};
 
       const normalized = normalizeAiToListing(aiData);
 
@@ -696,9 +695,7 @@ for (let i = 0; i < photos.length; i++) {
         if (specificsCacheRef.current.has(catId)) {
           const cached = specificsCacheRef.current.get(catId)!;
           const updatedSpecifics = cached.map((spec: any) => {
-            const aiSpec = normalized.item_specifics.find(
-              (s: any) => s.name === spec.name
-            );
+            const aiSpec = normalized.item_specifics.find((s: any) => s.name === spec.name);
             return aiSpec ? { ...spec, value: aiSpec.value } : spec;
           });
 
@@ -730,6 +727,8 @@ for (let i = 0; i < photos.length; i++) {
     } catch (error: any) {
       console.error('Error:', error);
       setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+      setValidationErrors([error?.message ?? 'Unknown error']);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setIsLoading(false);
     }
@@ -760,53 +759,51 @@ for (let i = 0; i < photos.length; i++) {
       }
     }
 
-    if (photos.length === 0) errors.push('At least one photo is required');
+    // Ensure we have hosted URLs for publish (no blob URLs)
+    if (!cloudinaryUrls.length) errors.push('At least one uploaded photo is required');
 
     return { valid: errors.length === 0, errors };
   };
 
-const handlePublishToEbay = async () => {
-  if (!listingData) return;
+  const handlePublishToEbay = async () => {
+    if (!listingData) return;
 
-  // Run validation
-  const validation = validateListing();
-  setValidationErrors(validation.errors);
+    // Run validation
+    const validation = validateListing();
+    setValidationErrors(validation.errors);
 
-  if (!validation.valid) {
-    // Scroll to top so user sees the error box
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    return;
-  }
-
-  // Clear any old errors
-  setValidationErrors([]);
-
-  setStatus('Publishing to eBay...');
-  try {
-    const response = await fetch('/api/publish-listing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        listing_data: listingData,
-        images: photoPreviewUrls,
-      }),
-    });
-
-    if (!response.ok) {
-      const msg = await response.text();
-      throw new Error(msg || 'Failed to start the publishing process.');
+    if (!validation.valid) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
     }
 
-    setStatus('Listing sent to eBay for publishing!');
-    alert('Your listing has been sent to eBay! It may take a minute to appear.');
-  } catch (error: any) {
-    console.error('Error publishing listing:', error);
-    setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
-    
-    // Show error in the error box too
-    setValidationErrors([error?.message || 'Unknown error occurred']);
-  }
-};
+    setValidationErrors([]);
+
+    setStatus('Publishing to eBay...');
+    try {
+      const response = await fetch('/api/publish-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listing_data: listingData,
+          images: cloudinaryUrls,
+        }),
+      });
+
+      if (!response.ok) {
+        const msg = await response.text();
+        throw new Error(msg || 'Failed to start the publishing process.');
+      }
+
+      setStatus('Listing sent to eBay for publishing!');
+      alert('Your listing has been sent to eBay! It may take a minute to appear.');
+    } catch (error: any) {
+      console.error('Error publishing listing:', error);
+      setStatus(`Error: ${error?.message ?? 'Unknown error'}`);
+      setValidationErrors([error?.message || 'Unknown error occurred']);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   // Build UI rows; for "Size" rows, filter options dynamically using current Size Type
   const renderSpecificRow = (spec: any, index: number) => {
@@ -828,10 +825,7 @@ const handlePublishToEbay = async () => {
     }
 
     return (
-      <div
-        key={`${spec?.name ?? 'spec'}-${index}`}
-        className="grid grid-cols-2 gap-2 mb-3"
-      >
+      <div key={`${spec?.name ?? 'spec'}-${index}`} className="grid grid-cols-2 gap-2 mb-3">
         <div className="flex items-center">
           <span className="text-sm text-gray-700">{spec?.name || 'Specific'}</span>
           {spec?.required ? <span className="ml-1 text-red-500">*</span> : null}
@@ -855,69 +849,67 @@ const handlePublishToEbay = async () => {
                 Try It Now - Free Demo
               </h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                Upload up to 12 photos and see how our AI creates professional listings
-                instantly
+                Upload up to 12 photos and see how our AI creates professional listings instantly
               </p>
             </div>
 
             {validationErrors.length > 0 && (
-  <div className="relative bg-red-50 border-2 border-red-400 rounded-lg p-5 mb-6 shadow-xl animate-shake">
-    <div className="absolute -top-3 -right-3 w-8 h-8 bg-red-500 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">
-      !
-    </div>
-    
-    <div className="flex items-start gap-3">
-      {/* Warning Icon */}
-      <div className="flex-shrink-0 mt-0.5">
-        <svg 
-          className="h-7 w-7 text-red-600 animate-pulse" 
-          fill="none" 
-          viewBox="0 0 24 24" 
-          stroke="currentColor"
-          strokeWidth={2.5}
-        >
-          <path 
-            strokeLinecap="round" 
-            strokeLinejoin="round" 
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" 
-          />
-        </svg>
-      </div>
-      
-      {/* Error Content */}
-      <div className="flex-1">
-        <h3 className="text-base font-bold text-red-900 mb-3 flex items-center gap-2">
-          <span>⚠️ Cannot Publish</span>
-          <span className="text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded-full">
-            {validationErrors.length} {validationErrors.length === 1 ? 'error' : 'errors'}
-          </span>
-        </h3>
-        <div className="bg-white border border-red-200 rounded-md p-3 mb-3">
-          <ul className="space-y-2">
-            {validationErrors.map((error, index) => (
-              <li key={index} className="text-sm text-red-800 flex items-start gap-2">
-                <span className="text-red-500 font-black text-base">✗</span>
-                <span className="flex-1">{error}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <button
-          onClick={() => setValidationErrors([])}
-          className="text-sm bg-red-100 hover:bg-red-200 text-red-700 px-4 py-1.5 rounded-md font-medium transition-colors"
-        >
-          Dismiss
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+              <div className="relative bg-red-50 border-2 border-red-400 rounded-lg p-5 mb-6 shadow-xl animate-shake">
+                <div className="absolute -top-3 -right-3 w-8 h-8 bg-red-500 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                  !
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 mt-0.5">
+                    <svg
+                      className="h-7 w-7 text-red-600 animate-pulse"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2.5}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                  </div>
+
+                  <div className="flex-1">
+                    <h3 className="text-base font-bold text-red-900 mb-3 flex items-center gap-2">
+                      <span>⚠️ Cannot Publish</span>
+                      <span className="text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded-full">
+                        {validationErrors.length}{' '}
+                        {validationErrors.length === 1 ? 'error' : 'errors'}
+                      </span>
+                    </h3>
+                    <div className="bg-white border border-red-200 rounded-md p-3 mb-3">
+                      <ul className="space-y-2">
+                        {validationErrors.map((error, index) => (
+                          <li
+                            key={index}
+                            className="text-sm text-red-800 flex items-start gap-2"
+                          >
+                            <span className="text-red-500 font-black text-base">✗</span>
+                            <span className="flex-1">{error}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <button
+                      onClick={() => setValidationErrors([])}
+                      className="text-sm bg-red-100 hover:bg-red-200 text-red-700 px-4 py-1.5 rounded-md font-medium transition-colors"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {!listingData ? (
-              <form
-                onSubmit={handleSubmit}
-                className="grid grid-cols-1 lg:grid-cols-2 gap-8"
-              >
+              <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Upload */}
                 <div className="card p-6">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
@@ -945,9 +937,7 @@ const handlePublishToEbay = async () => {
                       onChange={handleFileInputChange}
                     />
                     <Upload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                    <p className="text-gray-700 font-medium">
-                      Drag and drop your photos here
-                    </p>
+                    <p className="text-gray-700 font-medium">Drag and drop your photos here</p>
                     <p className="text-gray-500 text-sm">or click to browse</p>
                   </div>
 
@@ -980,9 +970,7 @@ const handlePublishToEbay = async () => {
                     </div>
                   )}
 
-                  <p className="text-sm text-gray-500 text-center">
-                    {photos.length}/12 photos uploaded
-                  </p>
+                  <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
                 </div>
 
                 {/* AI Generation */}
@@ -1043,9 +1031,7 @@ const handlePublishToEbay = async () => {
 
                 <div className="lg:col-span-2 space-y-6">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      Your Generated Listing
-                    </h2>
+                    <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
                     <div className="flex items-center gap-3">
                       <button
                         onClick={handlePublishToEbay}
@@ -1064,6 +1050,7 @@ const handlePublishToEbay = async () => {
                           setListingData(null);
                           setPhotos([]);
                           setPhotoPreviewUrls([]);
+                          setCloudinaryUrls([]);
                           setStatus('');
                         }}
                         className="btn btn-outline"
@@ -1073,56 +1060,57 @@ const handlePublishToEbay = async () => {
                     </div>
                   </div>
 
-        {/* ⭐ ADD THIS ENTIRE ERROR DISPLAY BLOCK HERE ⭐ */}
-        {validationErrors.length > 0 && (
-          <div className="bg-red-50 border-2 border-red-300 rounded-lg p-5 mb-6 shadow-lg animate-fade-in">
-            <div className="flex items-start gap-3">
-              {/* Warning Icon */}
-              <div className="flex-shrink-0 mt-0.5">
-                <svg 
-                  className="h-6 w-6 text-red-600" 
-                  fill="none" 
-                  viewBox="0 0 24 24" 
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" 
-                  />
-                </svg>
-              </div>
-              
-              {/* Error Content */}
-              <div className="flex-1">
-                <h3 className="text-sm font-semibold text-red-800 mb-2">
-                  Cannot publish - please fix {validationErrors.length} error{validationErrors.length !== 1 ? 's' : ''}:
-                </h3>
-                <ul className="space-y-1.5">
-                  {validationErrors.map((error, index) => (
-                    <li key={index} className="text-sm text-red-700 flex items-start gap-2">
-                      <span className="text-red-500 font-bold mt-0.5">•</span>
-                      <span>{error}</span>
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  onClick={() => setValidationErrors([])}
-                  className="mt-3 text-xs text-red-600 hover:text-red-800 underline font-medium"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+                  {/* ⭐ ADD THIS ENTIRE ERROR DISPLAY BLOCK HERE ⭐ */}
+                  {validationErrors.length > 0 && (
+                    <div className="bg-red-50 border-2 border-red-300 rounded-lg p-5 mb-6 shadow-lg animate-fade-in">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-shrink-0 mt-0.5">
+                          <svg
+                            className="h-6 w-6 text-red-600"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                            />
+                          </svg>
+                        </div>
+
+                        <div className="flex-1">
+                          <h3 className="text-sm font-semibold text-red-800 mb-2">
+                            Cannot publish - please fix {validationErrors.length} error
+                            {validationErrors.length !== 1 ? 's' : ''}:
+                          </h3>
+                          <ul className="space-y-1.5">
+                            {validationErrors.map((error, index) => (
+                              <li
+                                key={index}
+                                className="text-sm text-red-700 flex items-start gap-2"
+                              >
+                                <span className="text-red-500 font-bold mt-0.5">•</span>
+                                <span>{error}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <button
+                            onClick={() => setValidationErrors([])}
+                            className="mt-3 text-xs text-red-600 hover:text-red-800 underline font-medium"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Editable form */}
                   <div className="bg-white rounded-lg shadow p-6 space-y-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-600 mb-1">
-                        Title
-                      </label>
+                      <label className="block text-sm font-semibold text-gray-600 mb-1">Title</label>
                       <input
                         type="text"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -1143,9 +1131,7 @@ const handlePublishToEbay = async () => {
                         onClick={() => setShowCategorySelector(true)}
                         className="mt-1 flex cursor-pointer items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-left shadow-sm hover:bg-gray-50"
                       >
-                        <span>
-                          {listingData?.category?.path || 'Click to select a category...'}
-                        </span>
+                        <span>{listingData?.category?.path || 'Click to select a category...'}</span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
                           width="20"
@@ -1175,7 +1161,7 @@ const handlePublishToEbay = async () => {
                       />
                     </div>
 
-                    {!!(listingData?.item_specifics?.length) && (
+                    {!!listingData?.item_specifics?.length && (
                       <div>
                         <label className="block text-sm font-semibold text-gray-600 mb-2">
                           Item Specifics
