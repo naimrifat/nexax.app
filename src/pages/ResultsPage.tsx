@@ -341,10 +341,11 @@ async function ensureTenancyRpc(): Promise<Tenancy> {
     5000,
     'auth.getSession'
   );
-  console.log('[Tenancy] session ok', { authUserId });
   if (sessionErr) throw sessionErr;
 
   const authUserId = sessionData?.session?.user?.id;
+  console.log('[Tenancy] session ok', { authUserId });
+
   if (!authUserId) throw new Error('Not authenticated');
 
   // 2) RPC (DB) — should be quick; if it’s slow, we’ll surface that separately
