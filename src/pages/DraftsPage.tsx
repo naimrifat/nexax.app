@@ -82,24 +82,35 @@ function normalizeDraftFromRow(row: ListingRow): Draft {
 
 export default function DraftsPage() {
   const navigate = useNavigate();
-  const { user, workspaceId, isLoading: authLoading } = useAuth();
+  const { user, workspaceId, isLoading: authLoading, refreshTenancy } = useAuth();
 
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Track whether we have enough state to query the tenant’s drafts.
   const canQuery = !!user?.id && !!workspaceId && !authLoading;
 
   const fetchDrafts = useCallback(async () => {
     setLoadError(null);
 
-    // Gate all DB reads on resolved auth + tenancy.
-    if (!canQuery) {
+    // Gate DB reads on resolved auth + tenancy.
+    if (!user?.id) {
       setDrafts([]);
       setLoading(false);
+      if (!authLoading) setLoadError('You must be logged in to view drafts.');
+      return;
+    }
 
-      if (authLoading) return;
-      setLoadError('You must be logged in to view drafts.');
+    if (!workspaceId) {
+      setDrafts([]);
+      setLoading(false);
+      if (!authLoading) setLoadError('Workspace is not ready yet. Click Retry to resolve it.');
+      return;
+    }
+
+    if (authLoading) {
+      // keep spinner
       return;
     }
 
@@ -130,12 +141,17 @@ export default function DraftsPage() {
     } finally {
       setLoading(false);
     }
-  }, [canQuery, authLoading, workspaceId]);
+  }, [user?.id, workspaceId, authLoading]);
 
   useEffect(() => {
-    // Only runs when auth/tenancy becomes available.
+    // Only run when auth/tenancy transitions to a usable state.
+    if (!canQuery) {
+      // Keep a sensible UI state while auth resolves.
+      if (!authLoading) setLoading(false);
+      return;
+    }
     void fetchDrafts();
-  }, [fetchDrafts]);
+  }, [canQuery, authLoading, fetchDrafts]);
 
   const handleEditDraft = useCallback(
     (draftId: string) => {
@@ -149,7 +165,6 @@ export default function DraftsPage() {
       if (!window.confirm('Are you sure you want to delete this draft?')) return;
 
       try {
-        // Optional extra safety: only delete within this workspace
         if (!workspaceId) throw new Error('Missing workspace. Please sign in again.');
 
         const { error } = await supabase.from('listings').delete().eq('id', draftId).eq('workspace_id', workspaceId);
@@ -163,6 +178,19 @@ export default function DraftsPage() {
     },
     [fetchDrafts, workspaceId]
   );
+
+  const handleRetryTenancy = useCallback(async () => {
+    setLoadError(null);
+    setLoading(true);
+    try {
+      await refreshTenancy();
+      await fetchDrafts();
+    } catch (e: any) {
+      console.error('[DraftsPage] Retry tenancy failed:', e);
+      setLoadError(e?.message || 'Retry failed.');
+      setLoading(false);
+    }
+  }, [refreshTenancy, fetchDrafts]);
 
   const formatDate = useCallback((dateString: string) => {
     const date = new Date(dateString);
@@ -186,7 +214,10 @@ export default function DraftsPage() {
     });
   }, []);
 
-  const countLabel = useMemo(() => `${drafts.length} saved ${drafts.length === 1 ? 'draft' : 'drafts'}`, [drafts.length]);
+  const countLabel = useMemo(
+    () => `${drafts.length} saved ${drafts.length === 1 ? 'draft' : 'drafts'}`,
+    [drafts.length]
+  );
 
   if (authLoading || loading) {
     return (
@@ -198,6 +229,8 @@ export default function DraftsPage() {
       </div>
     );
   }
+
+  const showRetry = !!user?.id && !workspaceId && !authLoading;
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
@@ -217,9 +250,21 @@ export default function DraftsPage() {
                 onClick={() => fetchDrafts()}
                 className="btn border border-gray-300 text-gray-700 hover:bg-gray-100 px-4 py-3 rounded-lg font-semibold"
                 type="button"
+                disabled={!canQuery}
+                title={!canQuery ? 'Sign in and wait for workspace to load.' : 'Refresh drafts'}
               >
                 Refresh
               </button>
+
+              {showRetry && (
+                <button
+                  onClick={handleRetryTenancy}
+                  className="btn border border-gray-300 text-gray-700 hover:bg-gray-100 px-4 py-3 rounded-lg font-semibold"
+                  type="button"
+                >
+                  Retry
+                </button>
+              )}
 
               <button
                 onClick={() => navigate('/create-listing')}
@@ -267,7 +312,12 @@ export default function DraftsPage() {
                 >
                   <div className="relative h-48 bg-gray-100">
                     {coverSrc ? (
-                      <img src={coverSrc} alt={draft.title || 'Draft image'} className="w-full h-full object-cover" loading="lazy" />
+                      <img
+                        src={coverSrc}
+                        alt={draft.title || 'Draft image'}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <ImageIcon className="w-12 h-12 text-gray-300" />
@@ -291,7 +341,9 @@ export default function DraftsPage() {
                       <span>{formatDate(draft.savedAt)}</span>
                     </div>
 
-                    {draft.categoryPath && <div className="text-xs text-gray-500 mb-3 truncate">📁 {draft.categoryPath}</div>}
+                    {draft.categoryPath && (
+                      <div className="text-xs text-gray-500 mb-3 truncate">📁 {draft.categoryPath}</div>
+                    )}
 
                     <div className="text-sm font-semibold text-teal-600 mb-4">${draft.price || '0.00'}</div>
 
