@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
+// src/pages/DashboardPage.tsx
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   PlusCircle,
   Search,
@@ -15,143 +16,260 @@ import {
   Copy,
 } from "lucide-react";
 import TestDbPanel from "../components/TestDbPanel";
+import { supabase } from "../../lib/supabaseClient";
+import { useAuth } from "../context/AuthContext";
+
+type ListingStatus = "draft" | "active" | "sold" | "ended" | "archived" | string;
+
+type ListingRow = {
+  id: string;
+  workspace_id: string | null;
+  status: ListingStatus | null;
+  marketplace: string | null;
+  title: string | null;
+  description: string | null;
+  category_path: string | null;
+  price: number | null;
+  currency: string | null;
+  ebay_item_id: string | null;
+  ebay_listing_url: string | null;
+  listing_json: any; // jsonb
+  images: string[] | null; // text[]
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type DashboardListing = {
+  id: string;
+  title: string;
+  image: string;
+  platforms: string[];
+  date: string;
+  price: number;
+  status: ListingStatus;
+  views: number;
+  likes: number;
+  ebay_listing_url?: string | null;
+};
+
+function safeArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x) => typeof x === "string") as string[];
+  return [];
+}
+
+function firstString(v: unknown, fallback = ""): string {
+  return typeof v === "string" ? v : fallback;
+}
+
+function isHostedImageUrl(u: string): boolean {
+  const s = String(u || "").trim();
+  if (!s) return false;
+  if (s.startsWith("blob:")) return false;
+  if (s.startsWith("data:")) return false;
+  return /^https?:\/\//i.test(s);
+}
+
+function pickCoverImage(row: ListingRow): string {
+  const lj = row.listing_json || {};
+  const colImages = safeArray(row.images).filter(isHostedImageUrl);
+  const jsonImages = safeArray(lj?.images || lj?.image_urls).filter(isHostedImageUrl);
+
+  const images = colImages.length ? colImages : jsonImages;
+  if (!images.length) return "";
+
+  // If listing_json stored ordered images with main first, just use [0].
+  const mainIdx =
+    typeof lj?.mainImageIndex === "number" && Number.isFinite(lj.mainImageIndex) ? (lj.mainImageIndex as number) : 0;
+
+  const idx = Math.max(0, Math.min(mainIdx, images.length - 1));
+  return images[idx] || images[0] || "";
+}
+
+function normalizeListing(row: ListingRow): DashboardListing {
+  const lj = row.listing_json || {};
+
+  const title =
+    firstString(row.title, "").trim() ||
+    firstString(lj?.title, "").trim() ||
+    "Untitled Listing";
+
+  const date = row.updated_at || row.created_at || new Date().toISOString();
+
+  const priceFromRow = typeof row.price === "number" && Number.isFinite(row.price) ? row.price : null;
+  const priceFromJson =
+    typeof lj?.price_suggestion?.optimal === "number"
+      ? Number(lj.price_suggestion.optimal)
+      : typeof lj?.price === "number"
+        ? Number(lj.price)
+        : null;
+
+  const price = priceFromRow ?? priceFromJson ?? 0;
+
+  const marketplace = (row.marketplace ?? lj?.marketplace ?? "ebay") as string;
+  const platforms = [marketplace === "ebay" ? "eBay" : marketplace].filter(Boolean);
+
+  const views = typeof lj?.stats?.views === "number" ? lj.stats.views : 0;
+  const likes = typeof lj?.stats?.likes === "number" ? lj.stats.likes : 0;
+
+  return {
+    id: row.id,
+    title,
+    image: pickCoverImage(row),
+    platforms,
+    date,
+    price,
+    status: (row.status ?? lj?.status ?? "draft") as ListingStatus,
+    views,
+    likes,
+    ebay_listing_url: row.ebay_listing_url ?? lj?.ebay_listing_url ?? null,
+  };
+}
 
 const DashboardPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { user, workspaceId, isLoading: authLoading } = useAuth();
+
   const [activeFilter, setActiveFilter] = useState<string>("all");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Mock data - in a real app, this would come from an API
-  const listingItems = [
-    {
-      id: "1",
-      title: "Vintage Tommy Hilfiger Denim Jacket",
-      image:
-        "https://images.pexels.com/photos/1598507/pexels-photo-1598507.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2",
-      platforms: ["eBay", "Poshmark"],
-      date: "2023-09-15",
-      price: 89.99,
-      status: "active",
-      views: 243,
-      likes: 18,
-    },
-    {
-      id: "2",
-      title: "Nike Air Jordan 1 Retro High OG",
-      image:
-        "https://images.pexels.com/photos/1598505/pexels-photo-1598505.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2",
-      platforms: ["eBay", "Mercari"],
-      date: "2023-09-10",
-      price: 189.99,
-      status: "active",
-      views: 521,
-      likes: 47,
-    },
-    {
-      id: "3",
-      title: "Vintage Levi's 501 Jeans",
-      image:
-        "https://images.pexels.com/photos/9580121/pexels-photo-9580121.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2",
-      platforms: ["Poshmark", "Mercari"],
-      date: "2023-09-05",
-      price: 65.0,
-      status: "draft",
-      views: 0,
-      likes: 0,
-    },
-    {
-      id: "4",
-      title: "Apple iPhone 13 Pro - 256GB",
-      image:
-        "https://images.pexels.com/photos/5749517/pexels-photo-5749517.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2",
-      platforms: ["eBay", "Mercari"],
-      date: "2023-09-01",
-      price: 849.99,
-      status: "sold",
-      views: 982,
-      likes: 32,
-    },
-    {
-      id: "5",
-      title: "Sony WH-1000XM4 Wireless Headphones",
-      image:
-        "https://images.pexels.com/photos/3394666/pexels-photo-3394666.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2",
-      platforms: ["eBay", "Mercari"],
-      date: "2023-08-28",
-      price: 249.99,
-      status: "active",
-      views: 312,
-      likes: 15,
-    },
-  ];
+  const [loading, setLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [listingItems, setListingItems] = useState<DashboardListing[]>([]);
 
-  // Filter and sort listings
-  const filteredListings = listingItems
-    .filter((item) => {
-      if (activeFilter === "all") return true;
-      return item.status === activeFilter;
-    })
-    .filter((item) => {
-      if (!searchQuery) return true;
-      return item.title.toLowerCase().includes(searchQuery.toLowerCase());
-    })
-    .sort((a, b) => {
-      const dateA = new Date(a.date).getTime();
-      const dateB = new Date(b.date).getTime();
-      return sortDirection === "asc" ? dateA - dateB : dateB - dateA;
-    });
+  const canQuery = !!user?.id && !!workspaceId && !authLoading;
+
+  const fetchListings = useCallback(async () => {
+    setLoadError(null);
+
+    if (!canQuery) {
+      setListingItems([]);
+      setLoading(false);
+      if (!authLoading) setLoadError("You must be logged in to view your dashboard.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Fetch all statuses for dashboard; filter client-side by activeFilter.
+      const { data, error } = await supabase
+        .from("listings")
+        .select(
+          "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at"
+        )
+        .eq("workspace_id", workspaceId) // CRITICAL: tenant scoping
+        .order("updated_at", { ascending: false, nullsFirst: false });
+
+      if (error) throw error;
+
+      const rows = (data ?? []) as ListingRow[];
+      const normalized = rows.map(normalizeListing);
+
+      setListingItems(normalized);
+    } catch (e: any) {
+      console.error("[DashboardPage] Failed to load listings:", e);
+      setListingItems([]);
+      setLoadError(e?.message || "Failed to load listings.");
+    } finally {
+      setLoading(false);
+    }
+  }, [canQuery, authLoading, workspaceId]);
+
+  useEffect(() => {
+    void fetchListings();
+  }, [fetchListings]);
+
+  const filteredListings = useMemo(() => {
+    return listingItems
+      .filter((item) => {
+        if (activeFilter === "all") return true;
+        return item.status === activeFilter;
+      })
+      .filter((item) => {
+        if (!searchQuery) return true;
+        return item.title.toLowerCase().includes(searchQuery.toLowerCase());
+      })
+      .sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return sortDirection === "asc" ? dateA - dateB : dateB - dateA;
+      });
+  }, [listingItems, activeFilter, searchQuery, sortDirection]);
 
   const toggleSortDirection = () => {
-    setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
   };
+
+  const counts = useMemo(() => {
+    const all = listingItems.length;
+    const active = listingItems.filter((i) => i.status === "active").length;
+    const draft = listingItems.filter((i) => i.status === "draft").length;
+    const sold = listingItems.filter((i) => i.status === "sold").length;
+    return { all, active, draft, sold };
+  }, [listingItems]);
+
+  if (authLoading || loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
+          <p className="text-gray-600">{authLoading ? "Checking session..." : "Loading dashboard..."}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto px-4 py-8 md:py-12">
       <div className="max-w-6xl mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-4 md:mb-0">
-            Your Listings
-          </h1>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-4">
+          <h1 className="text-3xl font-bold text-gray-900">Your Listings</h1>
 
-          {/* ✅ FIX: /upload does not exist in your router; use /create-listing */}
-          <Link
-            to="/create-listing"
-            className="btn btn-primary flex items-center justify-center"
-          >
-            <PlusCircle className="w-5 h-5 mr-2" />
-            Create New Listing
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/create-listing" className="btn btn-primary flex items-center justify-center">
+              <PlusCircle className="w-5 h-5 mr-2" />
+              Create New Listing
+            </Link>
 
-          <TestDbPanel />
+            <button
+              type="button"
+              onClick={() => fetchListings()}
+              className="btn border border-gray-300 text-gray-700 hover:bg-gray-100 px-4 py-2 rounded-md font-semibold"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
+
+        <TestDbPanel />
+
+        {loadError && (
+          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">{loadError}</div>
+        )}
 
         {/* Filters and Search */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex flex-wrap gap-2">
-              <FilterButton
-                label="All"
-                isActive={activeFilter === "all"}
-                onClick={() => setActiveFilter("all")}
-                count={listingItems.length}
-              />
+              <FilterButton label="All" isActive={activeFilter === "all"} onClick={() => setActiveFilter("all")} count={counts.all} />
               <FilterButton
                 label="Active"
                 isActive={activeFilter === "active"}
                 onClick={() => setActiveFilter("active")}
-                count={listingItems.filter((item) => item.status === "active").length}
+                count={counts.active}
               />
               <FilterButton
                 label="Drafts"
                 isActive={activeFilter === "draft"}
                 onClick={() => setActiveFilter("draft")}
-                count={listingItems.filter((item) => item.status === "draft").length}
+                count={counts.draft}
               />
               <FilterButton
                 label="Sold"
                 isActive={activeFilter === "sold"}
                 onClick={() => setActiveFilter("sold")}
-                count={listingItems.filter((item) => item.status === "sold").length}
+                count={counts.sold}
               />
             </div>
 
@@ -169,21 +287,13 @@ const DashboardPage: React.FC = () => {
                 />
               </div>
 
-              <button className="btn btn-outline flex items-center" type="button">
+              <button className="btn btn-outline flex items-center" type="button" disabled>
                 <Filter className="w-4 h-4 mr-1.5" />
                 Filter
               </button>
 
-              <button
-                className="btn btn-outline flex items-center"
-                onClick={toggleSortDirection}
-                type="button"
-              >
-                {sortDirection === "asc" ? (
-                  <ArrowUp className="w-4 h-4 mr-1.5" />
-                ) : (
-                  <ArrowDown className="w-4 h-4 mr-1.5" />
-                )}
+              <button className="btn btn-outline flex items-center" onClick={toggleSortDirection} type="button">
+                {sortDirection === "asc" ? <ArrowUp className="w-4 h-4 mr-1.5" /> : <ArrowDown className="w-4 h-4 mr-1.5" />}
                 Date
               </button>
             </div>
@@ -194,48 +304,34 @@ const DashboardPage: React.FC = () => {
         <div className="space-y-4">
           {filteredListings.length === 0 ? (
             <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-8 text-center">
-              <h3 className="text-lg font-semibold text-gray-700 mb-2">
-                No listings found
-              </h3>
-              <p className="text-gray-500 mb-4">
-                {searchQuery
-                  ? "Try a different search term"
-                  : "Create your first listing to get started"}
-              </p>
+              <h3 className="text-lg font-semibold text-gray-700 mb-2">No listings found</h3>
+              <p className="text-gray-500 mb-4">{searchQuery ? "Try a different search term" : "Create your first listing to get started"}</p>
 
-              {/* ✅ FIX: /upload does not exist in your router; use /create-listing */}
-              <Link
-                to="/create-listing"
-                className="btn btn-primary inline-flex items-center"
-              >
+              <Link to="/create-listing" className="btn btn-primary inline-flex items-center">
                 <PlusCircle className="w-4 h-4 mr-2" />
                 Create New Listing
               </Link>
             </div>
           ) : (
-            filteredListings.map((listing) => (
-              <ListingCard key={listing.id} listing={listing} />
-            ))
+            filteredListings.map((listing) => <ListingCard key={listing.id} listing={listing} onRefresh={fetchListings} />)
           )}
         </div>
 
-        {/* Pagination */}
+        {/* Pagination (placeholder) */}
         {filteredListings.length > 0 && (
           <div className="flex justify-center mt-8">
             <nav className="flex items-center space-x-1">
-              <button className="btn btn-outline py-1.5 px-3" type="button">
+              <button className="btn btn-outline py-1.5 px-3" type="button" disabled>
                 Previous
               </button>
-              <button className="h-9 w-9 rounded-md bg-teal-50 text-teal-700 font-medium flex items-center justify-center" type="button">
+              <button
+                className="h-9 w-9 rounded-md bg-teal-50 text-teal-700 font-medium flex items-center justify-center"
+                type="button"
+                disabled
+              >
                 1
               </button>
-              <button className="h-9 w-9 rounded-md text-gray-700 hover:bg-gray-50 flex items-center justify-center" type="button">
-                2
-              </button>
-              <button className="h-9 w-9 rounded-md text-gray-700 hover:bg-gray-50 flex items-center justify-center" type="button">
-                3
-              </button>
-              <button className="btn btn-outline py-1.5 px-3" type="button">
+              <button className="btn btn-outline py-1.5 px-3" type="button" disabled>
                 Next
               </button>
             </nav>
@@ -253,47 +349,29 @@ interface FilterButtonProps {
   count: number;
 }
 
-const FilterButton: React.FC<FilterButtonProps> = ({
-  label,
-  isActive,
-  onClick,
-  count,
-}) => (
+const FilterButton: React.FC<FilterButtonProps> = ({ label, isActive, onClick, count }) => (
   <button
     className={`px-4 py-2 rounded-md text-sm font-medium flex items-center ${
-      isActive
-        ? "bg-teal-50 text-teal-700"
-        : "bg-white text-gray-700 hover:bg-gray-50"
+      isActive ? "bg-teal-50 text-teal-700" : "bg-white text-gray-700 hover:bg-gray-50"
     }`}
     onClick={onClick}
     type="button"
   >
     {label}
-    <span
-      className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
-        isActive ? "bg-teal-100 text-teal-800" : "bg-gray-100 text-gray-700"
-      }`}
-    >
+    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${isActive ? "bg-teal-100 text-teal-800" : "bg-gray-100 text-gray-700"}`}>
       {count}
     </span>
   </button>
 );
 
 interface ListingCardProps {
-  listing: {
-    id: string;
-    title: string;
-    image: string;
-    platforms: string[];
-    date: string;
-    price: number;
-    status: string;
-    views: number;
-    likes: number;
-  };
+  listing: DashboardListing;
+  onRefresh: () => Promise<void> | void;
 }
 
-const ListingCard: React.FC<ListingCardProps> = ({ listing }) => {
+const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
+  const navigate = useNavigate();
+  const { workspaceId } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const formatDate = (dateString: string) => {
@@ -314,20 +392,114 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing }) => {
       case "sold":
         return <span className="badge bg-purple-100 text-purple-800">Sold</span>;
       default:
-        return null;
+        return <span className="badge bg-gray-100 text-gray-800">{status}</span>;
     }
+  };
+
+  const handleDelete = async () => {
+    setIsMenuOpen(false);
+    if (!window.confirm("Are you sure you want to delete this listing?")) return;
+
+    try {
+      if (!workspaceId) throw new Error("Missing workspace. Please sign in again.");
+
+      const { error } = await supabase.from("listings").delete().eq("id", listing.id).eq("workspace_id", workspaceId);
+      if (error) throw error;
+
+      await onRefresh();
+    } catch (e: any) {
+      console.error("[DashboardPage] delete failed:", e);
+      window.alert(e?.message || "Failed to delete.");
+    }
+  };
+
+  const handleEdit = () => {
+    // Your ResultsPage expects query params mode=edit&listingId=...
+    navigate(`/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`);
+  };
+
+  const handleView = () => {
+    // For now, viewing is the same as edit mode in ResultsPage.
+    navigate(`/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`);
+  };
+
+  const handleDuplicate = async () => {
+    setIsMenuOpen(false);
+    try {
+      if (!workspaceId) throw new Error("Missing workspace. Please sign in again.");
+
+      const { data, error } = await supabase
+        .from("listings")
+        .select("id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at")
+        .eq("id", listing.id)
+        .eq("workspace_id", workspaceId)
+        .single();
+
+      if (error) throw error;
+
+      const row = data as ListingRow;
+      const lj = row.listing_json || {};
+      const nowIso = new Date().toISOString();
+
+      const insertPayload: any = {
+        workspace_id: workspaceId,
+        status: "draft",
+        marketplace: row.marketplace ?? "ebay",
+        title: `${(row.title ?? lj?.title ?? "Untitled").toString().slice(0, 70)} (Copy)`,
+        description: row.description ?? lj?.description ?? "",
+        category_path: row.category_path ?? lj?.category_path ?? null,
+        price: row.price ?? (typeof lj?.price_suggestion?.optimal === "number" ? lj.price_suggestion.optimal : 0),
+        currency: row.currency ?? "USD",
+        images: row.images ?? safeArray(lj?.images || lj?.image_urls),
+        listing_json: {
+          ...(lj || {}),
+          title: `${(row.title ?? lj?.title ?? "Untitled").toString().slice(0, 70)} (Copy)`,
+          duplicated_from: row.id,
+          duplicated_at: nowIso,
+        },
+      };
+
+      const ins = await supabase.from("listings").insert(insertPayload).select("id").single();
+      if (ins.error) throw ins.error;
+
+      await onRefresh();
+      navigate(`/results?mode=edit&listingId=${encodeURIComponent((ins.data as any).id)}`);
+    } catch (e: any) {
+      console.error("[DashboardPage] duplicate failed:", e);
+      window.alert(e?.message || "Failed to duplicate.");
+    }
+  };
+
+  const handleOpenMarketplace = () => {
+    setIsMenuOpen(false);
+    if (listing.ebay_listing_url) {
+      window.open(listing.ebay_listing_url, "_blank", "noopener,noreferrer");
+    } else {
+      window.alert("No marketplace URL saved for this listing.");
+    }
+  };
+
+  const handleDownloadJson = () => {
+    setIsMenuOpen(false);
+    const blob = new Blob([JSON.stringify(listing, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `listing-${listing.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden transition-all hover:shadow-md">
       <div className="flex flex-col sm:flex-row">
         {/* Image */}
-        <div className="sm:w-48 h-48 sm:h-auto">
-          <img
-            src={listing.image}
-            alt={listing.title}
-            className="w-full h-full object-cover"
-          />
+        <div className="sm:w-48 h-48 sm:h-auto bg-gray-100">
+          {listing.image ? (
+            <img src={listing.image} alt={listing.title} className="w-full h-full object-cover" loading="lazy" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No image</div>
+          )}
         </div>
 
         {/* Content */}
@@ -335,32 +507,30 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing }) => {
           {/* Main Info */}
           <div className="flex-1">
             <div className="flex justify-between">
-              <h3 className="text-lg font-semibold text-gray-900 mb-1 line-clamp-2">
-                {listing.title}
-              </h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1 line-clamp-2">{listing.title}</h3>
               <div className="relative">
                 <button
                   className="p-1 rounded-md hover:bg-gray-100 transition-colors"
-                  onClick={() => setIsMenuOpen(!isMenuOpen)}
+                  onClick={() => setIsMenuOpen((v) => !v)}
                   type="button"
                 >
                   <MoreHorizontal className="w-5 h-5 text-gray-500" />
                 </button>
 
-                {/* Dropdown Menu */}
                 {isMenuOpen && (
-                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-100 z-10">
+                  <div className="absolute right-0 mt-1 w-56 bg-white rounded-md shadow-lg border border-gray-100 z-10">
                     <div className="py-1">
-                      <ActionButton icon={<Eye className="w-4 h-4" />} label="View" />
-                      <ActionButton icon={<Edit className="w-4 h-4" />} label="Edit" />
-                      <ActionButton icon={<Copy className="w-4 h-4" />} label="Duplicate" />
-                      <ActionButton icon={<Download className="w-4 h-4" />} label="Download" />
-                      <ActionButton icon={<ExternalLink className="w-4 h-4" />} label="Open in Marketplace" />
-                      <div className="border-t border-gray-100 my-1"></div>
+                      <ActionButton icon={<Eye className="w-4 h-4" />} label="View" onClick={handleView} />
+                      <ActionButton icon={<Edit className="w-4 h-4" />} label="Edit" onClick={handleEdit} />
+                      <ActionButton icon={<Copy className="w-4 h-4" />} label="Duplicate to Draft" onClick={handleDuplicate} />
+                      <ActionButton icon={<Download className="w-4 h-4" />} label="Download JSON" onClick={handleDownloadJson} />
+                      <ActionButton icon={<ExternalLink className="w-4 h-4" />} label="Open in Marketplace" onClick={handleOpenMarketplace} />
+                      <div className="border-t border-gray-100 my-1" />
                       <ActionButton
                         icon={<Trash className="w-4 h-4 text-red-500" />}
                         label="Delete"
                         labelClass="text-red-500"
+                        onClick={handleDelete}
                       />
                     </div>
                   </div>
@@ -368,65 +538,53 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing }) => {
               </div>
             </div>
 
-            {/* Price and Date */}
             <div className="flex items-center mb-3">
-              <span className="font-medium text-gray-900">
-                ${listing.price.toFixed(2)}
-              </span>
+              <span className="font-medium text-gray-900">${Number(listing.price || 0).toFixed(2)}</span>
               <span className="mx-2 text-gray-300">•</span>
-              <span className="text-sm text-gray-500">
-                Created {formatDate(listing.date)}
-              </span>
+              <span className="text-sm text-gray-500">Updated {formatDate(listing.date)}</span>
             </div>
 
-            {/* Platforms */}
             <div className="flex flex-wrap gap-1.5 mb-3">
               {listing.platforms.map((platform) => (
-                <span
-                  key={platform}
-                  className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded-full"
-                >
+                <span key={platform} className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded-full">
                   {platform}
                 </span>
               ))}
             </div>
 
-            {/* Status Badge */}
-            {getStatusBadge(listing.status)}
+            {getStatusBadge(String(listing.status))}
           </div>
 
-          {/* Stats and Actions */}
           <div className="flex sm:flex-col justify-between sm:justify-center sm:items-end sm:ml-6 mt-4 sm:mt-0 pt-4 sm:pt-0 border-t sm:border-t-0 border-gray-100">
-            {/* Stats */}
-            {listing.status !== "draft" && (
+            {String(listing.status) !== "draft" && (
               <div className="flex sm:flex-col sm:items-end gap-3 sm:gap-1 mb-4">
                 <div className="text-sm">
-                  <span className="text-gray-500">Views:</span>{" "}
-                  <span className="font-medium text-gray-900">{listing.views}</span>
+                  <span className="text-gray-500">Views:</span> <span className="font-medium text-gray-900">{listing.views}</span>
                 </div>
                 <div className="text-sm">
-                  <span className="text-gray-500">Likes:</span>{" "}
-                  <span className="font-medium text-gray-900">{listing.likes}</span>
+                  <span className="text-gray-500">Likes:</span> <span className="font-medium text-gray-900">{listing.likes}</span>
                 </div>
               </div>
             )}
 
-            {/* Actions */}
             <div className="flex sm:flex-col gap-2">
-              <Link
-                to={`/results/${listing.id}`}
+              <button
+                onClick={handleView}
                 className="btn btn-outline py-1.5 text-sm px-3 flex items-center justify-center"
+                type="button"
               >
                 <Eye className="w-4 h-4 mr-1.5" />
                 View
-              </Link>
-              <Link
-                to={`/upload?edit=${listing.id}`}
+              </button>
+
+              <button
+                onClick={handleEdit}
                 className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center"
+                type="button"
               >
                 <Edit className="w-4 h-4 mr-1.5" />
                 Edit
-              </Link>
+              </button>
             </div>
           </div>
         </div>
@@ -439,10 +597,15 @@ interface ActionButtonProps {
   icon: React.ReactNode;
   label: string;
   labelClass?: string;
+  onClick?: () => void;
 }
 
-const ActionButton: React.FC<ActionButtonProps> = ({ icon, label, labelClass = "" }) => (
-  <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center" type="button">
+const ActionButton: React.FC<ActionButtonProps> = ({ icon, label, labelClass = "", onClick }) => (
+  <button
+    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+    type="button"
+    onClick={onClick}
+  >
     <span className="mr-3 text-gray-500">{icon}</span>
     <span className={labelClass}>{label}</span>
   </button>
