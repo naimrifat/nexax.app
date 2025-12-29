@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+// src/components/AuthModal.tsx
+import React, { useEffect, useMemo, useState } from "react";
+import { X } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
 
-export type AuthMode = 'login' | 'signup' | 'reset';
+export type AuthMode = "login" | "signup" | "reset";
 
 interface AuthModalProps {
   open: boolean;
@@ -12,88 +13,85 @@ interface AuthModalProps {
 }
 
 const titles: Record<AuthMode, string> = {
-  login: 'Log in to SnapLine',
-  signup: 'Create your SnapLine account',
-  reset: 'Reset your password',
+  login: "Log in to SnapLine",
+  signup: "Create your SnapLine account",
+  reset: "Reset your password",
 };
 
 const primaryLabels: Record<AuthMode, string> = {
-  login: 'Log In',
-  signup: 'Create Account',
-  reset: 'Update Password',
+  login: "Log In",
+  signup: "Create Account",
+  reset: "Update Password",
 };
 
 const AuthModal: React.FC<AuthModalProps> = ({ open, initialMode, onClose, onModeChange }) => {
   const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [status, setStatus] = useState<string>('');
-  const [error, setError] = useState<string>('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [status, setStatus] = useState<string>("");
+  const [error, setError] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const { signUp, login, resetPassword, user } = useAuth();
 
+  // Keep internal mode aligned when the modal is opened or when parent changes initialMode.
   useEffect(() => {
-    if (open) {
-      setMode(initialMode);
-      setStatus('');
-      setError('');
-      setPassword('');
-      setConfirmPassword('');
-    }
+    if (!open) return;
+    setMode(initialMode);
+    setStatus("");
+    setError("");
+    setPassword("");
+    setConfirmPassword("");
   }, [open, initialMode]);
 
-useEffect(() => {
-  if (!open) return;
-  onModeChange?.(mode);
-}, [mode, open, onModeChange]);
-
+  // Only notify parent when the modal is actually open (prevents “auto-open” feedback loops).
   useEffect(() => {
-    if (user?.email) {
-      setEmail(user.email);
-    }
+    if (!open) return;
+    onModeChange?.(mode);
+  }, [mode, open, onModeChange]);
+
+  // If a user is logged in, prefill email.
+  useEffect(() => {
+    if (user?.email) setEmail(user.email);
   }, [user?.email]);
 
   const description = useMemo(() => {
-    if (mode === 'login') return 'Access your dashboard and saved listings.';
-    if (mode === 'signup') return 'Sign up with your email to start generating listings.';
-    return 'Enter the email you registered with and set a new password.';
+    if (mode === "login") return "Access your dashboard and saved listings.";
+    if (mode === "signup") return "Sign up with your email to start generating listings.";
+    return "Enter the email you registered with and set a new password.";
   }, [mode]);
 
-  const showPasswordConfirm = mode === 'signup' || mode === 'reset';
+  const showPasswordConfirm = mode === "signup" || mode === "reset";
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSubmitting(true);
-    setError('');
-    setStatus('');
+    setError("");
+    setStatus("");
 
     if (showPasswordConfirm && password !== confirmPassword) {
-      setError('Passwords do not match.');
+      setError("Passwords do not match.");
       setSubmitting(false);
       return;
     }
 
     try {
-      if (mode === 'signup') {
+      if (mode === "signup") {
         await signUp(email, password);
-        setStatus('Account created. You are signed in and ready to go.');
+        setStatus("Account created. You are signed in and ready to go.");
         onClose();
-      } else if (mode === 'login') {
+      } else if (mode === "login") {
         await login(email, password);
-        setStatus('Welcome back!');
+        setStatus("Welcome back!");
         onClose();
       } else {
         await resetPassword(email, password);
-        setStatus('Password updated. You can log in with your new password.');
-        setMode('login');
+        setStatus("Password updated. You can log in with your new password.");
+        setMode("login");
       }
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Something went wrong. Please try again.');
-      }
+      if (err instanceof Error) setError(err.message);
+      else setError("Something went wrong. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -122,11 +120,15 @@ useEffect(() => {
           <p className="text-sm text-gray-600">{description}</p>
 
           {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
           )}
 
           {status && (
-            <div className="rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">{status}</div>
+            <div className="rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">
+              {status}
+            </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -147,7 +149,7 @@ useEffect(() => {
 
             <div className="space-y-1">
               <label className="text-sm font-medium text-gray-800" htmlFor="auth-password">
-                {mode === 'reset' ? 'New password' : 'Password'}
+                {mode === "reset" ? "New password" : "Password"}
               </label>
               <input
                 id="auth-password"
@@ -184,23 +186,23 @@ useEffect(() => {
               disabled={submitting}
               className="w-full rounded-xl bg-teal-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-teal-200 transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {submitting ? 'Please wait…' : primaryLabels[mode]}
+              {submitting ? "Please wait…" : primaryLabels[mode]}
             </button>
           </form>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4 text-sm text-gray-600">
-            {mode !== 'login' && (
-              <button className="text-teal-700 hover:underline" onClick={() => setMode('login')}>
+            {mode !== "login" && (
+              <button type="button" className="text-teal-700 hover:underline" onClick={() => setMode("login")}>
                 Back to Log In
               </button>
             )}
-            {mode !== 'signup' && (
-              <button className="text-teal-700 hover:underline" onClick={() => setMode('signup')}>
+            {mode !== "signup" && (
+              <button type="button" className="text-teal-700 hover:underline" onClick={() => setMode("signup")}>
                 Create an account
               </button>
             )}
-            {mode !== 'reset' && (
-              <button className="text-gray-600 hover:underline" onClick={() => setMode('reset')}>
+            {mode !== "reset" && (
+              <button type="button" className="text-gray-600 hover:underline" onClick={() => setMode("reset")}>
                 Forgot password?
               </button>
             )}
