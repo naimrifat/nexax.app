@@ -38,6 +38,7 @@ type AiDetected = {
   style?: string;
   department?: string;
   type?: string;
+  sizeTypeHint?: string;
   [key: string]: any;
 };
 
@@ -77,7 +78,7 @@ function normalizeSpecifics(s: AiData['item_specifics']): ItemSpecific[] {
       .filter((x) => x && typeof (x as any).name === 'string')
       .map((x: any) => ({
         ...x,
-        value: x.value ?? '',
+        value: x.value ?? (x.multi ? [] : ''),
       }));
   }
   if (typeof s === 'object') {
@@ -94,6 +95,25 @@ function firstValue(v: string | string[] | undefined): string {
   return v ?? '';
 }
 
+function isHostedImageUrl(u: string): boolean {
+  const s = String(u || '').trim();
+  if (!s) return false;
+  // hard block local/blob/data
+  if (s.startsWith('blob:')) return false;
+  if (s.startsWith('data:')) return false;
+  // allow https/http only
+  return /^https?:\/\//i.test(s);
+}
+
+function sanitizeHostedImages(arr: any): string[] {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((u) => typeof u === 'string')
+    .map((u) => u.trim())
+    .filter(Boolean)
+    .filter(isHostedImageUrl);
+}
+
 /* ---------- Size helpers ---------- */
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
   const st = specs.find((s) => /size type/i.test(s.name || ''));
@@ -105,7 +125,11 @@ function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
 
-function filterSizeOptionsBySizeType(sizeType: string, allOptions: string[] = [], categoryPath: string = ''): string[] {
+function filterSizeOptionsBySizeType(
+  sizeType: string,
+  allOptions: string[] = [],
+  categoryPath: string = ''
+): string[] {
   return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
 }
 
@@ -326,34 +350,17 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
 }
 
 /* ---------- Tenancy (RPC + auth) ---------- */
-/**
- * IMPORTANT:
- * - workspaceId is used by your RLS to scope rows
- * - authUserId MUST be the authenticated Supabase user id (auth.uid())
- * - internalUserId is optional (your app's internal users table id)
- */
 type Tenancy = { workspaceId: string; internalUserId: string; authUserId: string };
 
 async function ensureTenancyRpc(): Promise<Tenancy> {
-  // 1) Fast local check (no network call like getUser())
-  const { data: sessionData, error: sessionErr } = await withTimeout(
-    supabase.auth.getSession(),
-    5000,
-    'auth.getSession'
-  );
+  const { data: sessionData, error: sessionErr } = await withTimeout(supabase.auth.getSession(), 5000, 'auth.getSession');
   if (sessionErr) throw sessionErr;
 
   const authUserId = sessionData?.session?.user?.id;
   console.log('[Tenancy] session ok', { authUserId });
-
   if (!authUserId) throw new Error('Not authenticated');
 
-  // 2) RPC (DB) — should be quick; if it’s slow, we’ll surface that separately
-  const { data, error } = await withTimeout(
-    supabase.rpc('ensure_user_and_workspace'),
-    8000,
-    'ensure_user_and_workspace'
-  );
+  const { data, error } = await withTimeout(supabase.rpc('ensure_user_and_workspace'), 8000, 'ensure_user_and_workspace');
   if (error) throw error;
 
   const row: any = Array.isArray(data) ? data[0] : data;
@@ -395,7 +402,7 @@ export default function ResultsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
 
-  // This is the DB listing id (uuid)
+  // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
 
   // ----------------------------
@@ -426,15 +433,17 @@ export default function ResultsPage() {
 
       if (!currentStr) {
         let candidate = '';
+
         if (lower.includes('brand')) candidate = aiData.brand || '';
-        else if (lower.includes('size type')) candidate = aiData.type || '';
-        else if (lower === 'size' || lower.includes('size')) candidate = aiData.size || '';
+        else if (lower.includes('size type')) candidate = aiData.sizeTypeHint || ''; // FIX
+        else if (lower === 'size' || lower.includes('waist') || lower.includes('inseam') || lower.includes('neck') || lower.includes('chest'))
+          candidate = aiData.size || '';
         else if (lower.includes('color') || lower.includes('colour')) candidate = aiData.color || '';
         else if (lower.includes('condition')) candidate = aiData.condition || '';
         else if (lower.includes('material')) candidate = aiData.material || '';
         else if (lower.includes('style')) candidate = aiData.style || '';
         else if (lower.includes('department')) candidate = aiData.department || '';
-        else if (lower === 'type' || lower.includes('type')) candidate = aiData.type || '';
+        else if (lower === 'type') candidate = aiData.type || '';
 
         if (candidate) current = field.multi ? [candidate] : candidate;
       }
@@ -506,11 +515,6 @@ export default function ResultsPage() {
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
         const sizeFiltered = applySizeTypeFilterToSpecifics(filled, categoryPathForFilter);
 
-        console.log('[Specifics] Loaded specifics:', {
-          total: sizeFiltered.length,
-          requiredMissing: sizeFiltered.filter((s) => s.required && !firstValue(s.value)).length,
-        });
-
         setSpecifics(sizeFiltered);
       } catch (err) {
         console.error('[Specifics] Error:', err);
@@ -533,7 +537,9 @@ export default function ResultsPage() {
       title: title.trim(),
       description: description.trim(),
       marketplace: 'ebay',
-      category: category ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs } : null,
+      category: category
+        ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs }
+        : null,
       category_id: category?.id || null,
       category_path: categoryPath || null,
       item_specifics: specifics.map((s) => ({
@@ -557,6 +563,13 @@ export default function ResultsPage() {
     };
   }, [category, images, mainImageIndex, price, specifics, keywords, title, description]);
 
+  const assertHostedImagesOrThrow = (arr: string[]) => {
+    const bad = (arr || []).filter((u) => !isHostedImageUrl(u));
+    if (bad.length) {
+      throw new Error('Images must be hosted URLs (Cloudinary). Please go back and re-upload.');
+    }
+  };
+
   // ----------------------------
   // Initial load
   // ----------------------------
@@ -574,17 +587,16 @@ export default function ResultsPage() {
         const listingIdParam = urlParams.get('listingId');
         const sessionId = urlParams.get('session');
 
-        // Warm tenancy (also validates auth)
         await ensureTenancy();
 
-        // EDIT MODE: load from Supabase by listingId
+        // EDIT MODE
         if (mode === 'edit' && listingIdParam) {
-          console.log('[ResultsPage] Edit mode loading listing:', { listingId: listingIdParam });
-
           const { data, error: readErr } = await withTimeout(
             supabase
               .from('listings')
-              .select('id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at')
+              .select(
+                'id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at'
+              )
               .eq('id', listingIdParam)
               .single(),
             20000,
@@ -609,11 +621,13 @@ export default function ResultsPage() {
                 : String(lj?.price_suggestion?.optimal ?? '0.00');
           setPrice(priceVal);
 
-          const imgs: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
+          const imgsRaw: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
+          const imgs = sanitizeHostedImages(imgsRaw);
           setImages(imgs);
           setMainImageIndex(0);
 
-          const kws = Array.isArray(lj.keywords) ? lj.keywords.join(', ') : typeof lj.keywords === 'string' ? lj.keywords : '';
+          const kws =
+            Array.isArray(lj.keywords) ? lj.keywords.join(', ') : typeof lj.keywords === 'string' ? lj.keywords : '';
           setKeywords(kws);
 
           const catFromJson = lj.category || null;
@@ -642,7 +656,7 @@ export default function ResultsPage() {
           return;
         }
 
-        // CREATE MODE: load AI analysis
+        // CREATE MODE
         let wrapper: any = null;
         let analysis: any = null;
 
@@ -664,24 +678,26 @@ export default function ResultsPage() {
         aiSpecificsRef.current = normalizeSpecifics(analysis.item_specifics);
         aiDetectedRef.current = analysis.detected || {};
 
-        setTitle(analysis.title ?? '');
-        setDescription(analysis.description ?? '');
+        setTitle(String(analysis.title ?? ''));
+        setDescription(String(analysis.description ?? ''));
 
         const optimal = analysis.price_suggestion?.optimal;
         setPrice(typeof optimal === 'number' ? optimal.toFixed(2) : String(optimal ?? '0.00'));
 
-        const imgs: string[] =
+        const imgsRaw: string[] =
           analysis.images ||
           analysis.image_urls ||
           wrapper.images ||
           wrapper.image_urls ||
           (analysis.image_url ? [analysis.image_url] : []) ||
           [];
+
+        const imgs = sanitizeHostedImages(imgsRaw);
         setImages(imgs);
         setMainImageIndex(0);
 
         setKeywords(Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? ''));
-        setCategorySuggestions(analysis.category_suggestions ?? []);
+        setCategorySuggestions(Array.isArray(analysis.category_suggestions) ? analysis.category_suggestions : []);
 
         const initialCategory: CategoryWithPath | null = analysis.category ?? null;
         setCategory(initialCategory);
@@ -760,23 +776,20 @@ export default function ResultsPage() {
     setDraftStatus('');
 
     try {
-      const { workspaceId, internalUserId } = await ensureTenancy();
+      const { workspaceId, internalUserId, authUserId } = await ensureTenancy();
       if (!workspaceId) throw new Error('No workspaceId resolved');
 
       const listingData = buildListingJson();
 
       const orderedImages: string[] = Array.isArray(listingData.images) ? listingData.images : [];
+      assertHostedImagesOrThrow(orderedImages);
+
       const categoryPath = listingData.category_path || '';
       const priceNum = Number(listingData.price_suggestion?.optimal ?? 0) || 0;
 
-      /**
-       * IMPORTANT RLS FIX:
-       * created_by should be auth.uid() unless your DB column explicitly stores internal user ids.
-       * This aligns saving with reading under your current RLS approach.
-       */
       const payload: any = {
         workspace_id: workspaceId,
-        created_by: authUserId, // <-- FIX (was internalUserId)
+        created_by: authUserId, // FIX: must be auth.uid() in typical RLS
         status: 'draft',
         marketplace: 'ebay',
         title: listingData.title || 'Untitled Listing',
@@ -788,7 +801,6 @@ export default function ResultsPage() {
         images: orderedImages,
         listing_json: {
           ...listingData,
-          // Optional: keep internal id for debugging/analytics without breaking RLS
           internal_user_id: internalUserId,
         },
       };
@@ -796,7 +808,6 @@ export default function ResultsPage() {
       let savedId = listingId;
 
       if (!listingId) {
-        console.log('[Draft] insert start:', { workspaceId, authUserId });
         const { data, error: insertErr } = await withTimeout(
           supabase.from('listings').insert(payload).select('id').single(),
           7000,
@@ -805,7 +816,6 @@ export default function ResultsPage() {
         if (insertErr) throw insertErr;
         savedId = (data as any)?.id;
       } else {
-        console.log('[Draft] update start:', { id: listingId, workspaceId, authUserId });
         const { data, error: updateErr } = await withTimeout(
           supabase.from('listings').update(payload).eq('id', listingId).select('id').single(),
           25000,
@@ -819,7 +829,6 @@ export default function ResultsPage() {
 
       setListingId(savedId);
       setDraftStatus('Draft saved.');
-      console.log('[Draft] save success:', { id: savedId });
 
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
@@ -849,6 +858,7 @@ export default function ResultsPage() {
       setPublishing(true);
 
       const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
+      assertHostedImagesOrThrow(orderedImages);
 
       const listing_data = {
         title: title.trim(),
@@ -870,15 +880,13 @@ export default function ResultsPage() {
         price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       };
 
-      console.log('[Publish] start:', { listingId, images: orderedImages.length });
-
       const res = await fetch('/api/publish-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listing_data, images: orderedImages, listingId }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         console.error('[Publish] error:', data);
         alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
@@ -888,7 +896,7 @@ export default function ResultsPage() {
       alert('Your listing has been sent to eBay! It may take a minute to appear.');
     } catch (err: any) {
       console.error('[Publish] unexpected error:', err);
-      alert(`An unexpected error occurred while publishing: ${err?.message || String(err)}`);
+      alert(err?.message || 'An unexpected error occurred while publishing.');
     } finally {
       setPublishing(false);
     }
