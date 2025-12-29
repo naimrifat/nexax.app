@@ -91,11 +91,12 @@ export default function DraftsPage() {
     setLoadError(null);
 
     try {
-      // Ensure user is logged in (good UX). RLS may still block reads if not.
-      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-      if (sessionErr) throw sessionErr;
+const { data: userData, error: userErr } = await supabase.auth.getUser();
+if (userErr) throw userErr;
 
-      const uid = sessionData?.session?.user?.id;
+const uid = userData?.user?.id;
+if (!uid) throw new Error('Not authenticated');
+      
       if (!uid) {
         setDrafts([]);
         setLoadError('You must be logged in to view drafts.');
