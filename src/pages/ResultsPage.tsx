@@ -346,7 +346,7 @@ type Tenancy = { workspaceId: string; internalUserId: string; authUserId: string
 
 export default function ResultsPage() {
   const navigate = useNavigate();
-  const { user, workspaceId, internalUserId, isLoading: authLoading } = useAuth();
+  const { user, workspaceId, internalUserId, isLoading: authLoading, refreshTenancy } = useAuth();
 
   // ----------------------------
   // State
@@ -389,9 +389,19 @@ export default function ResultsPage() {
   const ensureTenancy = useCallback(async (): Promise<Tenancy> => {
     if (authLoading) throw new Error('Auth still loading');
     if (!user?.id) throw new Error('Not authenticated');
+
+    // If tenancy isn't ready yet, try one refresh (AuthContext runs the RPC).
+    if (!workspaceId || !internalUserId) {
+      try {
+        await refreshTenancy();
+      } catch {
+        // ignore; next check will throw a clear error
+      }
+    }
+
     if (!workspaceId || !internalUserId) throw new Error('Tenancy not ready');
     return { authUserId: user.id, workspaceId, internalUserId };
-  }, [authLoading, user?.id, workspaceId, internalUserId]);
+  }, [authLoading, user?.id, workspaceId, internalUserId, refreshTenancy]);
 
   // ----------------------------
   // Helpers
@@ -444,6 +454,8 @@ export default function ResultsPage() {
     async (categoryId: string, categoryPathForFilter: string) => {
       setLoadingSpecifics(true);
       try {
+        setError(null);
+
         const response = await fetch('/api/ebay-categories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -511,9 +523,7 @@ export default function ResultsPage() {
       title: title.trim(),
       description: description.trim(),
       marketplace: 'ebay',
-      category: category
-        ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs }
-        : null,
+      category: category ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs } : null,
       category_id: category?.id || null,
       category_path: categoryPath || null,
       item_specifics: specifics.map((s) => ({
@@ -557,7 +567,7 @@ export default function ResultsPage() {
       return;
     }
 
-    // Wait until tenancy is ready (AuthContext ensures it).
+    // Wait until tenancy exists (or can be refreshed).
     if (!workspaceId || !internalUserId) return;
 
     didInitialLoadRef.current = true;
@@ -579,11 +589,9 @@ export default function ResultsPage() {
           const { data, error: readErr } = await withTimeout(
             supabase
               .from('listings')
-              .select(
-                'id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at'
-              )
+              .select('id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at')
               .eq('id', listingIdParam)
-              .eq('workspace_id', t.workspaceId) // CRITICAL: scope to workspace
+              .eq('workspace_id', t.workspaceId)
               .single(),
             20000,
             'read listing'
@@ -701,16 +709,7 @@ export default function ResultsPage() {
     };
 
     void run();
-  }, [
-    authLoading,
-    user?.id,
-    workspaceId,
-    internalUserId,
-    ensureTenancy,
-    fetchCategorySpecifics,
-    smartFillSpecifics,
-    navigate,
-  ]);
+  }, [authLoading, user?.id, workspaceId, internalUserId, ensureTenancy, fetchCategorySpecifics, smartFillSpecifics, navigate]);
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setCategory(newCategory);
@@ -805,7 +804,7 @@ export default function ResultsPage() {
             .from('listings')
             .update(payload)
             .eq('id', listingId)
-            .eq('workspace_id', t.workspaceId) // scope update to workspace
+            .eq('workspace_id', t.workspaceId)
             .select('id')
             .single(),
           20000,
