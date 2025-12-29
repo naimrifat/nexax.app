@@ -16,9 +16,10 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-function mapSessionToAuthUser(session: any): AuthUser | null {
-  const email = session?.user?.email;
-  const createdAt = session?.user?.created_at;
+// Map from a Supabase user object (preferred) to your AuthUser
+function mapUserToAuthUser(user: any): AuthUser | null {
+  const email = user?.email;
+  const createdAt = user?.created_at;
   if (!email || !createdAt) return null;
   return { email, createdAt };
 }
@@ -38,28 +39,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let mounted = true;
 
+    // Use getUser instead of getSession to avoid session timeouts on the critical path
     supabase.auth
-      .getSession()
-      .then(({ data, error }) => {
+      .getUser()
+      .then(async ({ data, error }) => {
         if (!mounted) return;
-        if (error) console.error("getSession error:", error);
-        setUser(mapSessionToAuthUser(data.session));
+        if (error) console.error("getUser error:", error);
+
+        const supaUser = data?.user ?? null;
+        setUser(mapUserToAuthUser(supaUser));
         setIsLoading(false);
+
+        if (supaUser) {
+          try {
+            await ensureWorkspaceOnce();
+          } catch {
+            // Keep app running; surface errors elsewhere if desired
+          }
+        }
       })
       .catch((err) => {
-        console.error("getSession threw:", err);
+        console.error("getUser threw:", err);
         if (!mounted) return;
         setUser(null);
         setIsLoading(false);
       });
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setUser(mapSessionToAuthUser(session));
-      if (session) {
+      const supaUser = session?.user ?? null;
+      setUser(mapUserToAuthUser(supaUser));
+
+      if (supaUser) {
         try {
           await ensureWorkspaceOnce();
         } catch {
-          // keep app running; surface errors elsewhere
+          // Keep app running; surface errors elsewhere if desired
         }
       }
     });
@@ -78,10 +92,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error } = await supabase.auth.signUp({ email: cleanEmail, password });
     if (error) throw error;
 
-const { data: userData, error: userErr } = await supabase.auth.getUser();
-if (userErr) throw userErr;
-if (userData?.user) {await ensureWorkspaceOnce();
-};
+    // Avoid getSession; ensure workspace if user exists
+    const { data: userData, error: userErr } = await supabase.auth.getUser();
+    if (userErr) throw userErr;
+
+    if (userData?.user) {
+      await ensureWorkspaceOnce();
+    }
+  };
 
   const login = async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
