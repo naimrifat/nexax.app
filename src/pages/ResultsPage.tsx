@@ -353,25 +353,38 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
 type Tenancy = { workspaceId: string; internalUserId: string; authUserId: string };
 
 async function ensureTenancyRpc(): Promise<Tenancy> {
-  const { data: sessionData, error: sessionErr } = await withTimeout(supabase.auth.getSession(), 10000, 'auth.getSession');
-  if (sessionErr) throw sessionErr;
+const { data: userData, error: userErr } = await withTimeout(
+  supabase.auth.getUser(),
+  10000,
+  'auth.getUser'
+);
 
-  const authUserId = sessionData?.session?.user?.id;
-  console.log('[Tenancy] session ok', { authUserId });
-  if (!authUserId) throw new Error('Not authenticated');
+if (userErr) throw userErr;
 
-  const { data, error } = await withTimeout(supabase.rpc('ensure_user_and_workspace'), 8000, 'ensure_user_and_workspace');
-  if (error) throw error;
+const authUserId = userData?.user?.id;
+console.log('[Tenancy] user ok', { authUserId });
 
-  const row: any = Array.isArray(data) ? data[0] : data;
+if (!authUserId) {
+  throw new Error('Not authenticated (no user returned by auth.getUser)');
+}
 
-  const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
-  const internalUserId = row?.user_id ?? row?.out_user_id;
+const { data, error } = await withTimeout(
+  supabase.rpc('ensure_user_and_workspace'),
+  8000,
+  'ensure_user_and_workspace'
+);
 
-  if (!workspaceId) throw new Error('ensure_user_and_workspace did not return workspace_id');
-  if (!internalUserId) throw new Error('ensure_user_and_workspace did not return user_id');
+if (error) throw error;
 
-  return { workspaceId, internalUserId, authUserId };
+const row: any = Array.isArray(data) ? data[0] : data;
+
+const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
+const internalUserId = row?.user_id ?? row?.out_user_id;
+
+if (!workspaceId) throw new Error('ensure_user_and_workspace did not return workspace_id');
+if (!internalUserId) throw new Error('ensure_user_and_workspace did not return user_id');
+
+return { workspaceId, internalUserId, authUserId };
 }
 
 export default function ResultsPage() {
