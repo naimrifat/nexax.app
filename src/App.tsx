@@ -1,5 +1,6 @@
+// src/App.tsx
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import DashboardPage from './pages/DashboardPage';
@@ -42,12 +43,22 @@ function App() {
                 }
               />
 
-              {/* Optional id is fine; query params like ?mode=edit still work */}
+              {/* Canonical results route (supports query params like ?mode=edit&listingId=...) */}
               <Route
-                path="/results/:id?"
+                path="/results"
                 element={
                   <ProtectedRoute>
                     <ResultsPage />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Backward-compat: if anything still links to /results/:id, redirect to /results?mode=edit&listingId=:id */}
+              <Route
+                path="/results/:id"
+                element={
+                  <ProtectedRoute>
+                    <ResultsIdRedirect />
                   </ProtectedRoute>
                 }
               />
@@ -61,6 +72,7 @@ function App() {
                 }
               />
 
+              {/* /create-listing is your entry flow; keep it pointing to HomePage if that's where upload/analyze starts */}
               <Route path="/create-listing" element={<HomePage />} />
 
               <Route path="*" element={<div style={{ padding: 24 }}>Page not found</div>} />
@@ -70,6 +82,22 @@ function App() {
       </AuthProvider>
     </Router>
   );
+}
+
+/**
+ * Redirect /results/:id -> /results?mode=edit&listingId=:id
+ * Keeps old links working while the app standardizes on query params.
+ */
+function ResultsIdRedirect() {
+  // Avoid importing useParams/useNavigate in App-level if you want; this is clean and contained.
+  const pathname = window.location.pathname; // "/results/<id>"
+  const parts = pathname.split('/').filter(Boolean);
+  const id = parts.length >= 2 ? parts[1] : '';
+
+  if (!id) return <Navigate to="/results" replace />;
+
+  const to = `/results?mode=edit&listingId=${encodeURIComponent(id)}`;
+  return <Navigate to={to} replace />;
 }
 
 export default App;
