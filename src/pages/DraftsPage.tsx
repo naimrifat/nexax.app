@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Trash2, Edit, Clock, Image as ImageIcon } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { useAuth } from '../context/AuthContext'; // adjust if your path differs
 
 type Draft = {
   id: string; // listings.id (uuid)
@@ -48,23 +49,23 @@ function toMoneyString(n: unknown, fallback = '0.00'): string {
 }
 
 function normalizeDraftFromRow(row: ListingRow): Draft {
-  // listing_json is your canonical payload; images is also stored as a top-level column.
   const lj = row.listing_json || {};
 
   const imagesFromColumn = safeArray(row.images);
   const imagesFromJson = safeArray(lj?.images) || safeArray(lj?.image_urls);
   const images = imagesFromColumn.length ? imagesFromColumn : imagesFromJson;
 
-  // Prefer explicit mainImageIndex from listing_json.
-  // If invalid, default to 0.
   const mainImageIndex =
     typeof lj?.mainImageIndex === 'number' && Number.isFinite(lj.mainImageIndex) ? lj.mainImageIndex : 0;
 
   const savedAt = row.updated_at || row.created_at || new Date().toISOString();
 
-  // Category path: prefer column, fallback to listing_json, then listing_json.category.path
   const categoryPath =
-    (row.category_path ?? lj?.category_path ?? lj?.category?.path ?? lj?.category?.breadcrumbs?.join?.(' > ') ?? '') as string;
+    (row.category_path ??
+      lj?.category_path ??
+      lj?.category?.path ??
+      lj?.category?.breadcrumbs?.join?.(' > ') ??
+      '') as string;
 
   return {
     id: row.id,
@@ -81,37 +82,37 @@ function normalizeDraftFromRow(row: ListingRow): Draft {
 
 export default function DraftsPage() {
   const navigate = useNavigate();
+  const { user, workspaceId, isLoading: authLoading } = useAuth();
 
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const canQuery = !!user?.id && !!workspaceId && !authLoading;
+
   const fetchDrafts = useCallback(async () => {
-    setLoading(true);
     setLoadError(null);
 
+    // Gate all DB reads on resolved auth + tenancy.
+    if (!canQuery) {
+      setDrafts([]);
+      setLoading(false);
+
+      if (authLoading) return;
+      setLoadError('You must be logged in to view drafts.');
+      return;
+    }
+
+    setLoading(true);
+
     try {
-const { data: userData, error: userErr } = await supabase.auth.getUser();
-if (userErr) throw userErr;
-
-const uid = userData?.user?.id;
-if (!uid) throw new Error('Not authenticated');
-      
-      if (!uid) {
-        setDrafts([]);
-        setLoadError('You must be logged in to view drafts.');
-        return;
-      }
-
-      // IMPORTANT:
-      // - Do NOT select draft_id or data (those columns do not exist in your table)
-      // - Use listing_json and images columns (matches your schema screenshots)
       const { data, error } = await supabase
         .from('listings')
         .select(
           'id,workspace_id,created_by,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at'
         )
         .eq('status', 'draft')
+        .eq('workspace_id', workspaceId) // CRITICAL: tenant filter
         .order('updated_at', { ascending: false, nullsFirst: false });
 
       if (error) throw error;
@@ -129,15 +130,15 @@ if (!uid) throw new Error('Not authenticated');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canQuery, authLoading, workspaceId]);
 
   useEffect(() => {
-    fetchDrafts();
+    // Only runs when auth/tenancy becomes available.
+    void fetchDrafts();
   }, [fetchDrafts]);
 
   const handleEditDraft = useCallback(
     (draftId: string) => {
-      // Canonical: edit by DB row id
       navigate(`/results?mode=edit&listingId=${encodeURIComponent(draftId)}`);
     },
     [navigate]
@@ -148,7 +149,10 @@ if (!uid) throw new Error('Not authenticated');
       if (!window.confirm('Are you sure you want to delete this draft?')) return;
 
       try {
-        const { error } = await supabase.from('listings').delete().eq('id', draftId);
+        // Optional extra safety: only delete within this workspace
+        if (!workspaceId) throw new Error('Missing workspace. Please sign in again.');
+
+        const { error } = await supabase.from('listings').delete().eq('id', draftId).eq('workspace_id', workspaceId);
         if (error) throw error;
 
         await fetchDrafts();
@@ -157,7 +161,7 @@ if (!uid) throw new Error('Not authenticated');
         window.alert(e?.message || 'Failed to delete draft.');
       }
     },
-    [fetchDrafts]
+    [fetchDrafts, workspaceId]
   );
 
   const formatDate = useCallback((dateString: string) => {
@@ -182,16 +186,14 @@ if (!uid) throw new Error('Not authenticated');
     });
   }, []);
 
-  const countLabel = useMemo(() => {
-    return `${drafts.length} saved ${drafts.length === 1 ? 'draft' : 'drafts'}`;
-  }, [drafts.length]);
+  const countLabel = useMemo(() => `${drafts.length} saved ${drafts.length === 1 ? 'draft' : 'drafts'}`, [drafts.length]);
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
-          <p className="text-gray-600">Loading drafts...</p>
+          <p className="text-gray-600">{authLoading ? 'Checking session...' : 'Loading drafts...'}</p>
         </div>
       </div>
     );
@@ -200,7 +202,6 @@ if (!uid) throw new Error('Not authenticated');
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="container mx-auto px-4 max-w-6xl">
-        {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -231,13 +232,10 @@ if (!uid) throw new Error('Not authenticated');
           </div>
 
           {loadError && (
-            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
-              {loadError}
-            </div>
+            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">{loadError}</div>
           )}
         </div>
 
-        {/* Drafts List */}
         {drafts.length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
             <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -267,15 +265,9 @@ if (!uid) throw new Error('Not authenticated');
                   key={draft.id}
                   className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-lg transition-shadow"
                 >
-                  {/* Image */}
                   <div className="relative h-48 bg-gray-100">
                     {coverSrc ? (
-                      <img
-                        src={coverSrc}
-                        alt={draft.title || 'Draft image'}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
+                      <img src={coverSrc} alt={draft.title || 'Draft image'} className="w-full h-full object-cover" loading="lazy" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <ImageIcon className="w-12 h-12 text-gray-300" />
@@ -289,7 +281,6 @@ if (!uid) throw new Error('Not authenticated');
                     )}
                   </div>
 
-                  {/* Content */}
                   <div className="p-4">
                     <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2 min-h-[3rem]">
                       {draft.title?.trim() ? draft.title : 'Untitled Draft'}
@@ -300,13 +291,10 @@ if (!uid) throw new Error('Not authenticated');
                       <span>{formatDate(draft.savedAt)}</span>
                     </div>
 
-                    {draft.categoryPath && (
-                      <div className="text-xs text-gray-500 mb-3 truncate">📁 {draft.categoryPath}</div>
-                    )}
+                    {draft.categoryPath && <div className="text-xs text-gray-500 mb-3 truncate">📁 {draft.categoryPath}</div>}
 
                     <div className="text-sm font-semibold text-teal-600 mb-4">${draft.price || '0.00'}</div>
 
-                    {/* Actions */}
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleEditDraft(draft.id)}
