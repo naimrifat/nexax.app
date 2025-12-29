@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import CategorySelector from '../components/CategorySelector';
 import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
 import { supabase } from '../../lib/supabaseClient';
-import { useAuth } from '../context/AuthContext'; // adjust path if different
+import { useAuth } from '../context/AuthContext'; // adjust if different
 
 type Category = {
   id: string;
@@ -341,51 +341,12 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-/* ---------- Tenancy (NO AUTH CALLS, NO SESSION CALLS) ---------- */
+/* ---------- Tenancy from AuthContext (single source of truth) ---------- */
 type Tenancy = { workspaceId: string; internalUserId: string; authUserId: string };
-
-async function resolveTenancyFromDb(authUserId: string): Promise<Tenancy> {
-  // Primary path: read from public.users (fast, avoids auth.getSession/getUser timeouts)
-  const { data, error } = await withTimeout(
-    supabase
-      .from('users')
-      .select('id, workspace_id')
-      .eq('auth_provider_user_id', authUserId)
-      .single(),
-    8000,
-    'read users tenancy'
-  );
-
-  if (!error && data?.workspace_id && data?.id) {
-    return { authUserId, workspaceId: String(data.workspace_id), internalUserId: String(data.id) };
-  }
-
-  // Fallback: if user row is missing (should be rare), try the RPC once, then re-read.
-  // This keeps ResultsPage functional even if AuthContext did not create the row for some reason.
-  const rpcAttempt = await withTimeout(supabase.rpc('ensure_user_and_workspace'), 12000, 'ensure_user_and_workspace (fallback)');
-  if (rpcAttempt.error) throw rpcAttempt.error;
-
-  const reread = await withTimeout(
-    supabase
-      .from('users')
-      .select('id, workspace_id')
-      .eq('auth_provider_user_id', authUserId)
-      .single(),
-    8000,
-    'read users tenancy (after rpc)'
-  );
-  if (reread.error) throw reread.error;
-
-  if (!reread.data?.workspace_id || !reread.data?.id) {
-    throw new Error('Tenancy not available (missing users row or workspace_id)');
-  }
-
-  return { authUserId, workspaceId: String(reread.data.workspace_id), internalUserId: String(reread.data.id) };
-}
 
 export default function ResultsPage() {
   const navigate = useNavigate();
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, workspaceId, internalUserId, isLoading: authLoading } = useAuth();
 
   // ----------------------------
   // State
@@ -422,18 +383,15 @@ export default function ResultsPage() {
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
   const didInitialLoadRef = useRef(false);
 
-  const tenancyRef = useRef<Tenancy | null>(null);
-
+  // ----------------------------
+  // Tenancy guard
+  // ----------------------------
   const ensureTenancy = useCallback(async (): Promise<Tenancy> => {
-    if (tenancyRef.current) return tenancyRef.current;
-
     if (authLoading) throw new Error('Auth still loading');
     if (!user?.id) throw new Error('Not authenticated');
-
-    const t = await resolveTenancyFromDb(user.id);
-    tenancyRef.current = t;
-    return t;
-  }, [authLoading, user?.id]);
+    if (!workspaceId || !internalUserId) throw new Error('Tenancy not ready');
+    return { authUserId: user.id, workspaceId, internalUserId };
+  }, [authLoading, user?.id, workspaceId, internalUserId]);
 
   // ----------------------------
   // Helpers
@@ -531,8 +489,9 @@ export default function ResultsPage() {
 
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
         setSpecifics(applySizeTypeFilterToSpecifics(filled, categoryPathForFilter));
-      } catch (err) {
+      } catch (err: any) {
         console.error('[Specifics] Error:', err);
+        setError(err?.message || 'Failed to load category specifics');
       } finally {
         setLoadingSpecifics(false);
       }
@@ -583,8 +542,10 @@ export default function ResultsPage() {
     if (bad.length) throw new Error('Images must be hosted URLs (Cloudinary). Please go back and re-upload.');
   };
 
+  const disableActions = authLoading || !user?.id || !workspaceId || !internalUserId;
+
   // ----------------------------
-  // Initial load (run once; gated by auth)
+  // Initial load (run once; gated by auth + tenancy)
   // ----------------------------
   useEffect(() => {
     if (didInitialLoadRef.current) return;
@@ -596,6 +557,9 @@ export default function ResultsPage() {
       return;
     }
 
+    // Wait until tenancy is ready (AuthContext ensures it).
+    if (!workspaceId || !internalUserId) return;
+
     didInitialLoadRef.current = true;
 
     const run = async () => {
@@ -603,8 +567,7 @@ export default function ResultsPage() {
       setError(null);
 
       try {
-        // Resolve once; cached in tenancyRef.
-        await ensureTenancy();
+        const t = await ensureTenancy();
 
         const urlParams = new URLSearchParams(window.location.search);
         const mode = urlParams.get('mode');
@@ -616,8 +579,11 @@ export default function ResultsPage() {
           const { data, error: readErr } = await withTimeout(
             supabase
               .from('listings')
-              .select('id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at')
+              .select(
+                'id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at'
+              )
               .eq('id', listingIdParam)
+              .eq('workspace_id', t.workspaceId) // CRITICAL: scope to workspace
               .single(),
             20000,
             'read listing'
@@ -637,8 +603,8 @@ export default function ResultsPage() {
             typeof row.price === 'number'
               ? row.price.toFixed(2)
               : typeof lj?.price_suggestion?.optimal === 'number'
-              ? lj.price_suggestion.optimal.toFixed(2)
-              : String(lj?.price_suggestion?.optimal ?? '0.00');
+                ? lj.price_suggestion.optimal.toFixed(2)
+                : String(lj?.price_suggestion?.optimal ?? '0.00');
           setPrice(priceVal);
 
           const imgsRaw: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
@@ -659,8 +625,8 @@ export default function ResultsPage() {
                   breadcrumbs: Array.isArray(catFromJson.breadcrumbs) ? catFromJson.breadcrumbs : undefined,
                 }
               : row.category_id
-              ? { id: String(row.category_id), name: 'Selected Category', path: String(row.category_path ?? '') }
-              : null;
+                ? { id: String(row.category_id), name: 'Selected Category', path: String(row.category_path ?? '') }
+                : null;
 
           setCategory(cat);
 
@@ -706,6 +672,7 @@ export default function ResultsPage() {
           wrapper.image_urls ||
           (analysis.image_url ? [analysis.image_url] : []) ||
           [];
+
         setImages(sanitizeHostedImages(imgsRaw));
         setMainImageIndex(0);
 
@@ -734,7 +701,16 @@ export default function ResultsPage() {
     };
 
     void run();
-  }, [authLoading, user?.id, ensureTenancy, fetchCategorySpecifics, smartFillSpecifics, navigate]);
+  }, [
+    authLoading,
+    user?.id,
+    workspaceId,
+    internalUserId,
+    ensureTenancy,
+    fetchCategorySpecifics,
+    smartFillSpecifics,
+    navigate,
+  ]);
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setCategory(newCategory);
@@ -787,18 +763,17 @@ export default function ResultsPage() {
     setDraftStatus('');
 
     try {
-      const { workspaceId, internalUserId } = await ensureTenancy();
-      if (!workspaceId) throw new Error('No workspaceId resolved');
-
+      const t = await ensureTenancy();
       const listingData = buildListingJson();
-      const orderedImages: string[] = Array.isArray(listingData.images) ? listingData.images : [];
+
+      const orderedImages: string[] = Array.isArray((listingData as any).images) ? (listingData as any).images : [];
       assertHostedImagesOrThrow(orderedImages);
 
       const categoryPath = listingData.category_path || '';
       const priceNum = Number(listingData.price_suggestion?.optimal ?? 0) || 0;
 
       const payload: any = {
-        workspace_id: workspaceId,
+        workspace_id: t.workspaceId,
         status: 'draft',
         marketplace: 'ebay',
         title: listingData.title || 'Untitled Listing',
@@ -810,7 +785,7 @@ export default function ResultsPage() {
         images: orderedImages,
         listing_json: {
           ...listingData,
-          internal_user_id: internalUserId,
+          internal_user_id: t.internalUserId,
         },
       };
 
@@ -826,7 +801,13 @@ export default function ResultsPage() {
         savedId = (data as any)?.id;
       } else {
         const { data, error: updateErr } = await withTimeout(
-          supabase.from('listings').update(payload).eq('id', listingId).select('id').single(),
+          supabase
+            .from('listings')
+            .update(payload)
+            .eq('id', listingId)
+            .eq('workspace_id', t.workspaceId) // scope update to workspace
+            .select('id')
+            .single(),
           20000,
           'update draft'
         );
@@ -845,7 +826,7 @@ export default function ResultsPage() {
       window.history.replaceState({}, '', url.toString());
     } catch (err: any) {
       console.error('[Draft] save failed:', err);
-      setSaveError(err?.message || 'Failed to save draft');
+      setSaveError(err?.message || 'Failed to save draft (tenancy not ready)');
       setDraftStatus('Draft save failed');
     }
   };
@@ -1134,14 +1115,15 @@ export default function ResultsPage() {
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
           <button
             onClick={handleSaveDraft}
+            disabled={disableActions}
             className="btn"
             style={{
               padding: '12px 24px',
-              background: '#10b981',
+              background: disableActions ? '#999' : '#10b981',
               color: 'white',
               border: 'none',
               borderRadius: '4px',
-              cursor: 'pointer',
+              cursor: disableActions ? 'default' : 'pointer',
               fontSize: 16,
               fontWeight: 600,
             }}
@@ -1169,14 +1151,14 @@ export default function ResultsPage() {
           <button
             type="button"
             onClick={handlePublish}
-            disabled={publishing}
+            disabled={publishing || disableActions}
             style={{
               padding: '12px 32px',
-              background: publishing ? '#999' : '#0064d2',
+              background: publishing || disableActions ? '#999' : '#0064d2',
               color: 'white',
               border: 'none',
               borderRadius: 4,
-              cursor: publishing ? 'default' : 'pointer',
+              cursor: publishing || disableActions ? 'default' : 'pointer',
               fontSize: 16,
               fontWeight: 600,
             }}
