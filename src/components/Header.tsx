@@ -221,7 +221,7 @@ localStorage.removeItem("snapline.auth.currentUser");
 
 <AuthModal
   open={authMode === "login" || authMode === "signup" || authMode === "reset"}
-  initialMode={authMode || "login"}
+  initialMode={(authMode ?? "login") as AuthMode}
   onClose={closeAuth}
 />
     </header>
