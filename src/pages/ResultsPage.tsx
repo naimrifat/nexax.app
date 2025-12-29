@@ -341,28 +341,46 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-/* ---------- Tenancy RPC cache ---------- */
+/* ---------- Tenancy (NO AUTH CALLS, NO SESSION CALLS) ---------- */
 type Tenancy = { workspaceId: string; internalUserId: string; authUserId: string };
-const tenancyCache = new Map<string, Tenancy>();
 
-async function ensureTenancyRpc(authUserId: string): Promise<Tenancy> {
-  const cached = tenancyCache.get(authUserId);
-  if (cached) return cached;
+async function resolveTenancyFromDb(authUserId: string): Promise<Tenancy> {
+  // Primary path: read from public.users (fast, avoids auth.getSession/getUser timeouts)
+  const { data, error } = await withTimeout(
+    supabase
+      .from('users')
+      .select('id, workspace_id')
+      .eq('auth_provider_user_id', authUserId)
+      .single(),
+    8000,
+    'read users tenancy'
+  );
 
-  const { data, error } = await withTimeout(supabase.rpc('ensure_user_and_workspace'), 8000, 'ensure_user_and_workspace');
-  if (error) throw error;
+  if (!error && data?.workspace_id && data?.id) {
+    return { authUserId, workspaceId: String(data.workspace_id), internalUserId: String(data.id) };
+  }
 
-  const row: any = Array.isArray(data) ? data[0] : data;
-  const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
-  const internalUserId = row?.user_id ?? row?.out_user_id;
+  // Fallback: if user row is missing (should be rare), try the RPC once, then re-read.
+  // This keeps ResultsPage functional even if AuthContext did not create the row for some reason.
+  const rpcAttempt = await withTimeout(supabase.rpc('ensure_user_and_workspace'), 12000, 'ensure_user_and_workspace (fallback)');
+  if (rpcAttempt.error) throw rpcAttempt.error;
 
-  if (!workspaceId) throw new Error('ensure_user_and_workspace did not return workspace_id');
-  if (!internalUserId) throw new Error('ensure_user_and_workspace did not return user_id');
+  const reread = await withTimeout(
+    supabase
+      .from('users')
+      .select('id, workspace_id')
+      .eq('auth_provider_user_id', authUserId)
+      .single(),
+    8000,
+    'read users tenancy (after rpc)'
+  );
+  if (reread.error) throw reread.error;
 
-  const t: Tenancy = { workspaceId, internalUserId, authUserId };
-  tenancyCache.set(authUserId, t);
-  console.log('[Tenancy] resolved/cached', t);
-  return t;
+  if (!reread.data?.workspace_id || !reread.data?.id) {
+    throw new Error('Tenancy not available (missing users row or workspace_id)');
+  }
+
+  return { authUserId, workspaceId: String(reread.data.workspace_id), internalUserId: String(reread.data.id) };
 }
 
 export default function ResultsPage() {
@@ -406,6 +424,17 @@ export default function ResultsPage() {
 
   const tenancyRef = useRef<Tenancy | null>(null);
 
+  const ensureTenancy = useCallback(async (): Promise<Tenancy> => {
+    if (tenancyRef.current) return tenancyRef.current;
+
+    if (authLoading) throw new Error('Auth still loading');
+    if (!user?.id) throw new Error('Not authenticated');
+
+    const t = await resolveTenancyFromDb(user.id);
+    tenancyRef.current = t;
+    return t;
+  }, [authLoading, user?.id]);
+
   // ----------------------------
   // Helpers
   // ----------------------------
@@ -413,7 +442,6 @@ export default function ResultsPage() {
     return newSpecifics.map((field) => {
       let current: string | string[] = field.value;
       const currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? (current as any) : '');
-
       const lower = (field.name || '').toLowerCase();
 
       if (!currentStr) {
@@ -458,8 +486,6 @@ export default function ResultsPage() {
     async (categoryId: string, categoryPathForFilter: string) => {
       setLoadingSpecifics(true);
       try {
-        console.log('[Specifics] Fetching category specifics:', { categoryId, categoryPathForFilter });
-
         const response = await fetch('/api/ebay-categories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -504,8 +530,7 @@ export default function ResultsPage() {
         });
 
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
-        const sizeFiltered = applySizeTypeFilterToSpecifics(filled, categoryPathForFilter);
-        setSpecifics(sizeFiltered);
+        setSpecifics(applySizeTypeFilterToSpecifics(filled, categoryPathForFilter));
       } catch (err) {
         console.error('[Specifics] Error:', err);
       } finally {
@@ -555,30 +580,16 @@ export default function ResultsPage() {
 
   const assertHostedImagesOrThrow = (arr: string[]) => {
     const bad = (arr || []).filter((u) => !isHostedImageUrl(u));
-    if (bad.length) {
-      throw new Error('Images must be hosted URLs (Cloudinary). Please go back and re-upload.');
-    }
+    if (bad.length) throw new Error('Images must be hosted URLs (Cloudinary). Please go back and re-upload.');
   };
 
-  const ensureTenancy = useCallback(async (): Promise<Tenancy> => {
-    if (tenancyRef.current) return tenancyRef.current;
-
-    if (authLoading) throw new Error('Auth still loading');
-    if (!user?.id) throw new Error('Not authenticated');
-
-    const t = await ensureTenancyRpc(user.id);
-    tenancyRef.current = t;
-    return t;
-  }, [authLoading, user?.id]);
-
   // ----------------------------
-  // Initial load (run once, no loops)
+  // Initial load (run once; gated by auth)
   // ----------------------------
   useEffect(() => {
     if (didInitialLoadRef.current) return;
-
-    // Wait until auth is resolved before initial load.
     if (authLoading) return;
+
     if (!user?.id) {
       setLoading(false);
       setError('Not authenticated. Please log in again.');
@@ -592,7 +603,7 @@ export default function ResultsPage() {
       setError(null);
 
       try {
-        // Tenancy resolves once and is cached.
+        // Resolve once; cached in tenancyRef.
         await ensureTenancy();
 
         const urlParams = new URLSearchParams(window.location.search);
@@ -605,9 +616,7 @@ export default function ResultsPage() {
           const { data, error: readErr } = await withTimeout(
             supabase
               .from('listings')
-              .select(
-                'id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at'
-              )
+              .select('id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at')
               .eq('id', listingIdParam)
               .single(),
             20000,
@@ -633,8 +642,7 @@ export default function ResultsPage() {
           setPrice(priceVal);
 
           const imgsRaw: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
-          const imgs = sanitizeHostedImages(imgsRaw);
-          setImages(imgs);
+          setImages(sanitizeHostedImages(imgsRaw));
           setMainImageIndex(0);
 
           const kws =
@@ -651,11 +659,7 @@ export default function ResultsPage() {
                   breadcrumbs: Array.isArray(catFromJson.breadcrumbs) ? catFromJson.breadcrumbs : undefined,
                 }
               : row.category_id
-              ? {
-                  id: String(row.category_id),
-                  name: 'Selected Category',
-                  path: String(row.category_path ?? ''),
-                }
+              ? { id: String(row.category_id), name: 'Selected Category', path: String(row.category_path ?? '') }
               : null;
 
           setCategory(cat);
@@ -702,9 +706,7 @@ export default function ResultsPage() {
           wrapper.image_urls ||
           (analysis.image_url ? [analysis.image_url] : []) ||
           [];
-
-        const imgs = sanitizeHostedImages(imgsRaw);
-        setImages(imgs);
+        setImages(sanitizeHostedImages(imgsRaw));
         setMainImageIndex(0);
 
         setKeywords(Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? ''));
@@ -737,8 +739,7 @@ export default function ResultsPage() {
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setCategory(newCategory);
     setShowCategoryModal(false);
-    const categoryPath = getCategoryPathString(newCategory);
-    await fetchCategorySpecifics(newCategory.id, categoryPath);
+    await fetchCategorySpecifics(newCategory.id, getCategoryPathString(newCategory));
   };
 
   const updateSpecific = (idx: number, value: string | string[]) => {
@@ -747,8 +748,7 @@ export default function ResultsPage() {
       next[idx] = { ...next[idx], value };
 
       if (/size type/i.test(next[idx].name || '')) {
-        const categoryPath = getCategoryPathString(category);
-        next = applySizeTypeFilterToSpecifics(next, categoryPath);
+        next = applySizeTypeFilterToSpecifics(next, getCategoryPathString(category));
       }
       return next;
     });
@@ -780,7 +780,7 @@ export default function ResultsPage() {
       : '');
 
   // ----------------------------
-  // Save Draft
+  // Save Draft (NO created_by sent; DB default auth.uid())
   // ----------------------------
   const handleSaveDraft = async () => {
     setSaveError(null);
@@ -797,7 +797,6 @@ export default function ResultsPage() {
       const categoryPath = listingData.category_path || '';
       const priceNum = Number(listingData.price_suggestion?.optimal ?? 0) || 0;
 
-      // IMPORTANT: do NOT send created_by; DB default auth.uid() sets it.
       const payload: any = {
         workspace_id: workspaceId,
         status: 'draft',
@@ -820,7 +819,7 @@ export default function ResultsPage() {
       if (!listingId) {
         const { data, error: insertErr } = await withTimeout(
           supabase.from('listings').insert(payload).select('id').single(),
-          15000,
+          20000,
           'insert draft'
         );
         if (insertErr) throw insertErr;
