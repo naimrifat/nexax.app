@@ -1,14 +1,13 @@
+// src/components/Header.tsx
 import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Menu, X, LayoutDashboard, Home, LogOut, TrendingUp, Camera } from "lucide-react";
-import AuthModal, { AuthMode } from "./AuthModal";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../../lib/supabaseClient";
 
 const Header: React.FC = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const location = useLocation();
 
   // We only need user here for display.
@@ -26,56 +25,47 @@ const Header: React.FC = () => {
     setMobileMenuOpen(false);
   }, [location]);
 
-  const closeAuth = () => setAuthMode(null);
-  const openAuth = (mode: AuthMode) => setAuthMode(mode);
+  const handleLogout = async () => {
+    try {
+      console.log("[Header] handleLogout started");
 
-const handleLogout = async () => {
-  try {
-    console.log("[Header] handleLogout started");
+      // 1) Attempt normal local sign out, but do not wait long.
+      const signOutAttempt = supabase.auth.signOut({ scope: "local" });
 
-    // 1) Attempt normal local sign out, but do not wait long.
-    const signOutAttempt = supabase.auth.signOut({ scope: "local" });
+      const timeoutPromise = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 800));
 
-    const timeoutPromise = new Promise<"timeout">((resolve) =>
-      setTimeout(() => resolve("timeout"), 800)
-    );
+      const result = await Promise.race([signOutAttempt.then(() => "ok" as const), timeoutPromise]);
 
-    const result = await Promise.race([signOutAttempt.then(() => "ok" as const), timeoutPromise]);
+      if (result === "ok") {
+        console.log("[Header] Supabase signOut succeeded (local)");
+      } else {
+        console.warn("[Header] Supabase signOut timed out, applying manual logout fallback...");
+      }
 
-    if (result === "ok") {
-      console.log("[Header] Supabase signOut succeeded (local)");
-    } else {
-      console.warn("[Header] Supabase signOut timed out, applying manual logout fallback...");
+      // 2) Manual fallback: clear Supabase auth storage keys
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (k.startsWith("sb-") && k.endsWith("-auth-token")) {
+          localStorage.removeItem(k);
+        }
+      }
+      localStorage.removeItem("supabase.auth.token");
+
+      // Clear legacy Snapline local auth keys (from old AuthContext implementation)
+      localStorage.removeItem("snapline.auth.users");
+      localStorage.removeItem("snapline.auth.currentUser");
+
+      setMobileMenuOpen(false);
+
+      // 3) Hard reload into /login (no SPA state survives)
+      window.location.href = "/login";
+    } catch (err: unknown) {
+      console.error("[Header] Manual logout failed:", err);
+      alert(err instanceof Error ? err.message : "Logout failed.");
+      window.location.href = "/login";
     }
-
-    // 2) Manual fallback: clear Supabase auth storage keys
-    // Supabase stores auth session in localStorage under keys that include your project ref.
-    // This removes ALL Supabase auth data for this origin.
-    
-for (let i = localStorage.length - 1; i >= 0; i--) {
-  const k = localStorage.key(i);
-  if (!k) continue;
-  if (k.startsWith("sb-") && k.endsWith("-auth-token")) {
-    localStorage.removeItem(k);
-  }
-}
-localStorage.removeItem("supabase.auth.token");
-
-// Clear legacy Snapline local auth keys (from old AuthContext implementation)
-localStorage.removeItem("snapline.auth.users");
-localStorage.removeItem("snapline.auth.currentUser");
-
-    setMobileMenuOpen(false);
-    setAuthMode(null);
-
-    // 3) Hard reload into /login (no SPA state survives)
-    window.location.href = "/login";
-  } catch (err: unknown) {
-    console.error("[Header] Manual logout failed:", err);
-    alert(err instanceof Error ? err.message : "Logout failed.");
-    window.location.href = "/login";
-  }
-};
+  };
 
   return (
     <header
@@ -99,12 +89,7 @@ localStorage.removeItem("snapline.auth.currentUser");
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center space-x-6">
-            <NavLink
-              to="/"
-              label="Home"
-              icon={<Home className="w-4 h-4" />}
-              active={location.pathname === "/"}
-            />
+            <NavLink to="/" label="Home" icon={<Home className="w-4 h-4" />} active={location.pathname === "/"} />
             <NavLink
               to="/dashboard"
               label="Dashboard"
@@ -138,12 +123,13 @@ localStorage.removeItem("snapline.auth.currentUser");
                 </>
               ) : (
                 <>
-                  <button type="button" className="btn btn-outline" onClick={() => openAuth("login")}>
+                  {/* No popup: route-based auth */}
+                  <Link to="/login" className="btn btn-outline">
                     Log In
-                  </button>
-                  <button type="button" className="btn btn-primary" onClick={() => openAuth("signup")}>
+                  </Link>
+                  <Link to="/signup" className="btn btn-primary">
                     Sign Up
-                  </button>
+                  </Link>
                 </>
               )}
             </div>
@@ -164,12 +150,7 @@ localStorage.removeItem("snapline.auth.currentUser");
       {mobileMenuOpen && (
         <div className="md:hidden bg-white absolute top-full left-0 w-full shadow-md animate-fade-in">
           <div className="container mx-auto px-4 py-4 flex flex-col space-y-4">
-            <MobileNavLink
-              to="/"
-              label="Home"
-              icon={<Home className="w-5 h-5" />}
-              active={location.pathname === "/"}
-            />
+            <MobileNavLink to="/" label="Home" icon={<Home className="w-5 h-5" />} active={location.pathname === "/"} />
             <MobileNavLink
               to="/dashboard"
               label="Dashboard"
@@ -187,9 +168,7 @@ localStorage.removeItem("snapline.auth.currentUser");
             <div className="flex flex-col space-y-3 pt-2">
               {user ? (
                 <>
-                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                    Signed in as {user.email}
-                  </div>
+                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">Signed in as {user.email}</div>
                   <button
                     type="button"
                     className="btn btn-outline w-full"
@@ -206,24 +185,19 @@ localStorage.removeItem("snapline.auth.currentUser");
                 </>
               ) : (
                 <>
-                  <button type="button" className="btn btn-outline w-full" onClick={() => openAuth("login")}>
+                  {/* No popup: route-based auth */}
+                  <Link to="/login" className="btn btn-outline w-full">
                     Log In
-                  </button>
-                  <button type="button" className="btn btn-primary w-full" onClick={() => openAuth("signup")}>
+                  </Link>
+                  <Link to="/signup" className="btn btn-primary w-full">
                     Sign Up
-                  </button>
+                  </Link>
                 </>
               )}
             </div>
           </div>
         </div>
       )}
-
-<AuthModal
-  open={authMode === "login" || authMode === "signup" || authMode === "reset"}
-  initialMode={(authMode ?? "login") as AuthMode}
-  onClose={closeAuth}
-/>
     </header>
   );
 };
