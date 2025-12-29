@@ -77,9 +77,12 @@ function pickCoverImage(row: ListingRow): string {
   const images = colImages.length ? colImages : jsonImages;
   if (!images.length) return "";
 
-  // If listing_json stored ordered images with main first, just use [0].
+  // NOTE: ResultsPage currently saves ordered images with "main first" and mainImageIndex=0,
+  // but we still honor mainImageIndex if present.
   const mainIdx =
-    typeof lj?.mainImageIndex === "number" && Number.isFinite(lj.mainImageIndex) ? (lj.mainImageIndex as number) : 0;
+    typeof lj?.mainImageIndex === "number" && Number.isFinite(lj.mainImageIndex)
+      ? (lj.mainImageIndex as number)
+      : 0;
 
   const idx = Math.max(0, Math.min(mainIdx, images.length - 1));
   return images[idx] || images[0] || "";
@@ -126,7 +129,7 @@ function normalizeListing(row: ListingRow): DashboardListing {
 }
 
 const DashboardPage: React.FC = () => {
-  const navigate = useNavigate();
+  // NOTE: useNavigate remains used inside ListingCard; here it's not needed.
   const { user, workspaceId, isLoading: authLoading } = useAuth();
 
   const [activeFilter, setActiveFilter] = useState<string>("all");
@@ -152,7 +155,6 @@ const DashboardPage: React.FC = () => {
     setLoading(true);
 
     try {
-      // Fetch all statuses for dashboard; filter client-side by activeFilter.
       const { data, error } = await supabase
         .from("listings")
         .select(
@@ -164,9 +166,7 @@ const DashboardPage: React.FC = () => {
       if (error) throw error;
 
       const rows = (data ?? []) as ListingRow[];
-      const normalized = rows.map(normalizeListing);
-
-      setListingItems(normalized);
+      setListingItems(rows.map(normalizeListing));
     } catch (e: any) {
       console.error("[DashboardPage] Failed to load listings:", e);
       setListingItems([]);
@@ -252,7 +252,12 @@ const DashboardPage: React.FC = () => {
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex flex-wrap gap-2">
-              <FilterButton label="All" isActive={activeFilter === "all"} onClick={() => setActiveFilter("all")} count={counts.all} />
+              <FilterButton
+                label="All"
+                isActive={activeFilter === "all"}
+                onClick={() => setActiveFilter("all")}
+                count={counts.all}
+              />
               <FilterButton
                 label="Active"
                 isActive={activeFilter === "active"}
@@ -293,7 +298,11 @@ const DashboardPage: React.FC = () => {
               </button>
 
               <button className="btn btn-outline flex items-center" onClick={toggleSortDirection} type="button">
-                {sortDirection === "asc" ? <ArrowUp className="w-4 h-4 mr-1.5" /> : <ArrowDown className="w-4 h-4 mr-1.5" />}
+                {sortDirection === "asc" ? (
+                  <ArrowUp className="w-4 h-4 mr-1.5" />
+                ) : (
+                  <ArrowDown className="w-4 h-4 mr-1.5" />
+                )}
                 Date
               </button>
             </div>
@@ -305,7 +314,9 @@ const DashboardPage: React.FC = () => {
           {filteredListings.length === 0 ? (
             <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-8 text-center">
               <h3 className="text-lg font-semibold text-gray-700 mb-2">No listings found</h3>
-              <p className="text-gray-500 mb-4">{searchQuery ? "Try a different search term" : "Create your first listing to get started"}</p>
+              <p className="text-gray-500 mb-4">
+                {searchQuery ? "Try a different search term" : "Create your first listing to get started"}
+              </p>
 
               <Link to="/create-listing" className="btn btn-primary inline-flex items-center">
                 <PlusCircle className="w-4 h-4 mr-2" />
@@ -313,7 +324,9 @@ const DashboardPage: React.FC = () => {
               </Link>
             </div>
           ) : (
-            filteredListings.map((listing) => <ListingCard key={listing.id} listing={listing} onRefresh={fetchListings} />)
+            filteredListings.map((listing) => (
+              <ListingCard key={listing.id} listing={listing} onRefresh={fetchListings} />
+            ))
           )}
         </div>
 
@@ -358,7 +371,11 @@ const FilterButton: React.FC<FilterButtonProps> = ({ label, isActive, onClick, c
     type="button"
   >
     {label}
-    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${isActive ? "bg-teal-100 text-teal-800" : "bg-gray-100 text-gray-700"}`}>
+    <span
+      className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
+        isActive ? "bg-teal-100 text-teal-800" : "bg-gray-100 text-gray-700"
+      }`}
+    >
       {count}
     </span>
   </button>
@@ -403,7 +420,12 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
     try {
       if (!workspaceId) throw new Error("Missing workspace. Please sign in again.");
 
-      const { error } = await supabase.from("listings").delete().eq("id", listing.id).eq("workspace_id", workspaceId);
+      const { error } = await supabase
+        .from("listings")
+        .delete()
+        .eq("id", listing.id)
+        .eq("workspace_id", workspaceId);
+
       if (error) throw error;
 
       await onRefresh();
@@ -414,23 +436,26 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
   };
 
   const handleEdit = () => {
-    // Your ResultsPage expects query params mode=edit&listingId=...
+    // ResultsPage uses query params mode=edit&listingId=...
     navigate(`/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`);
   };
 
   const handleView = () => {
-    // For now, viewing is the same as edit mode in ResultsPage.
+    // Currently same route as edit.
     navigate(`/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`);
   };
 
   const handleDuplicate = async () => {
     setIsMenuOpen(false);
+
     try {
       if (!workspaceId) throw new Error("Missing workspace. Please sign in again.");
 
       const { data, error } = await supabase
         .from("listings")
-        .select("id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at")
+        .select(
+          "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at"
+        )
         .eq("id", listing.id)
         .eq("workspace_id", workspaceId)
         .single();
@@ -441,19 +466,23 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
       const lj = row.listing_json || {};
       const nowIso = new Date().toISOString();
 
+      const baseTitle = (row.title ?? lj?.title ?? "Untitled").toString().trim();
+      const nextTitle = `${baseTitle.slice(0, 70)} (Copy)`;
+
       const insertPayload: any = {
         workspace_id: workspaceId,
         status: "draft",
         marketplace: row.marketplace ?? "ebay",
-        title: `${(row.title ?? lj?.title ?? "Untitled").toString().slice(0, 70)} (Copy)`,
+        title: nextTitle,
         description: row.description ?? lj?.description ?? "",
         category_path: row.category_path ?? lj?.category_path ?? null,
         price: row.price ?? (typeof lj?.price_suggestion?.optimal === "number" ? lj.price_suggestion.optimal : 0),
         currency: row.currency ?? "USD",
-        images: row.images ?? safeArray(lj?.images || lj?.image_urls),
+        images: Array.isArray(row.images) ? row.images : safeArray(lj?.images || lj?.image_urls),
         listing_json: {
           ...(lj || {}),
-          title: `${(row.title ?? lj?.title ?? "Untitled").toString().slice(0, 70)} (Copy)`,
+          title: nextTitle,
+          status: "draft",
           duplicated_from: row.id,
           duplicated_at: nowIso,
         },
@@ -490,10 +519,27 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
     URL.revokeObjectURL(url);
   };
 
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!isMenuOpen) return;
+
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // Any click outside a menu button/menu should close.
+      // Since we don't have refs here, we close on any document click after menu is open,
+      // except when the click happens inside the menu container.
+      if (target.closest?.("[data-menu-root]")) return;
+      setIsMenuOpen(false);
+    };
+
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [isMenuOpen]);
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden transition-all hover:shadow-md">
       <div className="flex flex-col sm:flex-row">
-        {/* Image */}
         <div className="sm:w-48 h-48 sm:h-auto bg-gray-100">
           {listing.image ? (
             <img src={listing.image} alt={listing.title} className="w-full h-full object-cover" loading="lazy" />
@@ -502,17 +548,18 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
           )}
         </div>
 
-        {/* Content */}
         <div className="flex-1 p-4 flex flex-col sm:flex-row">
-          {/* Main Info */}
           <div className="flex-1">
             <div className="flex justify-between">
               <h3 className="text-lg font-semibold text-gray-900 mb-1 line-clamp-2">{listing.title}</h3>
-              <div className="relative">
+
+              <div className="relative" data-menu-root>
                 <button
                   className="p-1 rounded-md hover:bg-gray-100 transition-colors"
                   onClick={() => setIsMenuOpen((v) => !v)}
                   type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={isMenuOpen}
                 >
                   <MoreHorizontal className="w-5 h-5 text-gray-500" />
                 </button>
@@ -559,29 +606,23 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
             {String(listing.status) !== "draft" && (
               <div className="flex sm:flex-col sm:items-end gap-3 sm:gap-1 mb-4">
                 <div className="text-sm">
-                  <span className="text-gray-500">Views:</span> <span className="font-medium text-gray-900">{listing.views}</span>
+                  <span className="text-gray-500">Views:</span>{" "}
+                  <span className="font-medium text-gray-900">{listing.views}</span>
                 </div>
                 <div className="text-sm">
-                  <span className="text-gray-500">Likes:</span> <span className="font-medium text-gray-900">{listing.likes}</span>
+                  <span className="text-gray-500">Likes:</span>{" "}
+                  <span className="font-medium text-gray-900">{listing.likes}</span>
                 </div>
               </div>
             )}
 
             <div className="flex sm:flex-col gap-2">
-              <button
-                onClick={handleView}
-                className="btn btn-outline py-1.5 text-sm px-3 flex items-center justify-center"
-                type="button"
-              >
+              <button onClick={handleView} className="btn btn-outline py-1.5 text-sm px-3 flex items-center justify-center" type="button">
                 <Eye className="w-4 h-4 mr-1.5" />
                 View
               </button>
 
-              <button
-                onClick={handleEdit}
-                className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center"
-                type="button"
-              >
+              <button onClick={handleEdit} className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center" type="button">
                 <Edit className="w-4 h-4 mr-1.5" />
                 Edit
               </button>
