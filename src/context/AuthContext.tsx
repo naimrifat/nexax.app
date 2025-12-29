@@ -62,7 +62,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // If a call is already running, await it (do not start a new one).
     if (ensureInFlightRef.current) {
       await ensureInFlightRef.current;
-      // After awaiting, re-check state/guard.
       if (ensuredForAuthIdRef.current === authUserId && workspaceId && internalUserId) return;
     }
 
@@ -87,10 +86,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setInternalUserId(iu);
 
       console.log("[Auth] tenancy ensured", { authUserId, workspaceId: ws, internalUserId: iu });
-    })()
-      .finally(() => {
-        ensureInFlightRef.current = null;
-      });
+    })().finally(() => {
+      ensureInFlightRef.current = null;
+    });
 
     await ensureInFlightRef.current;
   };
@@ -140,7 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
-    bootstrap();
+    void bootstrap();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const supaUser = session?.user ?? null;
@@ -163,7 +161,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       mounted = false;
       sub.subscription.unsubscribe();
     };
-    // IMPORTANT: do not depend on workspaceId/internalUserId here, it causes re-runs/loops.
+
+    // IMPORTANT:
+    // Do NOT depend on workspaceId/internalUserId here, otherwise it can re-run and loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
