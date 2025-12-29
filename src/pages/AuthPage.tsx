@@ -1,133 +1,226 @@
-import React from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { supabase } from "../../lib/supabaseClient";
 
-type LocationState = {
-  from?: string;
-};
+/* =======================
+   Types
+======================= */
 
-async function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+interface AuthUser {
+  id: string;          // auth.users.id
+  email: string;
+  createdAt: string;
 }
 
-export default function AuthPage() {
-  const [email, setEmail] = React.useState<string>("");
-  const [password, setPassword] = React.useState<string>("");
-  const [mode, setMode] = React.useState<"signin" | "signup">("signin");
-  const [status, setStatus] = React.useState<string>("");
+interface AuthContextValue {
+  user: AuthUser | null;
+  workspaceId: string | null;
+  internalUserId: string | null; // public.users.id
+  isLoading: boolean;
+  refreshTenancy: () => Promise<void>;
+  logout: () => Promise<void>;
+}
 
-  const navigate = useNavigate();
-  const location = useLocation();
-  const state = (location.state || {}) as LocationState;
-  const redirectTo = state.from || "/dashboard";
+type TenancyRow = {
+  workspace_id?: string;
+  out_workspace_id?: string;
+  user_id?: string;
+  out_user_id?: string;
+};
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setStatus("Working...");
+/* =======================
+   Context
+======================= */
 
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) {
-      setStatus("Email is required.");
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+/* =======================
+   Helpers
+======================= */
+
+function mapUserToAuthUser(user: any): AuthUser | null {
+  if (!user?.id || !user?.email || !user?.created_at) return null;
+  return {
+    id: user.id,
+    email: user.email,
+    createdAt: user.created_at,
+  };
+}
+
+/* =======================
+   Provider
+======================= */
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [internalUserId, setInternalUserId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Prevent RPC spam per auth user
+  const ensuredForAuthIdRef = useRef<string | null>(null);
+
+  /* -----------------------
+     Tenancy resolver
+  ----------------------- */
+
+  const ensureTenancyFor = async (authUserId: string) => {
+    if (!authUserId) return;
+
+    if (
+      ensuredForAuthIdRef.current === authUserId &&
+      workspaceId &&
+      internalUserId
+    ) {
       return;
     }
-    if (!password) {
-      setStatus("Password is required.");
-      return;
+
+    const { data, error } = await supabase.rpc("ensure_user_and_workspace");
+    if (error) {
+      console.error("[AuthContext] ensure_user_and_workspace failed:", error);
+      throw error;
     }
 
-    try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-        });
-        if (error) throw error;
+    const row: TenancyRow = Array.isArray(data) ? data[0] : data;
 
-        // For email/password, Supabase may require email confirmation depending on your settings.
-        setStatus("Signup successful. Please sign in.");
-        setMode("signin");
-        return;
-      }
+    const ws = row?.workspace_id ?? row?.out_workspace_id ?? null;
+    const iu = row?.user_id ?? row?.out_user_id ?? null;
 
-      // Sign in
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
-      if (signInError) throw signInError;
-
-      // Confirm we actually have a session/user before calling RPC.
-      const userId = signInData?.user?.id;
-      if (!userId) {
-        // Extremely rare, but safer than proceeding.
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (!sessionData?.session?.user?.id) {
-          throw new Error("Signed in, but session was not established. Please try again.");
-        }
-      }
-
-      // Ensure workspace + local user exist (idempotent).
-      // Do NOT let this hang your entire login flow.
-      setStatus("Finalizing account...");
-      try {
-        const { data } = await ensureWorkspaceWithRetry();
-        const row: any = Array.isArray(data) ? data[0] : data;
-        const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
-        console.log("[AuthPage] ensure_user_and_workspace ok", { workspaceId });
-      } catch (rpcErr: any) {
-        // If RPC fails, we still allow navigation. AuthProvider/other flows can re-attempt.
-        console.error("[AuthPage] ensure_user_and_workspace failed (non-blocking):", rpcErr);
-        setStatus("Signed in. (Workspace setup is still syncing—if something fails, refresh.)");
-        navigate(redirectTo, { replace: true });
-        return;
-      }
-
-      setStatus("Signed in.");
-      navigate(redirectTo, { replace: true });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Auth failed.";
-      setStatus(message);
+    if (!ws || !iu) {
+      console.error("[AuthContext] Bad tenancy payload:", data);
+      throw new Error("Workspace setup returned invalid data");
     }
+
+    ensuredForAuthIdRef.current = authUserId;
+    setWorkspaceId(ws);
+    setInternalUserId(iu);
+
+    console.log("[AuthContext] tenancy ready", {
+      authUserId,
+      workspaceId: ws,
+      internalUserId: iu,
+    });
   };
 
-  return (
-    <div style={{ maxWidth: 420, margin: "40px auto", padding: 16 }}>
-      <h2>{mode === "signup" ? "Create account" : "Sign in"}</h2>
+  const refreshTenancy = async () => {
+    if (!user?.id) return;
+    ensuredForAuthIdRef.current = null;
+    await ensureTenancyFor(user.id);
+  };
 
-      <form onSubmit={handleSubmit} style={{ display: "grid", gap: 10 }}>
-        <input
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="email"
-        />
+  /* -----------------------
+     Initial load
+  ----------------------- */
 
-        <input
-          placeholder="Password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete={mode === "signup" ? "new-password" : "current-password"}
-        />
+  useEffect(() => {
+    let mounted = true;
 
-        <button type="submit">
-          {mode === "signup" ? "Sign up" : "Sign in"}
-        </button>
-      </form>
+    const bootstrap = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (!mounted) return;
 
-      <div style={{ marginTop: 12 }}>
-        <button
-          type="button"
-          onClick={() => {
-            setStatus("");
-            setMode(mode === "signup" ? "signin" : "signup");
-          }}
-        >
-          Switch to {mode === "signup" ? "sign in" : "sign up"}
-        </button>
-      </div>
+        if (error) {
+          console.error("[AuthContext] getUser error:", error);
+          setIsLoading(false);
+          return;
+        }
 
-      {status ? <p style={{ marginTop: 12 }}>{status}</p> : null}
-    </div>
+        const supaUser = data?.user ?? null;
+        const mapped = mapUserToAuthUser(supaUser);
+        setUser(mapped);
+
+        if (mapped?.id) {
+          try {
+            await ensureTenancyFor(mapped.id);
+          } catch {
+            // Non-blocking; pages may retry
+          }
+        } else {
+          setWorkspaceId(null);
+          setInternalUserId(null);
+          ensuredForAuthIdRef.current = null;
+        }
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    bootstrap();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        const supaUser = session?.user ?? null;
+        const mapped = mapUserToAuthUser(supaUser);
+        setUser(mapped);
+
+        if (mapped?.id) {
+          try {
+            await ensureTenancyFor(mapped.id);
+          } catch {
+            // keep app running
+          }
+        } else {
+          setWorkspaceId(null);
+          setInternalUserId(null);
+          ensuredForAuthIdRef.current = null;
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  /* -----------------------
+     Logout
+  ----------------------- */
+
+  const logout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+
+    setUser(null);
+    setWorkspaceId(null);
+    setInternalUserId(null);
+    ensuredForAuthIdRef.current = null;
+  };
+
+  /* -----------------------
+     Context value
+  ----------------------- */
+
+  const value = useMemo(
+    () => ({
+      user,
+      workspaceId,
+      internalUserId,
+      isLoading,
+      refreshTenancy,
+      logout,
+    }),
+    [user, workspaceId, internalUserId, isLoading]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+
+/* =======================
+   Hook
+======================= */
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
 }
