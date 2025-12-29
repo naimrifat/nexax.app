@@ -1,21 +1,22 @@
+// src/context/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
 
 interface AuthUser {
-  id: string;          // auth.users.id (REQUIRED)
+  id: string; // auth.users.id
   email: string;
   createdAt: string;
 }
 
 interface AuthContextValue {
   user: AuthUser | null;
-  workspaceId: string | null;     // recommended
-  internalUserId: string | null;  // recommended (public.users.id)
+  workspaceId: string | null;
+  internalUserId: string | null; // public.users.id
   isLoading: boolean;
   signUp: (email: string, password: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  refreshTenancy: () => Promise<void>; // optional manual retry hook
+  refreshTenancy: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -41,80 +42,105 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [internalUserId, setInternalUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Ensure we don't spam the RPC on repeated auth state events
+  // Prevent spam + prevent concurrent calls racing each other
   const ensuredForAuthIdRef = useRef<string | null>(null);
+  const ensureInFlightRef = useRef<Promise<void> | null>(null);
+
+  const clearTenancy = () => {
+    setWorkspaceId(null);
+    setInternalUserId(null);
+    ensuredForAuthIdRef.current = null;
+    ensureInFlightRef.current = null;
+  };
 
   const ensureWorkspaceOnceFor = async (authUserId: string) => {
     if (!authUserId) return;
 
-    // Only run once per auth user id (per tab session)
+    // If already ensured for this user and we have values, do nothing.
     if (ensuredForAuthIdRef.current === authUserId && workspaceId && internalUserId) return;
 
-    const { data, error } = await supabase.rpc("ensure_user_and_workspace");
-    if (error) {
-      console.error("ensure_user_and_workspace failed:", error);
-      throw error;
+    // If a call is already running, await it (do not start a new one).
+    if (ensureInFlightRef.current) {
+      await ensureInFlightRef.current;
+      // After awaiting, re-check state/guard.
+      if (ensuredForAuthIdRef.current === authUserId && workspaceId && internalUserId) return;
     }
 
-    const row: TenancyRow = Array.isArray(data) ? data[0] : data;
-    const ws = row?.workspace_id ?? row?.out_workspace_id ?? null;
-    const iu = row?.user_id ?? row?.out_user_id ?? null;
+    ensureInFlightRef.current = (async () => {
+      const { data, error } = await supabase.rpc("ensure_user_and_workspace");
+      if (error) {
+        console.error("ensure_user_and_workspace failed:", error);
+        throw error;
+      }
 
-    if (!ws || !iu) {
-      console.error("ensure_user_and_workspace returned unexpected data:", { data });
-      throw new Error("Workspace setup did not return workspace_id/user_id");
-    }
+      const row: TenancyRow = Array.isArray(data) ? data[0] : data;
+      const ws = row?.workspace_id ?? row?.out_workspace_id ?? null;
+      const iu = row?.user_id ?? row?.out_user_id ?? null;
 
-    ensuredForAuthIdRef.current = authUserId;
-    setWorkspaceId(ws);
-    setInternalUserId(iu);
+      if (!ws || !iu) {
+        console.error("ensure_user_and_workspace returned unexpected data:", { data });
+        throw new Error("Workspace setup did not return workspace_id/user_id");
+      }
 
-    console.log("[Auth] tenancy ensured", { authUserId, workspaceId: ws, internalUserId: iu });
+      ensuredForAuthIdRef.current = authUserId;
+      setWorkspaceId(ws);
+      setInternalUserId(iu);
+
+      console.log("[Auth] tenancy ensured", { authUserId, workspaceId: ws, internalUserId: iu });
+    })()
+      .finally(() => {
+        ensureInFlightRef.current = null;
+      });
+
+    await ensureInFlightRef.current;
   };
 
   const refreshTenancy = async () => {
-    if (!user?.id) return;
-    // force refresh by clearing the guard
+    const authUserId = user?.id;
+    if (!authUserId) return;
+
     ensuredForAuthIdRef.current = null;
-    await ensureWorkspaceOnceFor(user.id);
+    ensureInFlightRef.current = null;
+    await ensureWorkspaceOnceFor(authUserId);
   };
 
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth
-      .getUser()
-      .then(async ({ data, error }) => {
+    const bootstrap = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
         if (!mounted) return;
-        if (error) console.error("getUser error:", error);
+
+        if (error) {
+          console.error("getUser error:", error);
+        }
 
         const supaUser = data?.user ?? null;
         const mapped = mapUserToAuthUser(supaUser);
 
         setUser(mapped);
-        setIsLoading(false);
 
         if (mapped?.id) {
           try {
             await ensureWorkspaceOnceFor(mapped.id);
           } catch {
-            // keep app running; user-facing surfaces handled elsewhere
+            // Do not crash app; downstream pages can show a retry button using refreshTenancy()
           }
         } else {
-          setWorkspaceId(null);
-          setInternalUserId(null);
-          ensuredForAuthIdRef.current = null;
+          clearTenancy();
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error("getUser threw:", err);
         if (!mounted) return;
         setUser(null);
-        setWorkspaceId(null);
-        setInternalUserId(null);
-        ensuredForAuthIdRef.current = null;
-        setIsLoading(false);
-      });
+        clearTenancy();
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    bootstrap();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const supaUser = session?.user ?? null;
@@ -129,9 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // keep app running
         }
       } else {
-        setWorkspaceId(null);
-        setInternalUserId(null);
-        ensuredForAuthIdRef.current = null;
+        clearTenancy();
       }
     });
 
@@ -139,7 +163,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, [workspaceId, internalUserId]);
+    // IMPORTANT: do not depend on workspaceId/internalUserId here, it causes re-runs/loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const signUp = async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
@@ -149,8 +175,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error } = await supabase.auth.signUp({ email: cleanEmail, password });
     if (error) throw error;
 
-    // Some setups require email confirmation; do not force tenancy here.
-    // User will run through sign-in flow; tenancy will be ensured on sign-in.
+    // Do not force tenancy here (email confirmation setups may not create a session immediately).
   };
 
   const login = async (email: string, password: string) => {
@@ -172,9 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (error) throw error;
 
     setUser(null);
-    setWorkspaceId(null);
-    setInternalUserId(null);
-    ensuredForAuthIdRef.current = null;
+    clearTenancy();
   };
 
   const value = useMemo(
