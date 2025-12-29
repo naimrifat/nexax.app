@@ -6,6 +6,23 @@ type LocationState = {
   from?: string;
 };
 
+async function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function ensureWorkspaceWithRetry() {
+  // Try twice. If it fails due to timing/session propagation, the second usually succeeds.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { data, error } = await supabase.rpc("ensure_user_and_workspace");
+    if (!error) return { data };
+
+    // If JWT/session wasn't ready yet, brief pause then retry.
+    console.warn("[AuthPage] ensure_user_and_workspace failed", { attempt, error });
+    if (attempt < 2) await sleep(500);
+    else throw error;
+  }
+}
+
 export default function AuthPage() {
   const [email, setEmail] = React.useState<string>("");
   const [password, setPassword] = React.useState<string>("");
@@ -39,28 +56,42 @@ export default function AuthPage() {
         });
         if (error) throw error;
 
-        setStatus("Signup successful. Now sign in.");
+        // For email/password, Supabase may require email confirmation depending on your settings.
+        setStatus("Signup successful. Please sign in.");
         setMode("signin");
         return;
       }
 
       // Sign in
-      const { error: signInError } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
       if (signInError) throw signInError;
 
-      // Ensure workspace + local user exist (idempotent)
-      const { data, error: rpcError } = await supabase.rpc("ensure_user_and_workspace");
-      console.log("ensure_user_and_workspace result:", { data, rpcError });
+      // Confirm we actually have a session/user before calling RPC.
+      const userId = signInData?.user?.id;
+      if (!userId) {
+        // Extremely rare, but safer than proceeding.
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!sessionData?.session?.user?.id) {
+          throw new Error("Signed in, but session was not established. Please try again.");
+        }
+      }
 
-      const row: any = Array.isArray(data) ? data[0] : data;
-const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
-console.log("workspace from RPC:", workspaceId);
-
-      if (rpcError) {
-        setStatus(rpcError.message);
+      // Ensure workspace + local user exist (idempotent).
+      // Do NOT let this hang your entire login flow.
+      setStatus("Finalizing account...");
+      try {
+        const { data } = await ensureWorkspaceWithRetry();
+        const row: any = Array.isArray(data) ? data[0] : data;
+        const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
+        console.log("[AuthPage] ensure_user_and_workspace ok", { workspaceId });
+      } catch (rpcErr: any) {
+        // If RPC fails, we still allow navigation. AuthProvider/other flows can re-attempt.
+        console.error("[AuthPage] ensure_user_and_workspace failed (non-blocking):", rpcErr);
+        setStatus("Signed in. (Workspace setup is still syncing—if something fails, refresh.)");
+        navigate(redirectTo, { replace: true });
         return;
       }
 
@@ -92,11 +123,19 @@ console.log("workspace from RPC:", workspaceId);
           autoComplete={mode === "signup" ? "new-password" : "current-password"}
         />
 
-        <button type="submit">{mode === "signup" ? "Sign up" : "Sign in"}</button>
+        <button type="submit">
+          {mode === "signup" ? "Sign up" : "Sign in"}
+        </button>
       </form>
 
       <div style={{ marginTop: 12 }}>
-        <button type="button" onClick={() => setMode(mode === "signup" ? "signin" : "signup")}>
+        <button
+          type="button"
+          onClick={() => {
+            setStatus("");
+            setMode(mode === "signup" ? "signin" : "signup");
+          }}
+        >
           Switch to {mode === "signup" ? "sign in" : "sign up"}
         </button>
       </div>
