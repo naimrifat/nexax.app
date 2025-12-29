@@ -78,9 +78,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error } = await supabase.auth.signUp({ email: cleanEmail, password });
     if (error) throw error;
 
-    const { data } = await supabase.auth.getSession();
-    if (data.session) await ensureWorkspaceOnce();
-  };
+const { data: userData, error: userErr } = await supabase.auth.getUser();
+if (userErr) throw userErr;
+if (userData?.user) {await ensureWorkspaceOnce();
+};
 
   const login = async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
