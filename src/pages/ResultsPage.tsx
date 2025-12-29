@@ -353,7 +353,7 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
 type Tenancy = { workspaceId: string; internalUserId: string; authUserId: string };
 
 async function ensureTenancyRpc(): Promise<Tenancy> {
-  const { data: sessionData, error: sessionErr } = await withTimeout(supabase.auth.getSession(), 5000, 'auth.getSession');
+  const { data: sessionData, error: sessionErr } = await withTimeout(supabase.auth.getSession(), 10000, 'auth.getSession');
   if (sessionErr) throw sessionErr;
 
   const authUserId = sessionData?.session?.user?.id;
