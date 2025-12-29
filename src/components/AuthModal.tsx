@@ -43,9 +43,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ open, initialMode, onClose, onMod
     }
   }, [open, initialMode]);
 
-  useEffect(() => {
-    onModeChange?.(mode);
-  }, [mode, onModeChange]);
+useEffect(() => {
+  if (!open) return;
+  onModeChange?.(mode);
+}, [mode, open, onModeChange]);
 
   useEffect(() => {
     if (user?.email) {
