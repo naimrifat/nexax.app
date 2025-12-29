@@ -10,19 +10,6 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function ensureWorkspaceWithRetry() {
-  // Try twice. If it fails due to timing/session propagation, the second usually succeeds.
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const { data, error } = await supabase.rpc("ensure_user_and_workspace");
-    if (!error) return { data };
-
-    // If JWT/session wasn't ready yet, brief pause then retry.
-    console.warn("[AuthPage] ensure_user_and_workspace failed", { attempt, error });
-    if (attempt < 2) await sleep(500);
-    else throw error;
-  }
-}
-
 export default function AuthPage() {
   const [email, setEmail] = React.useState<string>("");
   const [password, setPassword] = React.useState<string>("");
