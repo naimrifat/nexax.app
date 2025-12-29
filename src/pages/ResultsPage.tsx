@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import CategorySelector from '../components/CategorySelector';
 import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
 import { supabase } from '../../lib/supabaseClient';
+import { useAuth } from '../context/AuthContext'; // adjust path if different
 
 type Category = {
   id: string;
@@ -98,10 +99,8 @@ function firstValue(v: string | string[] | undefined): string {
 function isHostedImageUrl(u: string): boolean {
   const s = String(u || '').trim();
   if (!s) return false;
-  // hard block local/blob/data
   if (s.startsWith('blob:')) return false;
   if (s.startsWith('data:')) return false;
-  // allow https/http only
   return /^https?:\/\//i.test(s);
 }
 
@@ -125,11 +124,7 @@ function isSizeAspectName(name: string): boolean {
   return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
 }
 
-function filterSizeOptionsBySizeType(
-  sizeType: string,
-  allOptions: string[] = [],
-  categoryPath: string = ''
-): string[] {
+function filterSizeOptionsBySizeType(sizeType: string, allOptions: string[] = [], categoryPath: string = ''): string[] {
   return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
 }
 
@@ -230,10 +225,7 @@ function TokenSelect({
       >
         {multi &&
           selected.map((s) => (
-            <span
-              key={s}
-              className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1"
-            >
+            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
               {s}
               <button
                 type="button"
@@ -349,46 +341,33 @@ function getCategoryPathString(cat: CategoryWithPath | null): string {
   return cat.name || '';
 }
 
-/* ---------- Tenancy (RPC + auth) ---------- */
+/* ---------- Tenancy RPC cache ---------- */
 type Tenancy = { workspaceId: string; internalUserId: string; authUserId: string };
+const tenancyCache = new Map<string, Tenancy>();
 
-async function ensureTenancyRpc(): Promise<Tenancy> {
-const { data: userData, error: userErr } = await withTimeout(
-  supabase.auth.getUser(),
-  10000,
-  'auth.getUser'
-);
+async function ensureTenancyRpc(authUserId: string): Promise<Tenancy> {
+  const cached = tenancyCache.get(authUserId);
+  if (cached) return cached;
 
-if (userErr) throw userErr;
+  const { data, error } = await withTimeout(supabase.rpc('ensure_user_and_workspace'), 8000, 'ensure_user_and_workspace');
+  if (error) throw error;
 
-const authUserId = userData?.user?.id;
-console.log('[Tenancy] user ok', { authUserId });
+  const row: any = Array.isArray(data) ? data[0] : data;
+  const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
+  const internalUserId = row?.user_id ?? row?.out_user_id;
 
-if (!authUserId) {
-  throw new Error('Not authenticated (no user returned by auth.getUser)');
-}
+  if (!workspaceId) throw new Error('ensure_user_and_workspace did not return workspace_id');
+  if (!internalUserId) throw new Error('ensure_user_and_workspace did not return user_id');
 
-const { data, error } = await withTimeout(
-  supabase.rpc('ensure_user_and_workspace'),
-  8000,
-  'ensure_user_and_workspace'
-);
-
-if (error) throw error;
-
-const row: any = Array.isArray(data) ? data[0] : data;
-
-const workspaceId = row?.workspace_id ?? row?.out_workspace_id;
-const internalUserId = row?.user_id ?? row?.out_user_id;
-
-if (!workspaceId) throw new Error('ensure_user_and_workspace did not return workspace_id');
-if (!internalUserId) throw new Error('ensure_user_and_workspace did not return user_id');
-
-return { workspaceId, internalUserId, authUserId };
+  const t: Tenancy = { workspaceId, internalUserId, authUserId };
+  tenancyCache.set(authUserId, t);
+  console.log('[Tenancy] resolved/cached', t);
+  return t;
 }
 
 export default function ResultsPage() {
   const navigate = useNavigate();
+  const { user, isLoading: authLoading } = useAuth();
 
   // ----------------------------
   // State
@@ -427,13 +406,6 @@ export default function ResultsPage() {
 
   const tenancyRef = useRef<Tenancy | null>(null);
 
-  const ensureTenancy = useCallback(async () => {
-    if (tenancyRef.current) return tenancyRef.current;
-    const t = await ensureTenancyRpc();
-    tenancyRef.current = t;
-    return t;
-  }, []);
-
   // ----------------------------
   // Helpers
   // ----------------------------
@@ -448,8 +420,14 @@ export default function ResultsPage() {
         let candidate = '';
 
         if (lower.includes('brand')) candidate = aiData.brand || '';
-        else if (lower.includes('size type')) candidate = aiData.sizeTypeHint || ''; // FIX
-        else if (lower === 'size' || lower.includes('waist') || lower.includes('inseam') || lower.includes('neck') || lower.includes('chest'))
+        else if (lower.includes('size type')) candidate = aiData.sizeTypeHint || '';
+        else if (
+          lower === 'size' ||
+          lower.includes('waist') ||
+          lower.includes('inseam') ||
+          lower.includes('neck') ||
+          lower.includes('chest')
+        )
           candidate = aiData.size || '';
         else if (lower.includes('color') || lower.includes('colour')) candidate = aiData.color || '';
         else if (lower.includes('condition')) candidate = aiData.condition || '';
@@ -527,7 +505,6 @@ export default function ResultsPage() {
 
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
         const sizeFiltered = applySizeTypeFilterToSpecifics(filled, categoryPathForFilter);
-
         setSpecifics(sizeFiltered);
       } catch (err) {
         console.error('[Specifics] Error:', err);
@@ -583,11 +560,31 @@ export default function ResultsPage() {
     }
   };
 
+  const ensureTenancy = useCallback(async (): Promise<Tenancy> => {
+    if (tenancyRef.current) return tenancyRef.current;
+
+    if (authLoading) throw new Error('Auth still loading');
+    if (!user?.id) throw new Error('Not authenticated');
+
+    const t = await ensureTenancyRpc(user.id);
+    tenancyRef.current = t;
+    return t;
+  }, [authLoading, user?.id]);
+
   // ----------------------------
-  // Initial load
+  // Initial load (run once, no loops)
   // ----------------------------
   useEffect(() => {
     if (didInitialLoadRef.current) return;
+
+    // Wait until auth is resolved before initial load.
+    if (authLoading) return;
+    if (!user?.id) {
+      setLoading(false);
+      setError('Not authenticated. Please log in again.');
+      return;
+    }
+
     didInitialLoadRef.current = true;
 
     const run = async () => {
@@ -595,12 +592,13 @@ export default function ResultsPage() {
       setError(null);
 
       try {
+        // Tenancy resolves once and is cached.
+        await ensureTenancy();
+
         const urlParams = new URLSearchParams(window.location.search);
         const mode = urlParams.get('mode');
         const listingIdParam = urlParams.get('listingId');
         const sessionId = urlParams.get('session');
-
-        await ensureTenancy();
 
         // EDIT MODE
         if (mode === 'edit' && listingIdParam) {
@@ -630,8 +628,8 @@ export default function ResultsPage() {
             typeof row.price === 'number'
               ? row.price.toFixed(2)
               : typeof lj?.price_suggestion?.optimal === 'number'
-                ? lj.price_suggestion.optimal.toFixed(2)
-                : String(lj?.price_suggestion?.optimal ?? '0.00');
+              ? lj.price_suggestion.optimal.toFixed(2)
+              : String(lj?.price_suggestion?.optimal ?? '0.00');
           setPrice(priceVal);
 
           const imgsRaw: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
@@ -653,12 +651,12 @@ export default function ResultsPage() {
                   breadcrumbs: Array.isArray(catFromJson.breadcrumbs) ? catFromJson.breadcrumbs : undefined,
                 }
               : row.category_id
-                ? {
-                    id: String(row.category_id),
-                    name: 'Selected Category',
-                    path: String(row.category_path ?? ''),
-                  }
-                : null;
+              ? {
+                  id: String(row.category_id),
+                  name: 'Selected Category',
+                  path: String(row.category_path ?? ''),
+                }
+              : null;
 
           setCategory(cat);
 
@@ -733,8 +731,8 @@ export default function ResultsPage() {
       }
     };
 
-    run();
-  }, [ensureTenancy, fetchCategorySpecifics, smartFillSpecifics, navigate]);
+    void run();
+  }, [authLoading, user?.id, ensureTenancy, fetchCategorySpecifics, smartFillSpecifics, navigate]);
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setCategory(newCategory);
@@ -782,27 +780,26 @@ export default function ResultsPage() {
       : '');
 
   // ----------------------------
-  // Save Draft (Supabase canonical)
+  // Save Draft
   // ----------------------------
   const handleSaveDraft = async () => {
     setSaveError(null);
     setDraftStatus('');
 
     try {
-      const { workspaceId, internalUserId, authUserId } = await ensureTenancy();
+      const { workspaceId, internalUserId } = await ensureTenancy();
       if (!workspaceId) throw new Error('No workspaceId resolved');
 
       const listingData = buildListingJson();
-
       const orderedImages: string[] = Array.isArray(listingData.images) ? listingData.images : [];
       assertHostedImagesOrThrow(orderedImages);
 
       const categoryPath = listingData.category_path || '';
       const priceNum = Number(listingData.price_suggestion?.optimal ?? 0) || 0;
 
+      // IMPORTANT: do NOT send created_by; DB default auth.uid() sets it.
       const payload: any = {
         workspace_id: workspaceId,
-        created_by: authUserId, // FIX: must be auth.uid() in typical RLS
         status: 'draft',
         marketplace: 'ebay',
         title: listingData.title || 'Untitled Listing',
@@ -823,7 +820,7 @@ export default function ResultsPage() {
       if (!listingId) {
         const { data, error: insertErr } = await withTimeout(
           supabase.from('listings').insert(payload).select('id').single(),
-          7000,
+          15000,
           'insert draft'
         );
         if (insertErr) throw insertErr;
@@ -831,7 +828,7 @@ export default function ResultsPage() {
       } else {
         const { data, error: updateErr } = await withTimeout(
           supabase.from('listings').update(payload).eq('id', listingId).select('id').single(),
-          25000,
+          20000,
           'update draft'
         );
         if (updateErr) throw updateErr;
