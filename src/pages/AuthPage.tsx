@@ -1,24 +1,41 @@
 // src/pages/AuthPage.tsx
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext"; // adjust if your path differs
+import { useAuth } from "../context/AuthContext";
 
 type LocationState = {
   from?: string;
 };
 
-const AuthPage: React.FC = () => {
+type AuthMode = "login" | "signup" | "reset";
+
+type AuthPageProps = {
+  initialMode?: AuthMode;
+};
+
+const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login" }) => {
   const [email, setEmail] = React.useState<string>("");
   const [password, setPassword] = React.useState<string>("");
-  const [mode, setMode] = React.useState<"signin" | "signup">("signin");
+  const [confirmPassword, setConfirmPassword] = React.useState<string>("");
+  const [mode, setMode] = React.useState<AuthMode>(initialMode);
   const [status, setStatus] = React.useState<string>("");
 
-  const { signUp, login } = useAuth();
+  const { signUp, login, resetPassword } = useAuth();
 
   const navigate = useNavigate();
   const location = useLocation();
   const state = (location.state || {}) as LocationState;
   const redirectTo = state.from || "/dashboard";
+
+  // Keep mode in sync when route changes (/login -> /signup -> /reset)
+  React.useEffect(() => {
+    setMode(initialMode);
+    setStatus("");
+    setPassword("");
+    setConfirmPassword("");
+  }, [initialMode]);
+
+  const needsConfirm = mode === "signup" || mode === "reset";
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -29,24 +46,34 @@ const AuthPage: React.FC = () => {
       setStatus("Email is required.");
       return;
     }
+
     if (!password) {
       setStatus("Password is required.");
+      return;
+    }
+
+    if (needsConfirm && password !== confirmPassword) {
+      setStatus("Passwords do not match.");
       return;
     }
 
     try {
       if (mode === "signup") {
         await signUp(cleanEmail, password);
-
-        // Depending on Supabase email-confirm settings, user may need to confirm email first.
-        setStatus("Signup successful. Please sign in.");
-        setMode("signin");
+        setStatus("Signup successful. Please log in.");
+        navigate("/login", { replace: true, state: { from: redirectTo } });
         return;
       }
 
-      // Sign in (AuthContext will ensure tenancy via auth state change)
-      await login(cleanEmail, password);
+      if (mode === "reset") {
+        await resetPassword(cleanEmail, password);
+        setStatus("Password updated. Please log in.");
+        navigate("/login", { replace: true, state: { from: redirectTo } });
+        return;
+      }
 
+      // login
+      await login(cleanEmail, password);
       setStatus("Signed in.");
       navigate(redirectTo, { replace: true });
     } catch (err: unknown) {
@@ -57,7 +84,9 @@ const AuthPage: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 420, margin: "40px auto", padding: 16 }}>
-      <h2>{mode === "signup" ? "Create account" : "Sign in"}</h2>
+      <h2>
+        {mode === "signup" ? "Create account" : mode === "reset" ? "Reset password" : "Log in"}
+      </h2>
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 10 }}>
         <input
@@ -68,26 +97,64 @@ const AuthPage: React.FC = () => {
         />
 
         <input
-          placeholder="Password"
+          placeholder={mode === "reset" ? "New password" : "Password"}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          autoComplete={mode === "signup" ? "new-password" : "current-password"}
+          autoComplete={mode === "signup" || mode === "reset" ? "new-password" : "current-password"}
         />
 
-        <button type="submit">{mode === "signup" ? "Sign up" : "Sign in"}</button>
+        {needsConfirm && (
+          <input
+            placeholder="Confirm password"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            autoComplete="new-password"
+          />
+        )}
+
+        <button type="submit">
+          {mode === "signup" ? "Sign up" : mode === "reset" ? "Update password" : "Log in"}
+        </button>
       </form>
 
-      <div style={{ marginTop: 12 }}>
-        <button
-          type="button"
-          onClick={() => {
-            setStatus("");
-            setMode(mode === "signup" ? "signin" : "signup");
-          }}
-        >
-          Switch to {mode === "signup" ? "sign in" : "sign up"}
-        </button>
+      <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {mode !== "login" && (
+          <button
+            type="button"
+            onClick={() => {
+              setStatus("");
+              navigate("/login", { state: { from: redirectTo } });
+            }}
+          >
+            Back to log in
+          </button>
+        )}
+
+        {mode !== "signup" && (
+          <button
+            type="button"
+            onClick={() => {
+              setStatus("");
+              navigate("/signup", { state: { from: redirectTo } });
+            }}
+          >
+            Create an account
+          </button>
+        )}
+
+        {mode !== "reset" && (
+          <button
+            type="button"
+            onClick={() => {
+              setStatus("");
+              navigate("/reset", { state: { from: redirectTo } });
+            }}
+          >
+            Forgot password?
+          </button>
+        )}
       </div>
 
       {status ? <p style={{ marginTop: 12 }}>{status}</p> : null}
