@@ -40,9 +40,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<AuthUser | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [internalUserId, setInternalUserId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Prevent spam + prevent concurrent calls racing each other
+  // Prevent concurrent tenancy ensures + prevent repeated ensures per auth user
   const ensuredForAuthIdRef = useRef<string | null>(null);
   const ensureInFlightRef = useRef<Promise<void> | null>(null);
 
@@ -56,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const ensureWorkspaceOnceFor = async (authUserId: string) => {
     if (!authUserId) return;
 
-    // If already ensured for this user and we have values, do nothing.
+    // If already ensured for this auth user and we have values, do nothing.
     if (ensuredForAuthIdRef.current === authUserId && workspaceId && internalUserId) return;
 
     // If a call is already running, await it (do not start a new one).
@@ -68,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ensureInFlightRef.current = (async () => {
       const { data, error } = await supabase.rpc("ensure_user_and_workspace");
       if (error) {
-        console.error("ensure_user_and_workspace failed:", error);
+        console.error("[Auth] ensure_user_and_workspace failed:", error);
         throw error;
       }
 
@@ -77,7 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const iu = row?.user_id ?? row?.out_user_id ?? null;
 
       if (!ws || !iu) {
-        console.error("ensure_user_and_workspace returned unexpected data:", { data });
+        console.error("[Auth] ensure_user_and_workspace returned unexpected data:", { data });
         throw new Error("Workspace setup did not return workspace_id/user_id");
       }
 
@@ -99,70 +99,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     ensuredForAuthIdRef.current = null;
     ensureInFlightRef.current = null;
+
     await ensureWorkspaceOnceFor(authUserId);
   };
 
-useEffect(() => {
-  let mounted = true;
+  useEffect(() => {
+    let mounted = true;
 
-  const bootstrap = async () => {
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-
+    const applyAuthUser = async (supaUser: any) => {
+      const mapped = mapUserToAuthUser(supaUser);
       if (!mounted) return;
 
-      const sessionUser = data.session?.user ?? null;
-      setUser(sessionUser);
+      setUser(mapped);
 
-      // IMPORTANT: even if user is null
-    } catch (err) {
-      console.error("[AuthContext] bootstrap failed", err);
-      if (mounted) {
-        setUser(null);
+      if (mapped?.id) {
+        try {
+          await ensureWorkspaceOnceFor(mapped.id);
+        } catch (e) {
+          // Do not crash the app; UI can show retry via refreshTenancy()
+          console.error("[Auth] tenancy ensure failed:", e);
+        }
+      } else {
+        clearTenancy();
       }
-    } finally {
-      if (mounted) {
-        setIsLoading(false); // 🔑 THIS IS THE KEY
-      }
-    }
-  };
-
-  bootstrap();
-
-  return () => {
-    mounted = false;
-  };
-}, []);
+    };
 
     const bootstrap = async () => {
       try {
-        const { data, error } = await supabase.auth.getUser();
-        if (!mounted) return;
+        // getSession is the right bootstrap call; it matches onAuthStateChange behavior
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
 
-        if (error) {
-          console.error("getUser error:", error);
-        }
-
-        const supaUser = data?.user ?? null;
-        const mapped = mapUserToAuthUser(supaUser);
-
-        setUser(mapped);
-
-        if (mapped?.id) {
-          try {
-            await ensureWorkspaceOnceFor(mapped.id);
-          } catch {
-            // Do not crash app; downstream pages can show a retry button using refreshTenancy()
-          }
-        } else {
+        const supaUser = data?.session?.user ?? null;
+        await applyAuthUser(supaUser);
+      } catch (err) {
+        console.error("[Auth] bootstrap failed:", err);
+        if (mounted) {
+          setUser(null);
           clearTenancy();
         }
-      } catch (err) {
-        console.error("getUser threw:", err);
-        if (!mounted) return;
-        setUser(null);
-        clearTenancy();
       } finally {
         if (mounted) setIsLoading(false);
       }
@@ -171,19 +146,13 @@ useEffect(() => {
     void bootstrap();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const supaUser = session?.user ?? null;
-      const mapped = mapUserToAuthUser(supaUser);
-
-      setUser(mapped);
-
-      if (mapped?.id) {
-        try {
-          await ensureWorkspaceOnceFor(mapped.id);
-        } catch {
-          // keep app running
-        }
-      } else {
-        clearTenancy();
+      try {
+        // IMPORTANT: do not set isLoading true here; that causes route flicker and can re-block pages.
+        const supaUser = session?.user ?? null;
+        await applyAuthUser(supaUser);
+      } catch (err) {
+        console.error("[Auth] onAuthStateChange handler failed:", err);
+        // Keep app usable; worst case user remains as-is.
       }
     });
 
@@ -191,9 +160,6 @@ useEffect(() => {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-
-    // IMPORTANT:
-    // Do NOT depend on workspaceId/internalUserId here, otherwise it can re-run and loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -205,7 +171,7 @@ useEffect(() => {
     const { error } = await supabase.auth.signUp({ email: cleanEmail, password });
     if (error) throw error;
 
-    // Do not force tenancy here (email confirmation setups may not create a session immediately).
+    // Do not force tenancy here (email confirmation may prevent immediate session).
   };
 
   const login = async (email: string, password: string) => {
@@ -216,9 +182,18 @@ useEffect(() => {
     const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
     if (error) throw error;
 
-    const authUserId = data?.user?.id;
+    const mapped = mapUserToAuthUser(data?.user);
+    setUser(mapped);
+
+    const authUserId = mapped?.id;
     if (authUserId) {
-      await ensureWorkspaceOnceFor(authUserId);
+      try {
+        await ensureWorkspaceOnceFor(authUserId);
+      } catch (e) {
+        console.error("[Auth] tenancy ensure failed after login:", e);
+      }
+    } else {
+      clearTenancy();
     }
   };
 
