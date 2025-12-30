@@ -52,11 +52,6 @@ type DashboardListing = {
   ebay_listing_url?: string | null;
 };
 
-useEffect(() => {
-  if (!canQuery) return;
-  void fetchListings();
-}, [canQuery, fetchListings]);
-
 function safeArray(v: unknown): string[] {
   if (Array.isArray(v)) return v.filter((x) => typeof x === "string") as string[];
   return [];
@@ -141,7 +136,7 @@ const DashboardPage: React.FC = () => {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [listingItems, setListingItems] = useState<DashboardListing[]>([]);
 
@@ -181,9 +176,13 @@ const DashboardPage: React.FC = () => {
     }
   }, [canQuery, authLoading, workspaceId]);
 
-  useEffect(() => {
-    void fetchListings();
-  }, [fetchListings]);
+useEffect(() => {
+  if (!canQuery) {    setLoading(false);
+    return;
+  }
+
+  void fetchListings();
+}, [canQuery, fetchListings]);
 
   const filteredListings = useMemo(() => {
     return listingItems
