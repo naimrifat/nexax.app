@@ -102,8 +102,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await ensureWorkspaceOnceFor(authUserId);
   };
 
-  useEffect(() => {
-    let mounted = true;
+useEffect(() => {
+  let mounted = true;
+
+  const bootstrap = async () => {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+
+      if (!mounted) return;
+
+      const sessionUser = data.session?.user ?? null;
+      setUser(sessionUser);
+
+      // IMPORTANT: even if user is null
+    } catch (err) {
+      console.error("[AuthContext] bootstrap failed", err);
+      if (mounted) {
+        setUser(null);
+      }
+    } finally {
+      if (mounted) {
+        setIsLoading(false); // 🔑 THIS IS THE KEY
+      }
+    }
+  };
+
+  bootstrap();
+
+  return () => {
+    mounted = false;
+  };
+}, []);
 
     const bootstrap = async () => {
       try {
