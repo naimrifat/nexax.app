@@ -142,39 +142,50 @@ const DashboardPage: React.FC = () => {
 
   const canQuery = !!user?.id && !!workspaceId && !authLoading;
 
-  const fetchListings = useCallback(async () => {
-    setLoadError(null);
+const fetchListings = useCallback(async () => {
+  setLoadError(null);
 
-    if (!canQuery) {
-      setListingItems([]);
-      setLoading(false);
-      if (!authLoading) setLoadError("You must be logged in to view your dashboard.");
-      return;
-    }
+  if (!canQuery) {
+    setListingItems([]);
+    setLoading(false);
+    return;
+  }
 
-    setLoading(true);
+  setLoading(true);
 
-    try {
-      const { data, error } = await supabase
-        .from("listings")
-        .select(
-          "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at"
-        )
-        .eq("workspace_id", workspaceId) // CRITICAL: tenant scoping
-        .order("updated_at", { ascending: false, nullsFirst: false });
+  let timeoutId: number | undefined;
 
-      if (error) throw error;
+  try {
+    // Hard stop: never allow infinite loading
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = window.setTimeout(() => {
+        reject(new Error("Dashboard request timed out. Please try again."));
+      }, 15000); // 15s – long-term reasonable safeguard
+    });
 
-      const rows = (data ?? []) as ListingRow[];
-      setListingItems(rows.map(normalizeListing));
-    } catch (e: any) {
-      console.error("[DashboardPage] Failed to load listings:", e);
-      setListingItems([]);
-      setLoadError(e?.message || "Failed to load listings.");
-    } finally {
-      setLoading(false);
-    }
-  }, [canQuery, authLoading, workspaceId]);
+    const queryPromise = supabase
+      .from("listings")
+      .select(
+        "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at"
+      )
+      .eq("workspace_id", workspaceId)
+      .order("updated_at", { ascending: false });
+
+    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
+
+    if (error) throw error;
+
+    const rows = (data ?? []) as ListingRow[];
+    setListingItems(rows.map(normalizeListing));
+  } catch (e: any) {
+    console.error("[DashboardPage] Failed to load listings:", e);
+    setListingItems([]);
+    setLoadError(e?.message || "Failed to load listings.");
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+    setLoading(false);
+  }
+}, [canQuery, workspaceId]);
 
 useEffect(() => {
   if (!canQuery) {    setLoading(false);
