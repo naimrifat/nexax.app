@@ -1,5 +1,5 @@
 // src/pages/DashboardPage.tsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   PlusCircle,
@@ -129,7 +129,6 @@ function normalizeListing(row: ListingRow): DashboardListing {
 }
 
 const DashboardPage: React.FC = () => {
-  // NOTE: useNavigate remains used inside ListingCard; here it's not needed.
   const { user, workspaceId, isLoading: authLoading } = useAuth();
 
   const [activeFilter, setActiveFilter] = useState<string>("all");
@@ -142,61 +141,77 @@ const DashboardPage: React.FC = () => {
 
   const canQuery = !!user?.id && !!workspaceId && !authLoading;
 
-const fetchListings = useCallback(async () => {
-  setLoadError(null);
+  // Prevent overlapping requests and stale updates.
+  const inFlightRef = useRef(false);
+  const requestSeqRef = useRef(0);
 
-  if (!canQuery) {
-    setListingItems([]);
-    setLoading(false);
-    return;
-  }
+  const fetchListings = useCallback(async () => {
+    if (!canQuery) {
+      setListingItems([]);
+      setLoading(false);
+      setLoadError(null);
+      return;
+    }
 
-  setLoading(true);
+    // Avoid overlapping loads (important when navigating back quickly).
+    if (inFlightRef.current) return;
 
-  let timeoutId: number | undefined;
+    inFlightRef.current = true;
+    const seq = ++requestSeqRef.current;
 
-  try {
-    // Hard stop: never allow infinite loading
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = window.setTimeout(() => {
-        reject(new Error("Dashboard request timed out. Please try again."));
-      }, 15000); // 15s – long-term reasonable safeguard
-    });
+    setLoadError(null);
+    setLoading(true);
 
-    const queryPromise = supabase
-      .from("listings")
-      .select(
-        "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at"
-      )
-      .eq("workspace_id", workspaceId)
-      .order("updated_at", { ascending: false });
+    let timeoutId: number | undefined;
 
-    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(new Error("Dashboard request timed out. Please try again."));
+        }, 15000);
+      });
 
-    if (error) throw error;
+      const queryPromise = supabase
+        .from("listings")
+        .select(
+          "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at"
+        )
+        .eq("workspace_id", workspaceId)
+        .order("updated_at", { ascending: false, nullsFirst: false });
 
-    const rows = (data ?? []) as ListingRow[];
-    setListingItems(rows.map(normalizeListing));
-  } catch (e: any) {
-    console.error("[DashboardPage] Failed to load listings:", e);
-    setListingItems([]);
-    setLoadError(e?.message || "Failed to load listings.");
-  } finally {
-    if (timeoutId) window.clearTimeout(timeoutId);
-    setLoading(false);
-  }
-}, [canQuery, workspaceId]);
+      const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
 
-useEffect(() => {
-  if (!canQuery) {    setLoading(false);
-    return;
-  }
+      if (error) throw error;
 
-  void fetchListings();
-}, [canQuery, fetchListings]);
-  
-  console.log({ authLoading, userId: user?.id, workspaceId, canQuery });
+      // Only apply the latest response (guards against out-of-order resolution).
+      if (seq === requestSeqRef.current) {
+        const rows = (data ?? []) as ListingRow[];
+        setListingItems(rows.map(normalizeListing));
+      }
+    } catch (e: any) {
+      console.error("[DashboardPage] Failed to load listings:", e);
+      if (seq === requestSeqRef.current) {
+        setListingItems([]);
+        setLoadError(e?.message || "Failed to load listings.");
+      }
+    } finally {
+      if (timeoutId) window.clearTimeout(timeoutId);
+      if (seq === requestSeqRef.current) setLoading(false);
+      inFlightRef.current = false;
+    }
+  }, [canQuery, workspaceId]);
 
+  // Fetch deterministically when the page becomes query-ready.
+  // This avoids double-fetch loops tied to fetchListings identity.
+  useEffect(() => {
+    if (!canQuery) {
+      setLoading(false);
+      return;
+    }
+    void fetchListings();
+    // Intentionally depend only on canQuery. fetchListings is stable given canQuery/workspaceId.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canQuery]);
 
   const filteredListings = useMemo(() => {
     return listingItems
@@ -227,27 +242,27 @@ useEffect(() => {
     return { all, active, draft, sold };
   }, [listingItems]);
 
-if (!canQuery && authLoading) {
-  return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
-        <p className="text-gray-600">Checking session...</p>
+  if (!canQuery && authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
+          <p className="text-gray-600">Checking session...</p>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-if (loading) {
-  return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
-        <p className="text-gray-600">Loading dashboard...</p>
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
+          <p className="text-gray-600">Loading dashboard...</p>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
   return (
     <div className="container mx-auto px-4 py-8 md:py-12">
@@ -263,7 +278,7 @@ if (loading) {
 
             <button
               type="button"
-              onClick={() => fetchListings()}
+              onClick={() => void fetchListings()}
               className="btn border border-gray-300 text-gray-700 hover:bg-gray-100 px-4 py-2 rounded-md font-semibold"
             >
               Refresh
@@ -465,12 +480,10 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
   };
 
   const handleEdit = () => {
-    // ResultsPage uses query params mode=edit&listingId=...
     navigate(`/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`);
   };
 
   const handleView = () => {
-    // Currently same route as edit.
     navigate(`/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`);
   };
 
@@ -548,16 +561,12 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
     URL.revokeObjectURL(url);
   };
 
-  // Close menu when clicking outside
   useEffect(() => {
     if (!isMenuOpen) return;
 
     const onDoc = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
       if (!target) return;
-      // Any click outside a menu button/menu should close.
-      // Since we don't have refs here, we close on any document click after menu is open,
-      // except when the click happens inside the menu container.
       if (target.closest?.("[data-menu-root]")) return;
       setIsMenuOpen(false);
     };
@@ -598,9 +607,17 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
                     <div className="py-1">
                       <ActionButton icon={<Eye className="w-4 h-4" />} label="View" onClick={handleView} />
                       <ActionButton icon={<Edit className="w-4 h-4" />} label="Edit" onClick={handleEdit} />
-                      <ActionButton icon={<Copy className="w-4 h-4" />} label="Duplicate to Draft" onClick={handleDuplicate} />
+                      <ActionButton
+                        icon={<Copy className="w-4 h-4" />}
+                        label="Duplicate to Draft"
+                        onClick={handleDuplicate}
+                      />
                       <ActionButton icon={<Download className="w-4 h-4" />} label="Download JSON" onClick={handleDownloadJson} />
-                      <ActionButton icon={<ExternalLink className="w-4 h-4" />} label="Open in Marketplace" onClick={handleOpenMarketplace} />
+                      <ActionButton
+                        icon={<ExternalLink className="w-4 h-4" />}
+                        label="Open in Marketplace"
+                        onClick={handleOpenMarketplace}
+                      />
                       <div className="border-t border-gray-100 my-1" />
                       <ActionButton
                         icon={<Trash className="w-4 h-4 text-red-500" />}
@@ -646,12 +663,20 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
             )}
 
             <div className="flex sm:flex-col gap-2">
-              <button onClick={handleView} className="btn btn-outline py-1.5 text-sm px-3 flex items-center justify-center" type="button">
+              <button
+                onClick={handleView}
+                className="btn btn-outline py-1.5 text-sm px-3 flex items-center justify-center"
+                type="button"
+              >
                 <Eye className="w-4 h-4 mr-1.5" />
                 View
               </button>
 
-              <button onClick={handleEdit} className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center" type="button">
+              <button
+                onClick={handleEdit}
+                className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center"
+                type="button"
+              >
                 <Edit className="w-4 h-4 mr-1.5" />
                 Edit
               </button>
