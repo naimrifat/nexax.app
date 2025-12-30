@@ -274,6 +274,9 @@ const DashboardPage: React.FC = () => {
 
   return (
     <div className="container mx-auto px-4 py-8 md:py-12">
+      <div style={{ position: "fixed", bottom: 8, right: 8, zIndex: 999999, background: "#000", color: "#fff", padding: "4px 6px", borderRadius: 4, fontSize: 12 }}>
+  DASHBOARD_MARKER_001
+</div>
       {showFullScreenLoader && (
         <div className="min-h-[50vh] flex items-center justify-center">
           <div className="text-center">
