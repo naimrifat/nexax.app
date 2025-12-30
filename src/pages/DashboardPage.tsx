@@ -52,6 +52,11 @@ type DashboardListing = {
   ebay_listing_url?: string | null;
 };
 
+useEffect(() => {
+  if (!canQuery) return;
+  void fetchListings();
+}, [canQuery, fetchListings]);
+
 function safeArray(v: unknown): string[] {
   if (Array.isArray(v)) return v.filter((x) => typeof x === "string") as string[];
   return [];
@@ -209,16 +214,27 @@ const DashboardPage: React.FC = () => {
     return { all, active, draft, sold };
   }, [listingItems]);
 
-  if (authLoading || loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
-          <p className="text-gray-600">{authLoading ? "Checking session..." : "Loading dashboard..."}</p>
-        </div>
+if (!canQuery && authLoading) {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
+        <p className="text-gray-600">Checking session...</p>
       </div>
-    );
-  }
+    </div>
+  );
+}
+
+if (loading) {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
+        <p className="text-gray-600">Loading dashboard...</p>
+      </div>
+    </div>
+  );
+}
 
   return (
     <div className="container mx-auto px-4 py-8 md:py-12">
