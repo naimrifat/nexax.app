@@ -1,35 +1,104 @@
-// src/components/ProtectedRoute.tsx
+// src/App.tsx
 import React from "react";
-import { Navigate, useLocation } from "react-router-dom";
-import { useAuth } from "./context/AuthContext";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import Layout from "./components/Layout";
+import HomePage from "./pages/HomePage";
+import DashboardPage from "./pages/DashboardPage";
+import ResultsPage from "./pages/ResultsPage";
+import PricingPage from "./pages/PricingPage";
+import { ListingProvider } from "./context/ListingContext";
+import { AuthProvider } from "./context/AuthContext";
+import ListingStyleSettingsPage from "./pages/ListingStyleSettingsPage";
+import AuthPage from "./pages/AuthPage";
+import ProtectedRoute from "./components/ProtectedRoute";
+import DraftsPage from "./pages/DraftsPage";
+import "./App.css";
 
-type ProtectedRouteProps = {
-  children: React.ReactNode;
-};
+function App() {
+  return (
+    <Router>
+      <AuthProvider>
+        <ListingProvider>
+          <Layout>
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/pricing" element={<PricingPage />} />
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const location = useLocation();
-  const { user, isLoading } = useAuth();
+              {/* Route-based auth (no popup) */}
+              <Route path="/login" element={<AuthPage initialMode="login" />} />
+              <Route path="/signup" element={<AuthPage initialMode="signup" />} />
+              <Route path="/reset" element={<AuthPage initialMode="reset" />} />
 
-  // Block only while bootstrapping AND user is not known yet.
-  if (isLoading && !user) {
-    return (
-      <div className="min-h-[50vh] flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-teal-600 mx-auto mb-3" />
-          <p className="text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <DashboardPage />
+                  </ProtectedRoute>
+                }
+              />
 
-  // If not authenticated, redirect to login and remember where they came from.
-  if (!user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
-  }
+              <Route
+                path="/drafts"
+                element={
+                  <ProtectedRoute>
+                    <DraftsPage />
+                  </ProtectedRoute>
+                }
+              />
 
-  // Authenticated: render the protected content.
-  return <>{children}</>;
-};
+              {/* Canonical results route (supports query params like ?mode=edit&listingId=...) */}
+              <Route
+                path="/results"
+                element={
+                  <ProtectedRoute>
+                    <ResultsPage />
+                  </ProtectedRoute>
+                }
+              />
 
-export default ProtectedRoute;
+              {/* Backward-compat: /results/:id -> /results?mode=edit&listingId=:id */}
+              <Route
+                path="/results/:id"
+                element={
+                  <ProtectedRoute>
+                    <ResultsIdRedirect />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route
+                path="/settings/listing-style"
+                element={
+                  <ProtectedRoute>
+                    <ListingStyleSettingsPage />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route path="/create-listing" element={<HomePage />} />
+
+              <Route path="*" element={<div style={{ padding: 24 }}>Page not found</div>} />
+            </Routes>
+          </Layout>
+        </ListingProvider>
+      </AuthProvider>
+    </Router>
+  );
+}
+
+/**
+ * Redirect /results/:id -> /results?mode=edit&listingId=:id
+ */
+function ResultsIdRedirect() {
+  const pathname = window.location.pathname; // "/results/<id>"
+  const parts = pathname.split("/").filter(Boolean);
+  const id = parts.length >= 2 ? parts[1] : "";
+
+  if (!id) return <Navigate to="/results" replace />;
+
+  const to = `/results?mode=edit&listingId=${encodeURIComponent(id)}`;
+  return <Navigate to={to} replace />;
+}
+
+export default App;
