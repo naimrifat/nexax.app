@@ -183,6 +183,9 @@ useEffect(() => {
 
   void fetchListings();
 }, [canQuery, fetchListings]);
+  
+  console.log({ authLoading, userId: user?.id, workspaceId, canQuery });
+
 
   const filteredListings = useMemo(() => {
     return listingItems
