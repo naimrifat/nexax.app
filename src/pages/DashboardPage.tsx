@@ -207,12 +207,13 @@ const DashboardPage: React.FC = () => {
    * Using location.key makes this deterministic even if React keeps some state around.
    */
   useEffect(() => {
-    if (!canQuery) {
-      setLoading(false);
-      return;
-    }
-    void fetchListings();
-  }, [canQuery, location.key, fetchListings]);
+  if (!canQuery) {
+    setLoading(false);
+    return;
+  }
+  
+  void fetchListings();
+}, [canQuery, location.key, workspaceId]);
 
   const filteredListings = useMemo(() => {
     return listingItems
