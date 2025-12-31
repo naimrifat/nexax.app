@@ -1,5 +1,5 @@
 // src/components/ProtectedRoute.tsx
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
@@ -10,11 +10,11 @@ type ProtectedRouteProps = {
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const location = useLocation();
   const { user, isLoading } = useAuth();
-
+  
   // Add a timeout fallback for stuck loading states
-  const [forceReady, setForceReady] = React.useState(false);
+  const [forceReady, setForceReady] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const timer = setTimeout(() => {
       if (isLoading) {
         console.warn("[ProtectedRoute] Force-unlocking after 5s timeout");
