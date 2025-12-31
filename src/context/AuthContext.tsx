@@ -171,23 +171,23 @@ const bootstrap = async () => {
 
     void bootstrap();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      try {
-        // IMPORTANT: do not set isLoading true here; that causes route flicker and can re-block pages.
-        const supaUser = session?.user ?? null;
-        await applyAuthUser(supaUser);
-      } catch (err) {
-        console.error("[Auth] onAuthStateChange handler failed:", err);
-        // Keep app usable; worst case user remains as-is.
-      }
-    });
-
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+  try {
+    // IMPORTANT: do not set isLoading true here; that causes route flicker and can re-block pages.
+    const supaUser = session?.user ?? null;
+    await applyAuthUser(supaUser);
+  } catch (err) {
+    console.error("[Auth] onAuthStateChange handler failed:", err);
+    // Keep app usable; worst case user remains as-is.
+  }
+});
+    
+return () => {
+  mounted = false;
+  sub.subscription.unsubscribe();
+};
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   const signUp = async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
