@@ -93,100 +93,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await ensureInFlightRef.current;
   };
 
-  const refreshTenancy = async () => {
-    const authUserId = user?.id;
-    if (!authUserId) return;
+const refreshTenancy = async () => {
+  const authUserId = user?.id;
+  if (!authUserId) return;
+  ensuredForAuthIdRef.current = null;
+  ensureInFlightRef.current = null;
+  await ensureWorkspaceOnceFor(authUserId);
+};
 
-    ensuredForAuthIdRef.current = null;
-    ensureInFlightRef.current = null;
+useEffect(() => {
+  let mounted = true;
 
-    await ensureWorkspaceOnceFor(authUserId);
+  const applyAuthUser = async (supaUser: any) => {
+    const mapped = mapUserToAuthUser(supaUser);
+    if (!mounted) return;
+    setUser(mapped);
+    if (mapped?.id) {
+      try {
+        await ensureWorkspaceOnceFor(mapped.id);
+      } catch (e) {
+        console.error("[Auth] tenancy ensure failed:", e);
+        // DON'T throw here - just log it
+        // The app should still be usable even if tenancy fails
+      }
+    } else {
+      clearTenancy();
+    }
   };
 
-  useEffect(() => {
-    let mounted = true;
-
-const applyAuthUser = async (supaUser: any) => {
-  const mapped = mapUserToAuthUser(supaUser);
-  if (!mounted) return;
-
-  setUser(mapped);
-
-  if (mapped?.id) {
+  const bootstrap = async () => {
+    console.log("[Auth] 🚀 Starting bootstrap...");
     try {
-      await ensureWorkspaceOnceFor(mapped.id);
-    } catch (e) {
-      console.error("[Auth] tenancy ensure failed:", e);
-      // DON'T throw here - just log it
-      // The app should still be usable even if tenancy fails
+      const { data, error } = await supabase.auth.getSession();
+      console.log("[Auth] 📦 getSession result:", { data, error });
+      
+      if (error) throw error;
+      const supaUser = data?.session?.user ?? null;
+      console.log("[Auth] 👤 User:", supaUser?.email || "none");
+      
+      await applyAuthUser(supaUser);
+      console.log("[Auth] ✅ applyAuthUser complete");
+    } catch (err) {
+      console.error("[Auth] ❌ bootstrap failed:", err);
+      if (mounted) {
+        setUser(null);
+        clearTenancy();
+      }
+    } finally {
+      console.log("[Auth] 🏁 Setting isLoading = false");
+      if (mounted) setIsLoading(false);
     }
-  } else {
-    clearTenancy();
-  }
-};
+  };
 
-const bootstrap = async () => {
-  try {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
+  void bootstrap();
 
-    const supaUser = data?.session?.user ?? null;
-    await applyAuthUser(supaUser);
-  } catch (err) {
-    console.error("[Auth] bootstrap failed:", err);
-    if (mounted) {
-      setUser(null);
-      clearTenancy();
+  const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    try {
+      // IMPORTANT: do not set isLoading true here; that causes route flicker and can re-block pages.
+      const supaUser = session?.user ?? null;
+      await applyAuthUser(supaUser);
+    } catch (err) {
+      console.error("[Auth] onAuthStateChange handler failed:", err);
+      // Keep app usable; worst case user remains as-is.
     }
-  } finally {
-    // CRITICAL: Always set loading to false, no matter what
-    if (mounted) {
-      setIsLoading(false);
-      console.log("[Auth] Bootstrap complete"); // Debug log
-    }
-    const bootstrap = async () => {
-  console.log("[Auth] 🚀 Starting bootstrap...");
-  try {
-    const { data, error } = await supabase.auth.getSession();
-    console.log("[Auth] 📦 getSession result:", { data, error });
-    
-    if (error) throw error;
+  });
 
-    const supaUser = data?.session?.user ?? null;
-    console.log("[Auth] 👤 User:", supaUser?.email || "none");
-    
-    await applyAuthUser(supaUser);
-    console.log("[Auth] ✅ applyAuthUser complete");
-  } catch (err) {
-    console.error("[Auth] ❌ bootstrap failed:", err);
-    if (mounted) {
-      setUser(null);
-      clearTenancy();
-    }
-  } finally {
-    console.log("[Auth] 🏁 Setting isLoading = false");
-    if (mounted) setIsLoading(false);
-  }
-};
-
-    void bootstrap();
-
-const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-  try {
-    // IMPORTANT: do not set isLoading true here; that causes route flicker and can re-block pages.
-    const supaUser = session?.user ?? null;
-    await applyAuthUser(supaUser);
-  } catch (err) {
-    console.error("[Auth] onAuthStateChange handler failed:", err);
-    // Keep app usable; worst case user remains as-is.
-  }
-});
-    
-return () => {
-  mounted = false;
-  sub.subscription.unsubscribe();
-};
-// eslint-disable-next-line react-hooks/exhaustive-deps
+  return () => {
+    mounted = false;
+    sub.subscription.unsubscribe();
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
   const signUp = async (email: string, password: string) => {
