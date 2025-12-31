@@ -36,42 +36,54 @@ type TenancyRow = {
   out_user_id?: string;
 };
 
+type TenancyResult = { workspaceId: string; internalUserId: string };
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [internalUserId, setInternalUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  // Current auth user id (authoritative, prevents stale async writes)
+  const currentAuthIdRef = useRef<string | null>(null);
+
   // Track which auth user we've ensured tenancy for
   const ensuredForAuthIdRef = useRef<string | null>(null);
-  const ensureInFlightRef = useRef<Promise<void> | null>(null);
+
+  // Single-flight per auth user id
+  const ensureInFlightByAuthIdRef = useRef<Map<string, Promise<TenancyResult>>>(new Map());
+
+  // Dedupe bootstrap + onAuthStateChange
+  const lastAppliedAuthIdRef = useRef<string | null>(null);
 
   const clearTenancy = useCallback(() => {
     setWorkspaceId(null);
     setInternalUserId(null);
     ensuredForAuthIdRef.current = null;
-    ensureInFlightRef.current = null;
+    ensureInFlightByAuthIdRef.current.clear();
   }, []);
 
-  const ensureWorkspaceOnceFor = useCallback(async (authUserId: string) => {
-    if (!authUserId) return;
+  const ensureWorkspaceOnceFor = useCallback(async (authUserId: string): Promise<TenancyResult> => {
+    if (!authUserId) throw new Error("authUserId is required");
 
-    // If already ensured for this auth user, skip
-    if (ensuredForAuthIdRef.current === authUserId) {
-      console.log("[Auth] Tenancy already ensured for", authUserId);
-      return;
+    // If already ensured (and state populated), return immediately.
+    if (
+      ensuredForAuthIdRef.current === authUserId &&
+      typeof workspaceId === "string" &&
+      typeof internalUserId === "string"
+    ) {
+      return { workspaceId, internalUserId };
     }
 
-    // If a call is already running, await it
-    if (ensureInFlightRef.current) {
-      console.log("[Auth] Waiting for in-flight tenancy call...");
-      await ensureInFlightRef.current;
-      return;
+    const existing = ensureInFlightByAuthIdRef.current.get(authUserId);
+    if (existing) {
+      console.log("[Auth] Waiting for in-flight tenancy call for", authUserId);
+      return await existing;
     }
 
     console.log("[Auth] Ensuring tenancy for", authUserId);
 
-    ensureInFlightRef.current = (async () => {
+    const p = (async (): Promise<TenancyResult> => {
       try {
         const { data, error } = await supabase.rpc("ensure_user_and_workspace");
         if (error) {
@@ -88,92 +100,154 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error("Workspace setup did not return workspace_id/user_id");
         }
 
-        ensuredForAuthIdRef.current = authUserId;
-        setWorkspaceId(ws);
-        setInternalUserId(iu);
-
-        console.log("[Auth] tenancy ensured", { authUserId, workspaceId: ws, internalUserId: iu });
+        return { workspaceId: ws, internalUserId: iu };
       } finally {
-        ensureInFlightRef.current = null;
+        // Always clear single-flight entry
+        ensureInFlightByAuthIdRef.current.delete(authUserId);
       }
     })();
 
-    await ensureInFlightRef.current;
-  }, []);
+    ensureInFlightByAuthIdRef.current.set(authUserId, p);
+    return await p;
+  }, [workspaceId, internalUserId]);
 
-  const refreshTenancy = useCallback(async () => {
-    const authUserId = user?.id;
-    if (!authUserId) return;
+  const applyAuthUser = useCallback(
+    async (supaUser: any) => {
+      const mapped = mapUserToAuthUser(supaUser);
 
-    ensuredForAuthIdRef.current = null;
-    ensureInFlightRef.current = null;
+      // Update authoritative current auth id ref immediately.
+      currentAuthIdRef.current = mapped?.id ?? null;
 
-    await ensureWorkspaceOnceFor(authUserId);
-  }, [user?.id, ensureWorkspaceOnceFor]);
+      // Dedupe: if we've already applied this auth id AND tenancy is already ensured, do nothing.
+      // This is critical to prevent bootstrap + onAuthStateChange double-processing.
+      if (mapped?.id && lastAppliedAuthIdRef.current === mapped.id) {
+        const alreadyEnsured =
+          ensuredForAuthIdRef.current === mapped.id && !!workspaceId && !!internalUserId;
+        if (alreadyEnsured) {
+          return;
+        }
+      }
+
+      setUser(mapped);
+
+      if (!mapped?.id) {
+        lastAppliedAuthIdRef.current = null;
+        clearTenancy();
+        return;
+      }
+
+      lastAppliedAuthIdRef.current = mapped.id;
+
+      try {
+        const authIdAtStart = mapped.id;
+
+        // Make loading reflect tenancy resolution, not just session lookup.
+        setIsLoading(true);
+
+        const res = await ensureWorkspaceOnceFor(authIdAtStart);
+
+        // STALE GUARD: only write tenancy if this user is still current.
+        if (currentAuthIdRef.current !== authIdAtStart) {
+          console.warn("[Auth] Ignoring stale tenancy result for", authIdAtStart);
+          return;
+        }
+
+        ensuredForAuthIdRef.current = authIdAtStart;
+        setWorkspaceId(res.workspaceId);
+        setInternalUserId(res.internalUserId);
+
+        console.log("[Auth] tenancy ensured", {
+          authUserId: authIdAtStart,
+          workspaceId: res.workspaceId,
+          internalUserId: res.internalUserId,
+        });
+      } catch (e) {
+        console.error("[Auth] tenancy ensure failed:", e);
+
+        // If tenancy fails for the current user, keep user but clear tenancy
+        if (currentAuthIdRef.current === mapped.id) {
+          setWorkspaceId(null);
+          setInternalUserId(null);
+          ensuredForAuthIdRef.current = null;
+        }
+      } finally {
+        // Only end loading if we are still on same auth id (avoid race with sign-out/sign-in)
+        if (currentAuthIdRef.current === mapped.id) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [clearTenancy, ensureWorkspaceOnceFor, workspaceId, internalUserId]
+  );
+
+  const bootstrap = useCallback(async () => {
+    console.log("[Auth] 🚀 Starting bootstrap...");
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      console.log("[Auth] 📦 getSession result:", { hasSession: !!data?.session, error });
+
+      if (error) throw error;
+
+      const supaUser = data?.session?.user ?? null;
+      console.log("[Auth] 👤 User:", supaUser?.email || "none");
+
+      await applyAuthUser(supaUser);
+      console.log("[Auth] ✅ applyAuthUser complete");
+    } catch (err) {
+      console.error("[Auth] ❌ bootstrap failed:", err);
+
+      // Clear everything on bootstrap failure
+      currentAuthIdRef.current = null;
+      lastAppliedAuthIdRef.current = null;
+      setUser(null);
+      clearTenancy();
+      setIsLoading(false);
+    }
+  }, [applyAuthUser, clearTenancy]);
 
   useEffect(() => {
     let mounted = true;
 
-    const applyAuthUser = async (supaUser: any) => {
-      const mapped = mapUserToAuthUser(supaUser);
-      if (!mounted) return;
-
-      setUser(mapped);
-
-      if (mapped?.id) {
-        try {
-          await ensureWorkspaceOnceFor(mapped.id);
-        } catch (e) {
-          console.error("[Auth] tenancy ensure failed:", e);
-        }
-      } else {
-        clearTenancy();
-      }
-    };
-
-    const bootstrap = async () => {
-      console.log("[Auth] 🚀 Starting bootstrap...");
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        console.log("[Auth] 📦 getSession result:", { hasSession: !!data?.session, error });
-        
-        if (error) throw error;
-        const supaUser = data?.session?.user ?? null;
-        console.log("[Auth] 👤 User:", supaUser?.email || "none");
-        
-        await applyAuthUser(supaUser);
-        console.log("[Auth] ✅ applyAuthUser complete");
-      } catch (err) {
-        console.error("[Auth] ❌ bootstrap failed:", err);
-        if (mounted) {
-          setUser(null);
-          clearTenancy();
-        }
-      } finally {
-        if (mounted) {
-          console.log("[Auth] 🏁 Setting isLoading = false");
-          setIsLoading(false);
-        }
-      }
-    };
-
     void bootstrap();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      console.log("[Auth] 🔔 Auth state changed:", _event);
-      try {
-        const supaUser = session?.user ?? null;
-        await applyAuthUser(supaUser);
-      } catch (err) {
-        console.error("[Auth] onAuthStateChange handler failed:", err);
-      }
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+
+      console.log("[Auth] 🔔 Auth state changed:", event);
+
+      // Supabase can emit multiple events close together; we dedupe in applyAuthUser.
+      const supaUser = session?.user ?? null;
+      await applyAuthUser(supaUser);
     });
 
     return () => {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, [ensureWorkspaceOnceFor, clearTenancy]);
+  }, [bootstrap, applyAuthUser]);
+
+  const refreshTenancy = useCallback(async () => {
+    const authUserId = currentAuthIdRef.current;
+    if (!authUserId) return;
+
+    ensuredForAuthIdRef.current = null;
+    ensureInFlightByAuthIdRef.current.delete(authUserId);
+
+    setIsLoading(true);
+    try {
+      const res = await ensureWorkspaceOnceFor(authUserId);
+
+      if (currentAuthIdRef.current !== authUserId) return;
+
+      ensuredForAuthIdRef.current = authUserId;
+      setWorkspaceId(res.workspaceId);
+      setInternalUserId(res.internalUserId);
+    } finally {
+      if (currentAuthIdRef.current === authUserId) setIsLoading(false);
+    }
+  }, [ensureWorkspaceOnceFor]);
 
   const signUp = async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
@@ -192,27 +266,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
     if (error) throw error;
 
-    const mapped = mapUserToAuthUser(data?.user);
-    setUser(mapped);
-
-    const authUserId = mapped?.id;
-    if (authUserId) {
-      try {
-        await ensureWorkspaceOnceFor(authUserId);
-      } catch (e) {
-        console.error("[Auth] tenancy ensure failed after login:", e);
-      }
-    } else {
-      clearTenancy();
+    // Do NOT manually set user/tenancy here; onAuthStateChange + bootstrap logic handles it.
+    // Manually setting it here is a common cause of double-processing and redirect thrash.
+    // We keep this minimal to avoid race conditions.
+    if (data?.user?.id) {
+      // Optional: proactively apply immediately to reduce perceived latency
+      await applyAuthUser(data.user);
     }
   };
 
   const logout = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-
+    // Clear local state first to prevent stale in-flight tenancy results from “reviving” tenancy UI.
+    currentAuthIdRef.current = null;
+    lastAppliedAuthIdRef.current = null;
     setUser(null);
     clearTenancy();
+    setIsLoading(false);
+
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
   };
 
   const value: AuthContextValue = {
