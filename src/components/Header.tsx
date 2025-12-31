@@ -96,8 +96,13 @@ const Header: React.FC = () => {
               icon={<LayoutDashboard className="w-4 h-4" />}
               active={location.pathname === "/dashboard"}
             />
-            <NavLink to="/pricing" label="Pricing" active={location.pathname === "/pricing"} />
-            <NavLink
+{!user && location.pathname === "/" && (
+  <NavLink
+    to="/pricing"
+    label="Pricing"
+    active={location.pathname === "/pricing"}
+  />
+)}            <NavLink
               to="/settings/listing-style"
               label="Listing Style"
               active={location.pathname === "/settings/listing-style"}
