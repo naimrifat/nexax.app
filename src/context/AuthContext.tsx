@@ -207,10 +207,11 @@ useEffect(() => {
     clearTenancy();
   };
 
-  const value = useMemo(
-    () => ({ user, workspaceId, internalUserId, isLoading, signUp, login, logout, refreshTenancy }),
-    [user, workspaceId, internalUserId, isLoading]
-  );
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
+  const location = useLocation();
+  const { user, isLoading } = useAuth();
+  
+  console.log('[ProtectedRoute] Render:', { isLoading, hasUser: !!user });
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
