@@ -11,6 +11,8 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const location = useLocation();
   const { user, isLoading } = useAuth();
   
+  console.log('[ProtectedRoute] Render:', { isLoading, hasUser: !!user });
+  
   // Add a timeout fallback for stuck loading states
   const [forceReady, setForceReady] = useState(false);
 
