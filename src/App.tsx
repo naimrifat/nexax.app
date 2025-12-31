@@ -12,6 +12,11 @@ import ListingStyleSettingsPage from "./pages/ListingStyleSettingsPage";
 import AuthPage from "./pages/AuthPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import DraftsPage from "./pages/DraftsPage";
+
+// NEW: Settings pages
+import AccountSettingsPage from "./pages/AccountSettingsPage";
+import BillingSettingsPage from "./pages/BillingSettingsPage";
+
 import "./App.css";
 
 function App() {
@@ -26,7 +31,7 @@ function App() {
 
 function AppContent() {
   const { isLoading } = useAuth();
-  
+
   // Show nothing while auth is bootstrapping
   if (isLoading) {
     return (
@@ -87,11 +92,39 @@ function AppContent() {
             }
           />
 
+          {/* SETTINGS */}
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/settings/account" replace />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/settings/account"
+            element={
+              <ProtectedRoute>
+                <AccountSettingsPage />
+              </ProtectedRoute>
+            }
+          />
+
           <Route
             path="/settings/listing-style"
             element={
               <ProtectedRoute>
                 <ListingStyleSettingsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/settings/billing"
+            element={
+              <ProtectedRoute>
+                <BillingSettingsPage />
               </ProtectedRoute>
             }
           />
