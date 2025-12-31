@@ -102,12 +102,7 @@ const Header: React.FC = () => {
     label="Pricing"
     active={location.pathname === "/pricing"}
   />
-)}            <NavLink
-              to="/settings/listing-style"
-              label="Listing Style"
-              active={location.pathname === "/settings/listing-style"}
-            />
-
+)}
             <div className="ml-4 flex items-center space-x-3">
               {user ? (
                 <>
