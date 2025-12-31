@@ -106,42 +106,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let mounted = true;
 
-    const applyAuthUser = async (supaUser: any) => {
-      const mapped = mapUserToAuthUser(supaUser);
-      if (!mounted) return;
+const applyAuthUser = async (supaUser: any) => {
+  const mapped = mapUserToAuthUser(supaUser);
+  if (!mounted) return;
 
-      setUser(mapped);
+  setUser(mapped);
 
-      if (mapped?.id) {
-        try {
-          await ensureWorkspaceOnceFor(mapped.id);
-        } catch (e) {
-          // Do not crash the app; UI can show retry via refreshTenancy()
-          console.error("[Auth] tenancy ensure failed:", e);
-        }
-      } else {
-        clearTenancy();
-      }
-    };
+  if (mapped?.id) {
+    try {
+      await ensureWorkspaceOnceFor(mapped.id);
+    } catch (e) {
+      console.error("[Auth] tenancy ensure failed:", e);
+      // DON'T throw here - just log it
+      // The app should still be usable even if tenancy fails
+    }
+  } else {
+    clearTenancy();
+  }
+};
 
+const bootstrap = async () => {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+
+    const supaUser = data?.session?.user ?? null;
+    await applyAuthUser(supaUser);
+  } catch (err) {
+    console.error("[Auth] bootstrap failed:", err);
+    if (mounted) {
+      setUser(null);
+      clearTenancy();
+    }
+  } finally {
+    // CRITICAL: Always set loading to false, no matter what
+    if (mounted) {
+      setIsLoading(false);
+      console.log("[Auth] Bootstrap complete"); // Debug log
+    }
     const bootstrap = async () => {
-      try {
-        // getSession is the right bootstrap call; it matches onAuthStateChange behavior
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
+  console.log("[Auth] 🚀 Starting bootstrap...");
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    console.log("[Auth] 📦 getSession result:", { data, error });
+    
+    if (error) throw error;
 
-        const supaUser = data?.session?.user ?? null;
-        await applyAuthUser(supaUser);
-      } catch (err) {
-        console.error("[Auth] bootstrap failed:", err);
-        if (mounted) {
-          setUser(null);
-          clearTenancy();
-        }
-      } finally {
-        if (mounted) setIsLoading(false);
-      }
-    };
+    const supaUser = data?.session?.user ?? null;
+    console.log("[Auth] 👤 User:", supaUser?.email || "none");
+    
+    await applyAuthUser(supaUser);
+    console.log("[Auth] ✅ applyAuthUser complete");
+  } catch (err) {
+    console.error("[Auth] ❌ bootstrap failed:", err);
+    if (mounted) {
+      setUser(null);
+      clearTenancy();
+    }
+  } finally {
+    console.log("[Auth] 🏁 Setting isLoading = false");
+    if (mounted) setIsLoading(false);
+  }
+};
 
     void bootstrap();
 
