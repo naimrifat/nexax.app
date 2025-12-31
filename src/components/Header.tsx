@@ -1,17 +1,33 @@
 // src/components/Header.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Menu, X, LayoutDashboard, Home, LogOut, TrendingUp, Camera } from "lucide-react";
+import {
+  Menu,
+  X,
+  LayoutDashboard,
+  Home,
+  LogOut,
+  TrendingUp,
+  Camera,
+  Settings,
+  User,
+  CreditCard,
+  ChevronDown,
+} from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../../lib/supabaseClient";
 
 const Header: React.FC = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+
   const location = useLocation();
 
   // We only need user here for display.
   const { user } = useAuth();
+
+  const profileRef = useRef<HTMLDivElement | null>(null);
 
   // Track scroll position to change header style
   useEffect(() => {
@@ -23,7 +39,21 @@ const Header: React.FC = () => {
   // Close mobile menu when changing routes
   useEffect(() => {
     setMobileMenuOpen(false);
+    setProfileOpen(false);
   }, [location]);
+
+  // Close profile menu when clicking outside
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!profileRef.current) return;
+      const target = e.target as Node;
+      if (!profileRef.current.contains(target)) {
+        setProfileOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -31,7 +61,6 @@ const Header: React.FC = () => {
 
       // 1) Attempt normal local sign out, but do not wait long.
       const signOutAttempt = supabase.auth.signOut({ scope: "local" });
-
       const timeoutPromise = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 800));
 
       const result = await Promise.race([signOutAttempt.then(() => "ok" as const), timeoutPromise]);
@@ -57,6 +86,7 @@ const Header: React.FC = () => {
       localStorage.removeItem("snapline.auth.currentUser");
 
       setMobileMenuOpen(false);
+      setProfileOpen(false);
 
       // 3) Hard reload into /login (no SPA state survives)
       window.location.href = "/login";
@@ -66,6 +96,8 @@ const Header: React.FC = () => {
       window.location.href = "/login";
     }
   };
+
+  const showPricing = !user && location.pathname === "/";
 
   return (
     <header
@@ -96,31 +128,66 @@ const Header: React.FC = () => {
               icon={<LayoutDashboard className="w-4 h-4" />}
               active={location.pathname === "/dashboard"}
             />
-{!user && location.pathname === "/" && (
-  <NavLink
-    to="/pricing"
-    label="Pricing"
-    active={location.pathname === "/pricing"}
-  />
-)}
+
+            {showPricing && (
+              <NavLink to="/pricing" label="Pricing" active={location.pathname === "/pricing"} />
+            )}
+
             <div className="ml-4 flex items-center space-x-3">
               {user ? (
-                <>
-                  <span className="text-sm text-gray-700">Hi, {user.email}</span>
+                <div className="relative" ref={profileRef}>
                   <button
                     type="button"
-                    className="btn btn-outline"
+                    className="btn btn-outline flex items-center"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      console.log("[Header] Logout button clicked (desktop)");
-                      handleLogout();
+                      setProfileOpen((v) => !v);
                     }}
                   >
-                    <LogOut className="w-4 h-4 mr-1" />
-                    Log Out
+                    <span className="text-sm text-gray-800 mr-2">Hi, {user.email}</span>
+                    <ChevronDown className="w-4 h-4" />
                   </button>
-                </>
+
+                  {profileOpen && (
+                    <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+                      <div className="px-4 py-3 bg-gray-50">
+                        <div className="text-xs text-gray-500">Signed in as</div>
+                        <div className="text-sm font-medium text-gray-900 truncate">{user.email}</div>
+                      </div>
+
+                      <div className="py-2">
+                        <MenuItem to="/settings/account" icon={<User className="w-4 h-4" />} label="Settings: Account" />
+                        <MenuItem
+                          to="/settings/listing-style"
+                          icon={<Settings className="w-4 h-4" />}
+                          label="Settings: Listing Style"
+                        />
+                        <MenuItem
+                          to="/settings/billing"
+                          icon={<CreditCard className="w-4 h-4" />}
+                          label="Settings: Billing"
+                        />
+                      </div>
+
+                      <div className="border-t border-gray-200" />
+
+                      <button
+                        type="button"
+                        className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log("[Header] Logout clicked (profile menu)");
+                          handleLogout();
+                        }}
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Log Out</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <>
                   {/* No popup: route-based auth */}
@@ -157,12 +224,35 @@ const Header: React.FC = () => {
               icon={<LayoutDashboard className="w-5 h-5" />}
               active={location.pathname === "/dashboard"}
             />
-            <MobileNavLink to="/pricing" label="Pricing" active={location.pathname === "/pricing"} />
-            <MobileNavLink
-              to="/settings/listing-style"
-              label="Listing Style"
-              active={location.pathname === "/settings/listing-style"}
-            />
+
+            {/* Pricing only on homepage and only when logged out */}
+            {showPricing && <MobileNavLink to="/pricing" label="Pricing" active={location.pathname === "/pricing"} />}
+
+            {user && (
+              <>
+                <div className="pt-2">
+                  <div className="text-xs uppercase tracking-wide text-gray-500 px-1 mb-2">Settings</div>
+                  <MobileNavLink
+                    to="/settings/account"
+                    label="Account"
+                    icon={<User className="w-5 h-5" />}
+                    active={location.pathname === "/settings/account"}
+                  />
+                  <MobileNavLink
+                    to="/settings/listing-style"
+                    label="Listing Style"
+                    icon={<Settings className="w-5 h-5" />}
+                    active={location.pathname === "/settings/listing-style"}
+                  />
+                  <MobileNavLink
+                    to="/settings/billing"
+                    label="Billing"
+                    icon={<CreditCard className="w-5 h-5" />}
+                    active={location.pathname === "/settings/billing"}
+                  />
+                </div>
+              </>
+            )}
 
             <hr className="border-gray-200" />
             <div className="flex flex-col space-y-3 pt-2">
@@ -232,5 +322,25 @@ const MobileNavLink: React.FC<NavLinkProps> = ({ to, label, icon, active }) => (
     <span className="font-medium">{label}</span>
   </Link>
 );
+
+function MenuItem({
+  to,
+  icon,
+  label,
+}: {
+  to: string;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <Link
+      to={to}
+      className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2"
+    >
+      {icon}
+      <span>{label}</span>
+    </Link>
+  );
+}
 
 export default Header;
