@@ -21,21 +21,18 @@ type TenancyStatus = "idle" | "resolving" | "ready" | "missing" | "error";
 interface AuthContextValue {
   user: AuthUser | null;
 
-  // Tenancy
   workspaceId: string | null;
   internalUserId: string | null;
 
-  // Status flags (DO NOT gate rendering on workspaceId/internalUserId alone)
   authStatus: AuthStatus;
   tenancyStatus: TenancyStatus;
 
-  // Keep isLoading for backward compatibility, but it now means ONLY auth booting
+  // Back-compat: only means “auth bootstrap in progress”
   isLoading: boolean;
 
   signUp: (email: string, password: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-
   refreshTenancy: () => Promise<void>;
 }
 
@@ -58,12 +55,24 @@ type TenancyRow = {
 
 type TenancyResult = { workspaceId: string; internalUserId: string };
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  let t: any;
-  const timeout = new Promise<T>((_, reject) => {
-    t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+/**
+ * Safe timeout wrapper that does NOT rely on Promise.prototype.finally.
+ * Also wraps non-Promise values via Promise.resolve().
+ */
+function withTimeout<T>(maybePromise: any, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+
+    Promise.resolve(maybePromise)
+      .then((value: T) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err: any) => {
+        clearTimeout(timer);
+        reject(err);
+      });
   });
-  return Promise.race([p.finally(() => clearTimeout(t)), timeout]);
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -75,19 +84,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authStatus, setAuthStatus] = useState<AuthStatus>("booting");
   const [tenancyStatus, setTenancyStatus] = useState<TenancyStatus>("idle");
 
-  // Backward compatible: ONLY indicates auth bootstrap, NOT tenancy
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Authoritative current auth user id
   const currentAuthIdRef = useRef<string | null>(null);
-
-  // Ensure tenancy once per auth user id
   const ensuredForAuthIdRef = useRef<string | null>(null);
-
-  // Single-flight per auth user id
   const ensureInFlightByAuthIdRef = useRef<Map<string, Promise<TenancyResult>>>(new Map());
-
-  // Prevent duplicate bootstrap application within same mount
   const bootstrappedOnceRef = useRef<boolean>(false);
 
   const clearTenancy = useCallback(() => {
@@ -98,62 +99,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ensureInFlightByAuthIdRef.current.clear();
   }, []);
 
-  const ensureWorkspaceOnceFor = useCallback(async (authUserId: string): Promise<TenancyResult> => {
-    if (!authUserId) throw new Error("authUserId is required");
+  const ensureWorkspaceOnceFor = useCallback(
+    async (authUserId: string): Promise<TenancyResult> => {
+      if (!authUserId) throw new Error("authUserId is required");
 
-    // If already ensured, return current state if present
-    if (
-      ensuredForAuthIdRef.current === authUserId &&
-      typeof workspaceId === "string" &&
-      typeof internalUserId === "string"
-    ) {
-      return { workspaceId, internalUserId };
-    }
-
-    const existing = ensureInFlightByAuthIdRef.current.get(authUserId);
-    if (existing) return await existing;
-
-    setTenancyStatus("resolving");
-    console.log("[Auth] Ensuring tenancy for", authUserId);
-
-    const p = (async (): Promise<TenancyResult> => {
-      try {
-        const { data, error } = await withTimeout(
-          supabase.rpc("ensure_user_and_workspace"),
-          12_000,
-          "ensure_user_and_workspace"
-        );
-
-        if (error) {
-          console.error("[Auth] ensure_user_and_workspace failed:", error);
-          throw error;
-        }
-
-        const row: TenancyRow = Array.isArray(data) ? data[0] : data;
-        const ws = row?.workspace_id ?? row?.out_workspace_id ?? null;
-        const iu = row?.user_id ?? row?.out_user_id ?? null;
-
-        if (!ws || !iu) {
-          console.error("[Auth] ensure_user_and_workspace returned unexpected data:", { data });
-          // This is “missing” tenancy in practice (misconfigured RPC or unexpected result)
-          throw new Error("Tenancy missing (no workspace_id/user_id)");
-        }
-
-        return { workspaceId: ws, internalUserId: iu };
-      } finally {
-        ensureInFlightByAuthIdRef.current.delete(authUserId);
+      // Already ensured and state present
+      if (
+        ensuredForAuthIdRef.current === authUserId &&
+        typeof workspaceId === "string" &&
+        typeof internalUserId === "string"
+      ) {
+        return { workspaceId, internalUserId };
       }
-    })();
 
-    ensureInFlightByAuthIdRef.current.set(authUserId, p);
-    return await p;
-  }, [workspaceId, internalUserId]);
+      const existing = ensureInFlightByAuthIdRef.current.get(authUserId);
+      if (existing) return await existing;
+
+      setTenancyStatus("resolving");
+      console.log("[Auth] Ensuring tenancy for", authUserId);
+
+      const p = (async (): Promise<TenancyResult> => {
+        try {
+          // IMPORTANT: your lib/supabaseClient.ts already has a 12s abort on fetch.
+          // If you keep another timeout here at 12s, you’re double-timing out.
+          // Use a higher timeout to avoid false negatives (or remove this wrapper).
+          const { data, error } = await withTimeout(
+            supabase.rpc("ensure_user_and_workspace"),
+            30_000,
+            "ensure_user_and_workspace"
+          );
+
+          if (error) {
+            console.error("[Auth] ensure_user_and_workspace failed:", error);
+            throw error;
+          }
+
+          const row: TenancyRow = Array.isArray(data) ? data[0] : data;
+          const ws = row?.workspace_id ?? row?.out_workspace_id ?? null;
+          const iu = row?.user_id ?? row?.out_user_id ?? null;
+
+          if (!ws || !iu) {
+            console.error("[Auth] ensure_user_and_workspace returned unexpected data:", { data });
+            throw new Error("Tenancy missing (no workspace_id/user_id)");
+          }
+
+          return { workspaceId: ws, internalUserId: iu };
+        } finally {
+          ensureInFlightByAuthIdRef.current.delete(authUserId);
+        }
+      })();
+
+      ensureInFlightByAuthIdRef.current.set(authUserId, p);
+      return await p;
+    },
+    [workspaceId, internalUserId]
+  );
 
   const applyAuthUser = useCallback(
     async (supaUser: any) => {
       const mapped = mapUserToAuthUser(supaUser);
-
-      // Set authoritative auth id first (stale guard)
       currentAuthIdRef.current = mapped?.id ?? null;
 
       setUser(mapped);
@@ -166,12 +170,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setAuthStatus("signed_in");
 
-      // Tenancy resolution should NOT keep the app in a global loading screen
-      // (this is what causes redirect loops in guards).
       try {
         const authIdAtStart = mapped.id;
 
-        // If we already ensured for this auth id, keep tenancyStatus ready
+        // If already ensured, mark ready
         if (
           ensuredForAuthIdRef.current === authIdAtStart &&
           workspaceId &&
@@ -183,7 +185,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const res = await ensureWorkspaceOnceFor(authIdAtStart);
 
-        // Stale guard: ignore if user changed mid-flight
+        // Stale guard
         if (currentAuthIdRef.current !== authIdAtStart) return;
 
         ensuredForAuthIdRef.current = authIdAtStart;
@@ -197,20 +199,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           internalUserId: res.internalUserId,
         });
       } catch (e: any) {
-        // Stale guard
         if (!mapped?.id || currentAuthIdRef.current !== mapped.id) return;
 
-        // Distinguish “missing” vs generic “error”
         const msg = String(e?.message ?? "");
-        if (msg.includes("Tenancy missing")) {
-          setTenancyStatus("missing");
-        } else {
-          setTenancyStatus("error");
-        }
+        setTenancyStatus(msg.includes("Tenancy missing") ? "missing" : "error");
 
         console.error("[Auth] tenancy ensure failed:", e);
 
-        // Keep workspace/internalUser null if it failed
         setWorkspaceId(null);
         setInternalUserId(null);
         ensuredForAuthIdRef.current = null;
@@ -244,13 +239,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthStatus("signed_out");
       clearTenancy();
     } finally {
-      // End auth booting regardless of tenancy state
       setIsLoading(false);
-      if (currentAuthIdRef.current) {
-        setAuthStatus("signed_in");
-      } else {
-        setAuthStatus("signed_out");
-      }
+      setAuthStatus(currentAuthIdRef.current ? "signed_in" : "signed_out");
     }
   }, [applyAuthUser, clearTenancy]);
 
@@ -261,11 +251,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
-
       console.log("[Auth] 🔔 Auth state changed:", event);
 
-      // Do not set isLoading here — auth is already bootstrapped.
-      // Only update auth/tenancy state.
       const supaUser = session?.user ?? null;
       await applyAuthUser(supaUser);
     });
@@ -324,12 +311,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     if (error) throw error;
 
-    // Do NOT setUser / ensure tenancy here.
-    // onAuthStateChange will fire and applyAuthUser will own the state.
+    // Do not set state here. onAuthStateChange handles it.
   };
 
   const logout = async () => {
-    // Clear local state first to avoid stale in-flight tenancy writes
     currentAuthIdRef.current = null;
     setUser(null);
     setAuthStatus("signed_out");
