@@ -869,34 +869,45 @@ export default function ResultsPage() {
         price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       };
 
-const {
-  data: { session },
-  error: sessionErr,
-} = await supabase.auth.getSession();
+const handlePublish = async () => {
+  try {
+    setPublishing(true);
 
-if (sessionErr || !session?.access_token) {
-  alert('You are not logged in. Please sign in again and retry.');
-  return;
-}
+    const {
+      data: { session },
+      error: sessionErr,
+    } = await supabase.auth.getSession();
 
-const res = await fetch('/api/publish-listing', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${session.access_token}`,
-  },
-  body: JSON.stringify({ listing_id: listingId }),
-});
+    if (sessionErr || !session?.access_token) {
+      alert('You are not logged in. Please sign in again and retry.');
+      return;
+    }
 
-const data = await res.json().catch(() => ({}));
+    const res = await fetch('/api/publish-listing', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ listing_id: listingId }),
+    });
 
-if (!res.ok) {
-  console.error('[Publish] error:', data);
-  alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
-  return;
-}
+    const data = await res.json().catch(() => ({}));
 
-alert(`Publish queued. Job ID: ${data.jobId}`);
+    if (!res.ok) {
+      console.error('[Publish] error:', data);
+      alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
+      return;
+    }
+
+    alert(`Publish queued. Job ID: ${data.jobId}`);
+  } catch (err: any) {
+    console.error('[Publish] unexpected error:', err);
+    alert(err?.message || 'An unexpected error occurred while publishing.');
+  } finally {
+    setPublishing(false);
+  }
+};
 
   // ----------------------------
   // Render
