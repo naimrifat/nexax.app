@@ -869,27 +869,38 @@ export default function ResultsPage() {
         price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       };
 
-      const res = await fetch('/api/publish-listing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listing_data, images: orderedImages, listingId }),
-      });
+    import { supabase } from '@/lib/supabaseClient'; // adjust path to your supabase client
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        console.error('[Publish] error:', data);
-        alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
-        return;
-      }
+// ...
 
-      alert('Your listing has been sent to eBay! It may take a minute to appear.');
-    } catch (err: any) {
-      console.error('[Publish] unexpected error:', err);
-      alert(err?.message || 'An unexpected error occurred while publishing.');
-    } finally {
-      setPublishing(false);
-    }
-  };
+const {
+  data: { session },
+  error: sessionErr,
+} = await supabase.auth.getSession();
+
+if (sessionErr || !session?.access_token) {
+  alert('You are not logged in. Please sign in again and retry.');
+  return;
+}
+
+const res = await fetch('/api/publish-listing', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${session.access_token}`,
+  },
+  body: JSON.stringify({ listing_id: listingId }),
+});
+
+const data = await res.json().catch(() => ({}));
+
+if (!res.ok) {
+  console.error('[Publish] error:', data);
+  alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
+  return;
+}
+
+alert(`Publish queued. Job ID: ${data.jobId}`);
 
   // ----------------------------
   // Render
