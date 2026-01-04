@@ -870,9 +870,30 @@ export default function ResultsPage() {
       };
 
 const handlePublish = async () => {
-  try {
-    setPublishing(true);
+  // Basic client-side validation (keep)
+  if (!title.trim() || !description.trim() || !category) {
+    alert('Title, description, and category are required.');
+    return;
+  }
+  if (!images.length) {
+    alert('At least one image is required.');
+    return;
+  }
 
+  // You must have a DB listing id to publish (because API reads from DB)
+  if (!listingId) {
+    alert('Please save this as a draft first (Save Draft), then publish.');
+    return;
+  }
+
+  setPublishing(true);
+
+  try {
+    // Keep your hosted image enforcement
+    const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
+    assertHostedImagesOrThrow(orderedImages);
+
+    // Get Supabase session so we can send Authorization header
     const {
       data: { session },
       error: sessionErr,
@@ -883,6 +904,7 @@ const handlePublish = async () => {
       return;
     }
 
+    // New backend contract: send ONLY listing_id
     const res = await fetch('/api/publish-listing', {
       method: 'POST',
       headers: {
@@ -892,7 +914,13 @@ const handlePublish = async () => {
       body: JSON.stringify({ listing_id: listingId }),
     });
 
-    const data = await res.json().catch(() => ({}));
+    // Safer JSON parse
+    let data: any = {};
+    try {
+      data = await res.json();
+    } catch {
+      data = { error: 'Invalid JSON response from server' };
+    }
 
     if (!res.ok) {
       console.error('[Publish] error:', data);
@@ -900,6 +928,7 @@ const handlePublish = async () => {
       return;
     }
 
+    // Success = job queued (not yet published on eBay)
     alert(`Publish queued. Job ID: ${data.jobId}`);
   } catch (err: any) {
     console.error('[Publish] unexpected error:', err);
@@ -908,10 +937,7 @@ const handlePublish = async () => {
     setPublishing(false);
   }
 };
-
-  // ----------------------------
-  // Render
-  // ----------------------------
+      
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
