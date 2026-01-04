@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import CategorySelector from '../components/CategorySelector';
 import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
 import { supabase } from '../../lib/supabaseClient';
-import { useAuth } from '../context/AuthContext'; // adjust if different
+import { useAuth } from '../context/AuthContext';
 
 type Category = {
   id: string;
@@ -22,7 +22,7 @@ type ItemSpecific = {
   name: string;
   value: string | string[];
   required?: boolean;
-  type?: string; // "dropdown" | "text"
+  type?: string;
   options?: string[];
   multi?: boolean;
   selectionOnly?: boolean;
@@ -63,7 +63,6 @@ async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): P
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => reject(new Error(`[Timeout] ${label} exceeded ${ms}ms`)), ms);
   });
-
   try {
     return (await Promise.race([p, timeoutPromise])) as T;
   } finally {
@@ -131,20 +130,15 @@ function filterSizeOptionsBySizeType(sizeType: string, allOptions: string[] = []
 function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: string = ''): ItemSpecific[] {
   const sizeTypeVal = getSizeTypeValueFromSpecifics(specs);
   if (!sizeTypeVal) return specs;
-
   return specs.map((spec) => {
     if (!isSizeAspectName(spec.name)) return spec;
-
     const fullOptions = spec.allOptions ?? spec.options ?? [];
     const filtered = filterSizeOptionsBySizeType(sizeTypeVal, fullOptions, categoryPath);
-
     let value = spec.value;
     const valueStr = firstValue(typeof value === 'string' || Array.isArray(value) ? (value as any) : '');
-
     if (valueStr && !filtered.includes(valueStr)) {
       value = spec.multi ? [] : '';
     }
-
     return { ...spec, options: filtered, allOptions: fullOptions, value };
   });
 }
@@ -169,10 +163,8 @@ function TokenSelect({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-
   const selected = Array.isArray(value) ? value : value ? [value] : [];
   const lowerQuery = query.trim().toLowerCase();
-
   const filtered = options
     .filter((o) => (multi ? !selected.includes(o) : true))
     .filter((o) => (lowerQuery ? o.toLowerCase().includes(lowerQuery) : true))
@@ -239,7 +231,6 @@ function TokenSelect({
               </button>
             </span>
           ))}
-
         {!multi && selected[0] && (
           <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
             {selected[0]}
@@ -255,7 +246,6 @@ function TokenSelect({
             </button>
           </span>
         )}
-
         <input
           ref={inputRef}
           value={query}
@@ -265,7 +255,6 @@ function TokenSelect({
           placeholder={selected.length ? '' : placeholder || 'Search & select...'}
           className="flex-1 min-w-[120px] border-0 outline-none text-sm py-1 placeholder-gray-400"
         />
-
         {(multi ? selected.length > 0 : !!selected[0]) && !query && !disabled && (
           <button
             type="button"
@@ -280,7 +269,6 @@ function TokenSelect({
           </button>
         )}
       </div>
-
       {open && !disabled && filtered.length > 0 && (
         <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-gray-200 bg-white shadow">
           {filtered.map((o) => (
@@ -314,7 +302,6 @@ function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange:
       />
     );
   }
-
   const valString = Array.isArray(spec.value) ? spec.value.join(', ') : spec.value ?? '';
   return (
     <input
@@ -356,24 +343,18 @@ export default function ResultsPage() {
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
   const [images, setImages] = useState<string[]>([]);
   const [mainImageIndex, setMainImageIndex] = useState(0);
-
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.00');
   const [keywords, setKeywords] = useState('');
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [loadingSpecifics, setLoadingSpecifics] = useState(false);
   const [publishing, setPublishing] = useState(false);
-
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
-
-  // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
 
   // ----------------------------
@@ -389,16 +370,13 @@ export default function ResultsPage() {
   const ensureTenancy = useCallback(async (): Promise<Tenancy> => {
     if (authLoading) throw new Error('Auth still loading');
     if (!user?.id) throw new Error('Not authenticated');
-
-    // If tenancy isn't ready yet, try one refresh (AuthContext runs the RPC).
     if (!workspaceId || !internalUserId) {
       try {
         await refreshTenancy();
       } catch {
-        // ignore; next check will throw a clear error
+        // ignore
       }
     }
-
     if (!workspaceId || !internalUserId) throw new Error('Tenancy not ready');
     return { authUserId: user.id, workspaceId, internalUserId };
   }, [authLoading, user?.id, workspaceId, internalUserId, refreshTenancy]);
@@ -411,10 +389,8 @@ export default function ResultsPage() {
       let current: string | string[] = field.value;
       const currentStr = firstValue(typeof current === 'string' || Array.isArray(current) ? (current as any) : '');
       const lower = (field.name || '').toLowerCase();
-
       if (!currentStr) {
         let candidate = '';
-
         if (lower.includes('brand')) candidate = aiData.brand || '';
         else if (lower.includes('size type')) candidate = aiData.sizeTypeHint || '';
         else if (
@@ -431,10 +407,8 @@ export default function ResultsPage() {
         else if (lower.includes('style')) candidate = aiData.style || '';
         else if (lower.includes('department')) candidate = aiData.department || '';
         else if (lower === 'type') candidate = aiData.type || '';
-
         if (candidate) current = field.multi ? [candidate] : candidate;
       }
-
       if (field.type === 'dropdown' && field.options?.length) {
         if (Array.isArray(current)) {
           current = current
@@ -445,7 +419,6 @@ export default function ResultsPage() {
           if (exact) current = exact;
         }
       }
-
       return { ...field, value: current };
     });
   }, []);
@@ -455,16 +428,13 @@ export default function ResultsPage() {
       setLoadingSpecifics(true);
       try {
         setError(null);
-
         const response = await fetch('/api/ebay-categories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
         });
-
         if (!response.ok) throw new Error('Failed to fetch category specifics');
         const data = await response.json();
-
         const baseSpecifics: ItemSpecific[] = (data.aspects || []).map((aspect: any) => ({
           name: aspect.name,
           value: aspect.multi ? [] : '',
@@ -476,14 +446,11 @@ export default function ResultsPage() {
           selectionOnly: aspect.type === 'SelectionOnly',
           freeTextAllowed: aspect.type !== 'SelectionOnly',
         }));
-
         const aiSpecifics = aiSpecificsRef.current || [];
         const aiMap = new Map(aiSpecifics.map((s) => [String(s.name || '').toLowerCase(), s.value]));
-
         const withAiSpecifics: ItemSpecific[] = baseSpecifics.map((field) => {
           const aiVal = aiMap.get(String(field.name || '').toLowerCase());
           if (aiVal == null || aiVal === '') return field;
-
           let value: string | string[];
           if (field.multi) {
             value = Array.isArray(aiVal)
@@ -495,10 +462,8 @@ export default function ResultsPage() {
           } else {
             value = String(Array.isArray(aiVal) ? aiVal[0] ?? '' : aiVal);
           }
-
           return { ...field, value };
         });
-
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
         setSpecifics(applySizeTypeFilterToSpecifics(filled, categoryPathForFilter));
       } catch (err: any) {
@@ -518,7 +483,6 @@ export default function ResultsPage() {
     const orderedImages = images.length
       ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean)
       : [];
-
     return {
       title: title.trim(),
       description: description.trim(),
@@ -555,30 +519,24 @@ export default function ResultsPage() {
   const disableActions = authLoading || !user?.id || !workspaceId || !internalUserId;
 
   // ----------------------------
-  // Initial load (run once; gated by auth + tenancy)
+  // Initial load
   // ----------------------------
   useEffect(() => {
     if (didInitialLoadRef.current) return;
     if (authLoading) return;
-
     if (!user?.id) {
       setLoading(false);
       setError('Not authenticated. Please log in again.');
       return;
     }
-
-    // Wait until tenancy exists (or can be refreshed).
     if (!workspaceId || !internalUserId) return;
-
     didInitialLoadRef.current = true;
 
     const run = async () => {
       setLoading(true);
       setError(null);
-
       try {
         const t = await ensureTenancy();
-
         const urlParams = new URLSearchParams(window.location.search);
         const mode = urlParams.get('mode');
         const listingIdParam = urlParams.get('listingId');
@@ -596,17 +554,12 @@ export default function ResultsPage() {
             20000,
             'read listing'
           );
-
           if (readErr) throw readErr;
-
           const row: any = data || {};
           const lj: any = row.listing_json || {};
-
           setListingId(row.id);
-
           setTitle((row.title ?? lj.title ?? '') as string);
           setDescription((row.description ?? lj.description ?? '') as string);
-
           const priceVal =
             typeof row.price === 'number'
               ? row.price.toFixed(2)
@@ -614,15 +567,12 @@ export default function ResultsPage() {
                 ? lj.price_suggestion.optimal.toFixed(2)
                 : String(lj?.price_suggestion?.optimal ?? '0.00');
           setPrice(priceVal);
-
           const imgsRaw: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
           setImages(sanitizeHostedImages(imgsRaw));
           setMainImageIndex(0);
-
           const kws =
             Array.isArray(lj.keywords) ? lj.keywords.join(', ') : typeof lj.keywords === 'string' ? lj.keywords : '';
           setKeywords(kws);
-
           const catFromJson = lj.category || null;
           const cat: CategoryWithPath | null =
             catFromJson && (catFromJson.id || catFromJson.name)
@@ -635,12 +585,9 @@ export default function ResultsPage() {
               : row.category_id
                 ? { id: String(row.category_id), name: 'Selected Category', path: String(row.category_path ?? '') }
                 : null;
-
           setCategory(cat);
-
           const baseSpecs: ItemSpecific[] = Array.isArray(lj.item_specifics) ? lj.item_specifics : [];
           setSpecifics(applySizeTypeFilterToSpecifics(baseSpecs, getCategoryPathString(cat)));
-
           setLoading(false);
           return;
         }
@@ -648,7 +595,6 @@ export default function ResultsPage() {
         // CREATE MODE
         let wrapper: any = null;
         let analysis: any = null;
-
         if (sessionId) {
           const res = await fetch(`/api/listing-data/${sessionId}`);
           if (!res.ok) throw new Error('Failed to fetch data from API');
@@ -663,16 +609,12 @@ export default function ResultsPage() {
           wrapper = JSON.parse(raw);
           analysis = wrapper.data || wrapper.analysis || wrapper;
         }
-
         aiSpecificsRef.current = normalizeSpecifics(analysis.item_specifics);
         aiDetectedRef.current = analysis.detected || {};
-
         setTitle(String(analysis.title ?? ''));
         setDescription(String(analysis.description ?? ''));
-
         const optimal = analysis.price_suggestion?.optimal;
         setPrice(typeof optimal === 'number' ? optimal.toFixed(2) : String(optimal ?? '0.00'));
-
         const imgsRaw: string[] =
           analysis.images ||
           analysis.image_urls ||
@@ -680,18 +622,13 @@ export default function ResultsPage() {
           wrapper.image_urls ||
           (analysis.image_url ? [analysis.image_url] : []) ||
           [];
-
         setImages(sanitizeHostedImages(imgsRaw));
         setMainImageIndex(0);
-
         setKeywords(Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? ''));
         setCategorySuggestions(Array.isArray(analysis.category_suggestions) ? analysis.category_suggestions : []);
-
         const initialCategory: CategoryWithPath | null = analysis.category ?? null;
         setCategory(initialCategory);
-
         const initialCategoryPath = getCategoryPathString(initialCategory);
-
         if (initialCategory?.id) {
           await fetchCategorySpecifics(initialCategory.id, initialCategoryPath);
         } else {
@@ -699,7 +636,6 @@ export default function ResultsPage() {
           const filled = smartFillSpecifics(base, aiDetectedRef.current || {});
           setSpecifics(applySizeTypeFilterToSpecifics(filled, initialCategoryPath));
         }
-
         setLoading(false);
       } catch (err: any) {
         console.error('[ResultsPage] load error:', err);
@@ -707,7 +643,6 @@ export default function ResultsPage() {
         setLoading(false);
       }
     };
-
     void run();
   }, [authLoading, user?.id, workspaceId, internalUserId, ensureTenancy, fetchCategorySpecifics, smartFillSpecifics, navigate]);
 
@@ -721,7 +656,6 @@ export default function ResultsPage() {
     setSpecifics((prev) => {
       let next = [...prev];
       next[idx] = { ...next[idx], value };
-
       if (/size type/i.test(next[idx].name || '')) {
         next = applySizeTypeFilterToSpecifics(next, getCategoryPathString(category));
       }
@@ -753,10 +687,7 @@ export default function ResultsPage() {
           .filter(Boolean)
           .join(' > ')
       : '');
-
-  // ----------------------------
-  // Save Draft (NO created_by sent; DB default auth.uid())
-  // ----------------------------
+  
   const handleSaveDraft = async () => {
     setSaveError(null);
     setDraftStatus('');
