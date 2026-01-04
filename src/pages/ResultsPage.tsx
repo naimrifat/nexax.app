@@ -869,10 +869,6 @@ export default function ResultsPage() {
         price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       };
 
-    import { supabase } from '@/lib/supabaseClient'; // adjust path to your supabase client
-
-// ...
-
 const {
   data: { session },
   error: sessionErr,
