@@ -41,9 +41,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const env = (process.env.EBAY_ENV || 'production').toLowerCase();
 
+    // IMPORTANT CHANGE:
+    // We select refresh_token and access_token, because "connected" should be based on refresh_token.
     const { data, error } = await admin
       .from('marketplace_connections')
-      .select('id,updated_at,expires_at')
+      .select('id,updated_at,expires_at,refresh_token,access_token')
       .eq('workspace_id', workspaceId)
       .eq('user_id', user.id)
       .eq('marketplace', 'ebay')
@@ -52,11 +54,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) throw error;
 
+    // accessExpired is informational only; it MUST NOT drive "connected"
     const accessExpired = data?.expires_at ? new Date(data.expires_at).getTime() <= Date.now() : true;
 
+    // Correct "connected" meaning for "connect once":
+    // If we have a refresh token, we can always refresh access silently.
+    const connected = !!data?.id && !!data?.refresh_token;
+
+    // Optional: tell UI that a refresh will be needed soon (useful for debugging; not user-facing).
+    const needsRefresh = connected && accessExpired;
+
     return res.status(200).json({
-      connected: !!data?.id && !accessExpired,
-      accessExpired,
+      connected,
+      needsRefresh, // informational; you can ignore in UI
+      accessExpired, // informational; you should NOT show "not connected" because of this
       updatedAt: data?.updated_at || null,
       requestId,
     });
