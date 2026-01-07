@@ -62,7 +62,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     /* -------------------------------------------------------
-       1. Authenticate user
+       1) Authenticate user
     ------------------------------------------------------- */
     const {
       data: { user },
@@ -74,7 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     /* -------------------------------------------------------
-       2. Input
+       2) Input
     ------------------------------------------------------- */
     const body: any = req.body || {};
     const listingId = body.listing_id || body.listingId || body.id;
@@ -84,13 +84,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     /* -------------------------------------------------------
-       3. Load listing (ownership enforced)
+       3) Load listing (ownership enforced)
     ------------------------------------------------------- */
     const { data: listing, error: listingErr } = await userClient
       .from('listings')
-      .select(
-        'id, workspace_id, created_by, status, marketplace, title, description, category_id, images, price'
-      )
+      .select('id, workspace_id, created_by, status, marketplace, title, description, category_id, images, price')
       .eq('id', listingId)
       .single();
 
@@ -98,8 +96,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(404).json({ error: 'Listing not found', requestId });
     }
 
+    // Keep this explicit guard even if RLS exists — clearer error and safer.
     if (listing.created_by !== user.id) {
       return res.status(403).json({ error: 'Forbidden', requestId });
+    }
+
+    // Only eBay flow for now.
+    if ((listing.marketplace || 'ebay').toLowerCase() !== 'ebay') {
+      return res.status(400).json({ error: 'Only eBay publishing is supported currently', requestId });
     }
 
     if (listing.status === 'published') {
@@ -107,23 +111,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     /* -------------------------------------------------------
-       4. Image validation (KEEPING YOUR LOGIC)
+       4) Image + listing validation (KEEPING YOUR LOGIC)
     ------------------------------------------------------- */
-    const rawImages =
-      body?.images ??
-      body?.image_urls ??
-      listing?.images ??
-      [];
-
+    const rawImages = body?.images ?? body?.image_urls ?? listing?.images ?? [];
     const incomingUrls = normalizeStringArray(rawImages);
 
     const blobOrObjectUrls = incomingUrls.filter(isBlobOrObjectUrl);
-    const nonHttpUrls = incomingUrls.filter(
-      (u) => !isBlobOrObjectUrl(u) && !isHttpUrl(u)
-    );
-    const imageUrls = incomingUrls.filter(
-      (u) => !isBlobOrObjectUrl(u) && isHttpUrl(u)
-    );
+    const nonHttpUrls = incomingUrls.filter((u) => !isBlobOrObjectUrl(u) && !isHttpUrl(u));
+    const imageUrls = incomingUrls.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u));
 
     const errors: string[] = [];
 
@@ -131,16 +126,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!listing.description?.trim()) errors.push('Description is required.');
     if (!listing.category_id) errors.push('Category is required.');
     if (!imageUrls.length) errors.push('At least one hosted image URL is required.');
-    if (typeof listing.price !== 'number' || listing.price <= 0)
-      errors.push('Price must be greater than 0.');
+    if (typeof listing.price !== 'number' || listing.price <= 0) errors.push('Price must be greater than 0.');
 
-    if (blobOrObjectUrls.length) {
-      errors.push('Blob/data/file image URLs are not allowed.');
-    }
-
-    if (nonHttpUrls.length) {
-      errors.push('Image URLs must be http/https.');
-    }
+    if (blobOrObjectUrls.length) errors.push('Blob/data/file image URLs are not allowed.');
+    if (nonHttpUrls.length) errors.push('Image URLs must be http/https.');
 
     const nowIso = new Date().toISOString();
 
@@ -150,10 +139,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .update({
           last_publish_attempt_at: nowIso,
           last_publish_error: 'Validation failed',
-          last_publish_error_details: {
-            stage: 'validation',
-            errors,
-          },
+          last_publish_error_details: { stage: 'validation', errors },
         })
         .eq('id', listing.id);
 
@@ -165,24 +151,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     /* -------------------------------------------------------
-       5. Verify eBay connection exists
+       5) Verify eBay connection exists for THIS user/workspace/env
+          (this was wrong in your version: user_id was checked as NULL)
     ------------------------------------------------------- */
-    const { data: connection } = await serviceClient
+    const env = String(process.env.EBAY_ENV || 'production').toLowerCase();
+
+    const { data: connection, error: connErr } = await serviceClient
       .from('marketplace_connections')
-      .select('id')
+      .select('id, expires_at, refresh_token')
       .eq('workspace_id', listing.workspace_id)
+      .eq('user_id', user.id)
       .eq('marketplace', 'ebay')
-      .eq('environment', 'production')
-      .is('user_id', null)
+      .eq('environment', env)
       .maybeSingle();
 
-    if (!connection) {
+    if (connErr) {
+      console.error('[publish-listing] connection lookup failed', { requestId, connErr });
+      return res.status(500).json({ error: 'Failed to check eBay connection', requestId });
+    }
+
+    if (!connection?.id) {
       await serviceClient
         .from('listings')
         .update({
           last_publish_attempt_at: nowIso,
           last_publish_error: 'No eBay connection found',
-          last_publish_error_details: { stage: 'connection' },
+          last_publish_error_details: { stage: 'connection', env },
         })
         .eq('id', listing.id);
 
@@ -192,9 +186,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    // Optional: if token is expired but refresh_token exists, we still allow enqueue
+    // because the worker will refresh before publishing.
+    // If refresh_token is missing and access token expired, you may choose to block.
+    const accessExpired = connection.expires_at ? new Date(connection.expires_at).getTime() <= Date.now() : true;
+    if (accessExpired && !connection.refresh_token) {
+      await serviceClient
+        .from('listings')
+        .update({
+          last_publish_attempt_at: nowIso,
+          last_publish_error: 'eBay token expired',
+          last_publish_error_details: { stage: 'connection', env, accessExpired: true, hasRefreshToken: false },
+        })
+        .eq('id', listing.id);
+
+      return res.status(400).json({
+        error: 'eBay connection expired. Please reconnect eBay in Settings.',
+        requestId,
+      });
+    }
+
     /* -------------------------------------------------------
-       6. Enqueue publish job
+       6) Enqueue publish job
+          Guard against duplicate queued jobs for same listing.
     ------------------------------------------------------- */
+    const { data: existingJob, error: existingErr } = await serviceClient
+      .from('listing_jobs')
+      .select('id,status')
+      .eq('listing_id', listing.id)
+      .eq('job_type', 'publish')
+      .in('status', ['queued', 'running'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingErr) {
+      console.error('[publish-listing] existing job lookup failed', { requestId, existingErr });
+      return res.status(500).json({ error: 'Failed to check existing publish job', requestId });
+    }
+
+    if (existingJob?.id) {
+      // Already queued/running; don't create another.
+      await serviceClient
+        .from('listings')
+        .update({
+          last_publish_attempt_at: nowIso,
+          last_publish_error: null,
+          last_publish_error_details: null,
+        })
+        .eq('id', listing.id);
+
+      return res.status(200).json({
+        success: true,
+        requestId,
+        jobId: existingJob.id,
+        alreadyQueued: true,
+      });
+    }
+
     const { data: job, error: jobErr } = await serviceClient
       .from('listing_jobs')
       .insert({
@@ -208,9 +257,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .single();
 
     if (jobErr || !job) {
+      console.error('[publish-listing] job insert failed', { requestId, jobErr });
       return res.status(500).json({
         error: 'Failed to create publish job',
         requestId,
+        details: jobErr?.message,
       });
     }
 
@@ -227,6 +278,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       success: true,
       requestId,
       jobId: job.id,
+      env,
     });
   } catch (err: any) {
     console.error('❌ /api/publish-listing error', { requestId, err });
