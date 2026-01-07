@@ -69,6 +69,183 @@ function isExpiredOrNear(expiresAtMs: number | null, skewSeconds = 120): boolean
 function base64BasicAuth(clientId: string, clientSecret: string) {
   return Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 }
+function ebayApiHost(env: "production" | "sandbox") {
+  return env === "sandbox" ? "api.sandbox.ebay.com" : "api.ebay.com";
+}
+
+async function ebayGetJsonOrThrow(url: string, accessToken: string) {
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  const json = (await res.json().catch(() => ({}))) as any;
+
+  if (!res.ok) {
+    const msg =
+      json?.errors?.[0]?.message ||
+      json?.error_description ||
+      json?.error ||
+      `eBay API failed: ${res.status}`;
+    const err = new Error(msg);
+    (err as any).statusCode = res.status;
+    (err as any).details = json;
+    throw err;
+  }
+
+  return json;
+}
+
+function pickPolicyIdByHeuristic<T extends { name?: string }>(
+  policies: T[],
+  idKey: keyof T,
+  preferredNameContains: string[] = ["default", "standard"]
+): string | null {
+  if (!Array.isArray(policies) || policies.length === 0) return null;
+
+  // Prefer "default"/"standard" named policies if present.
+  const lowered = policies.map((p) => ({
+    p,
+    n: String(p?.name || "").toLowerCase(),
+  }));
+
+  for (const needle of preferredNameContains) {
+    const found = lowered.find((x) => x.n.includes(needle));
+    if (found && found.p && (found.p as any)[idKey]) return String((found.p as any)[idKey]);
+  }
+
+  // Otherwise take the first.
+  const first = policies[0] as any;
+  return first?.[idKey] ? String(first[idKey]) : null;
+}
+
+async function fetchEbayBusinessPolicies(params: {
+  accessToken: string;
+  env: "production" | "sandbox";
+  marketplaceId: string; // EBAY_US
+}) {
+  const host = ebayApiHost(params.env);
+  const mid = encodeURIComponent(params.marketplaceId);
+
+  const payment = await ebayGetJsonOrThrow(
+    `https://${host}/sell/account/v1/payment_policy?marketplace_id=${mid}`,
+    params.accessToken
+  );
+
+  const fulfillment = await ebayGetJsonOrThrow(
+    `https://${host}/sell/account/v1/fulfillment_policy?marketplace_id=${mid}`,
+    params.accessToken
+  );
+
+  const returns = await ebayGetJsonOrThrow(
+    `https://${host}/sell/account/v1/return_policy?marketplace_id=${mid}`,
+    params.accessToken
+  );
+
+  return { payment, fulfillment, returns };
+}
+
+async function getOrFetchEbayPolicyIdsOrThrow(params: {
+  supabaseAdmin: ReturnType<typeof createClient>;
+  workspaceId: string;
+  userId: string; // internal or auth, same mapping logic you already use
+  env: "production" | "sandbox";
+  marketplaceId: string; // EBAY_US
+  accessToken: string;
+}) {
+  const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+  // Try cache first
+  const cached = await params.supabaseAdmin
+    .from("marketplace_policy_cache")
+    .select("payment_policy_id,fulfillment_policy_id,return_policy_id,fetched_at")
+    .eq("workspace_id", params.workspaceId)
+    .eq("user_id", params.userId)
+    .eq("marketplace", "ebay")
+    .eq("environment", params.env)
+    .eq("marketplace_id", params.marketplaceId)
+    .maybeSingle();
+
+  if (cached.error) throw cached.error;
+
+  const fetchedAtMs = cached.data?.fetched_at ? Date.parse(cached.data.fetched_at) : 0;
+  const fresh = fetchedAtMs && fetchedAtMs > Date.now() - TTL_MS;
+
+  if (
+    fresh &&
+    cached.data?.payment_policy_id &&
+    cached.data?.fulfillment_policy_id &&
+    cached.data?.return_policy_id
+  ) {
+    return {
+      paymentPolicyId: cached.data.payment_policy_id,
+      fulfillmentPolicyId: cached.data.fulfillment_policy_id,
+      returnPolicyId: cached.data.return_policy_id,
+      source: "cache" as const,
+    };
+  }
+
+  // Fetch from eBay Account API :contentReference[oaicite:3]{index=3}
+  const raw = await fetchEbayBusinessPolicies({
+    accessToken: params.accessToken,
+    env: params.env,
+    marketplaceId: params.marketplaceId,
+  });
+
+  const paymentPolicies = raw.payment?.paymentPolicies || [];
+  const fulfillmentPolicies = raw.fulfillment?.fulfillmentPolicies || [];
+  const returnPolicies = raw.returns?.returnPolicies || [];
+
+  const paymentPolicyId = pickPolicyIdByHeuristic(paymentPolicies, "paymentPolicyId");
+  const fulfillmentPolicyId = pickPolicyIdByHeuristic(fulfillmentPolicies, "fulfillmentPolicyId");
+  const returnPolicyId = pickPolicyIdByHeuristic(returnPolicies, "returnPolicyId");
+
+  if (!paymentPolicyId || !fulfillmentPolicyId || !returnPolicyId) {
+    const err = new Error(
+      "Could not resolve eBay business policies. Ensure the seller account has payment/fulfillment/return policies configured for this marketplace."
+    );
+    (err as any).details = {
+      got: {
+        paymentPolicies: paymentPolicies.length,
+        fulfillmentPolicies: fulfillmentPolicies.length,
+        returnPolicies: returnPolicies.length,
+      },
+    };
+    throw err;
+  }
+
+  // Upsert cache
+  const up = await params.supabaseAdmin
+    .from("marketplace_policy_cache")
+    .upsert(
+      {
+        workspace_id: params.workspaceId,
+        user_id: params.userId,
+        marketplace: "ebay",
+        environment: params.env,
+        marketplace_id: params.marketplaceId,
+        payment_policy_id: paymentPolicyId,
+        fulfillment_policy_id: fulfillmentPolicyId,
+        return_policy_id: returnPolicyId,
+        fetched_at: new Date().toISOString(),
+        raw_json: raw,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "workspace_id,user_id,marketplace,environment,marketplace_id" }
+    );
+
+  if (up.error) throw up.error;
+
+  return {
+    paymentPolicyId,
+    fulfillmentPolicyId,
+    returnPolicyId,
+    source: "ebay" as const,
+  };
+}
 
 function ebayTokenHost(env: string) {
   return env === "sandbox" ? "api.sandbox.ebay.com" : "api.ebay.com";
