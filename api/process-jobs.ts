@@ -69,6 +69,11 @@ function isExpiredOrNear(expiresAtMs: number | null, skewSeconds = 120): boolean
 function base64BasicAuth(clientId: string, clientSecret: string) {
   return Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 }
+
+/* -----------------------------
+   eBay Account API (policies)
+------------------------------ */
+
 function ebayApiHost(env: "production" | "sandbox") {
   return env === "sandbox" ? "api.sandbox.ebay.com" : "api.ebay.com";
 }
@@ -106,7 +111,6 @@ function pickPolicyIdByHeuristic<T extends { name?: string }>(
 ): string | null {
   if (!Array.isArray(policies) || policies.length === 0) return null;
 
-  // Prefer "default"/"standard" named policies if present.
   const lowered = policies.map((p) => ({
     p,
     n: String(p?.name || "").toLowerCase(),
@@ -117,7 +121,6 @@ function pickPolicyIdByHeuristic<T extends { name?: string }>(
     if (found && found.p && (found.p as any)[idKey]) return String((found.p as any)[idKey]);
   }
 
-  // Otherwise take the first.
   const first = policies[0] as any;
   return first?.[idKey] ? String(first[idKey]) : null;
 }
@@ -125,7 +128,7 @@ function pickPolicyIdByHeuristic<T extends { name?: string }>(
 async function fetchEbayBusinessPolicies(params: {
   accessToken: string;
   env: "production" | "sandbox";
-  marketplaceId: string; // EBAY_US
+  marketplaceId: string; // e.g. EBAY_US
 }) {
   const host = ebayApiHost(params.env);
   const mid = encodeURIComponent(params.marketplaceId);
@@ -151,9 +154,9 @@ async function fetchEbayBusinessPolicies(params: {
 async function getOrFetchEbayPolicyIdsOrThrow(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
   workspaceId: string;
-  userId: string; // internal or auth, same mapping logic you already use
+  userId: string; // IMPORTANT: must match the id stored in marketplace_policy_cache.user_id
   env: "production" | "sandbox";
-  marketplaceId: string; // EBAY_US
+  marketplaceId: string; // e.g. EBAY_US
   accessToken: string;
 }) {
   const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -181,14 +184,13 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     cached.data?.return_policy_id
   ) {
     return {
-      paymentPolicyId: cached.data.payment_policy_id,
-      fulfillmentPolicyId: cached.data.fulfillment_policy_id,
-      returnPolicyId: cached.data.return_policy_id,
+      paymentPolicyId: cached.data.payment_policy_id as string,
+      fulfillmentPolicyId: cached.data.fulfillment_policy_id as string,
+      returnPolicyId: cached.data.return_policy_id as string,
       source: "cache" as const,
     };
   }
 
-  // Fetch from eBay Account API :contentReference[oaicite:3]{index=3}
   const raw = await fetchEbayBusinessPolicies({
     accessToken: params.accessToken,
     env: params.env,
@@ -199,9 +201,9 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
   const fulfillmentPolicies = raw.fulfillment?.fulfillmentPolicies || [];
   const returnPolicies = raw.returns?.returnPolicies || [];
 
-  const paymentPolicyId = pickPolicyIdByHeuristic(paymentPolicies, "paymentPolicyId");
-  const fulfillmentPolicyId = pickPolicyIdByHeuristic(fulfillmentPolicies, "fulfillmentPolicyId");
-  const returnPolicyId = pickPolicyIdByHeuristic(returnPolicies, "returnPolicyId");
+  const paymentPolicyId = pickPolicyIdByHeuristic(paymentPolicies, "paymentPolicyId" as any);
+  const fulfillmentPolicyId = pickPolicyIdByHeuristic(fulfillmentPolicies, "fulfillmentPolicyId" as any);
+  const returnPolicyId = pickPolicyIdByHeuristic(returnPolicies, "returnPolicyId" as any);
 
   if (!paymentPolicyId || !fulfillmentPolicyId || !returnPolicyId) {
     const err = new Error(
@@ -247,6 +249,10 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
   };
 }
 
+/* -----------------------------
+   eBay OAuth refresh
+------------------------------ */
+
 function ebayTokenHost(env: string) {
   return env === "sandbox" ? "api.sandbox.ebay.com" : "api.ebay.com";
 }
@@ -264,7 +270,6 @@ async function refreshEbayAccessTokenOrThrow(params: {
   const body = new URLSearchParams();
   body.set("grant_type", "refresh_token");
   body.set("refresh_token", params.refreshToken);
-  // eBay often requires scope again on refresh:
   body.set("scope", params.scopes);
 
   const res = await fetch(url, {
@@ -285,7 +290,6 @@ async function refreshEbayAccessTokenOrThrow(params: {
     throw err;
   }
 
-  // Expect: access_token, expires_in, token_type, maybe refresh_token
   return json as {
     access_token: string;
     expires_in: number;
@@ -298,10 +302,8 @@ async function refreshEbayAccessTokenOrThrow(params: {
 /**
  * Find a connection row. We try:
  * 1) user_id = provided job user_id (if present)
- * 2) if not found and you have internal users table, try mapping:
+ * 2) fallback mapping via users table:
  *    - users.id <-> users.auth_user_id
- *
- * This avoids guessing whether your user_id is auth uid or internal id.
  */
 async function findMarketplaceConnection(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
@@ -311,7 +313,6 @@ async function findMarketplaceConnection(params: {
 }) {
   const { supabaseAdmin, workspaceId, userId, env } = params;
 
-  // First try with the userId as-is (works if job.user_id matches marketplace_connections.user_id)
   let q = await supabaseAdmin
     .from("marketplace_connections")
     .select("id,workspace_id,user_id,marketplace,environment,access_token,refresh_token,expires_at,updated_at")
@@ -324,8 +325,6 @@ async function findMarketplaceConnection(params: {
   if (q.error) throw q.error;
   if (q.data) return q.data as MarketplaceConnectionRow;
 
-  // Fallback mapping via users table (auth_user_id <-> id)
-  // Try: userId is auth uid -> map to internal id
   const m1 = await supabaseAdmin.from("users").select("id").eq("auth_user_id", userId).maybeSingle();
   if (!m1.error && m1.data?.id) {
     q = await supabaseAdmin
@@ -340,7 +339,6 @@ async function findMarketplaceConnection(params: {
     if (q.data) return q.data as MarketplaceConnectionRow;
   }
 
-  // Try: userId is internal id -> map to auth uid
   const m2 = await supabaseAdmin.from("users").select("auth_user_id").eq("id", userId).maybeSingle();
   if (!m2.error && m2.data?.auth_user_id) {
     q = await supabaseAdmin
@@ -358,10 +356,6 @@ async function findMarketplaceConnection(params: {
   return null;
 }
 
-/**
- * Returns a valid eBay access token; refreshes it if expired/near expiry,
- * and persists the new token + expires_at into marketplace_connections.
- */
 async function getValidEbayAccessTokenOrThrow(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
   workspaceId: string;
@@ -377,12 +371,8 @@ async function getValidEbayAccessTokenOrThrow(params: {
     env: params.env,
   });
 
-  if (!conn) {
-    throw new Error("No eBay account connected for this user/workspace.");
-  }
-  if (!conn.refresh_token) {
-    throw new Error("eBay connection is missing refresh_token. Reconnect eBay.");
-  }
+  if (!conn) throw new Error("No eBay account connected for this user/workspace.");
+  if (!conn.refresh_token) throw new Error("eBay connection is missing refresh_token. Reconnect eBay.");
 
   const expiresAtMs = parseExpiresAtMs(conn.expires_at);
   const needsRefresh = isExpiredOrNear(expiresAtMs, 120);
@@ -403,8 +393,6 @@ async function getValidEbayAccessTokenOrThrow(params: {
     access_token: refreshed.access_token,
     expires_at: newExpiresAt,
   };
-
-  // If eBay rotates refresh_token and returns one, store it.
   if (refreshed.refresh_token) patch.refresh_token = refreshed.refresh_token;
 
   const up = await params.supabaseAdmin.from("marketplace_connections").update(patch).eq("id", conn.id);
@@ -413,17 +401,12 @@ async function getValidEbayAccessTokenOrThrow(params: {
   return { accessToken: refreshed.access_token, refreshed: true, connectionId: conn.id };
 }
 
-/**
- * Resolve the job user id.
- * If job.user_id is null, we fall back to listings.created_by (if exists).
- */
 async function resolveJobUserId(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
   job: JobRow;
 }) {
   if (params.job.user_id) return params.job.user_id;
 
-  // Try to infer from listing row if your listings table has created_by
   const { data, error } = await params.supabaseAdmin
     .from("listings")
     .select("created_by")
@@ -459,11 +442,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       | "production"
       | "sandbox";
 
-    // Batch size controls how many jobs are processed per call
+    const EBAY_MARKETPLACE_ID = process.env.EBAY_MARKETPLACE_ID || "EBAY_US";
+
     const limitRaw = (req.query.limit || (req.body as any)?.limit || "10").toString();
     const limit = Math.max(1, Math.min(50, Number(limitRaw) || 10));
 
-    // 1) Fetch candidate queued jobs (FIFO)
     const { data: candidates, error: fetchErr } = await supabase
       .from("listing_jobs")
       .select("id, listing_id, workspace_id, user_id, status, attempts, max_attempts, job_type, created_at")
@@ -484,21 +467,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       outcome: "succeeded" | "failed" | "skipped";
       message?: string;
       ebayTokenRefreshed?: boolean;
+      ebayPolicySource?: "cache" | "ebay";
     }> = [];
 
     let processed = 0;
 
-    // 2) Process sequentially
     for (const job of jobs) {
       const startedAt = new Date().toISOString();
 
-      // a) Claim job
+      // Enforce max_attempts before claiming (fast fail)
+      const attempts = Number(job.attempts ?? 0);
+      const maxAttempts = Number(job.max_attempts ?? 0) || 3;
+      if (attempts >= maxAttempts) {
+        const msg = `max_attempts exceeded (${attempts}/${maxAttempts})`;
+        await supabase
+          .from("listing_jobs")
+          .update({
+            status: "failed",
+            finished_at: new Date().toISOString(),
+            error_message: msg,
+            error_json: { stage: "claim", message: msg },
+          })
+          .eq("id", job.id);
+
+        results.push({ jobId: job.id, listingId: job.listing_id, outcome: "failed", message: msg });
+        continue;
+      }
+
+      // Claim job
       const { data: claimed, error: claimErr } = await supabase
         .from("listing_jobs")
         .update({
           status: "running",
           started_at: startedAt,
-          attempts: (job.attempts ?? 0) + 1,
+          attempts: attempts + 1,
         })
         .eq("id", job.id)
         .eq("status", "queued")
@@ -518,9 +520,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const finishedAt = new Date().toISOString();
 
       try {
-        // b) Ensure we can access eBay for this job (connect once forever = refresh automatically)
         const jobUserId = await resolveJobUserId({ supabaseAdmin: supabase, job });
 
+        // 1) Ensure valid eBay access token
         const { accessToken, refreshed } = await getValidEbayAccessTokenOrThrow({
           supabaseAdmin: supabase,
           workspaceId: job.workspace_id,
@@ -528,14 +530,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           env: EBAY_ENV,
         });
 
-        // NOTE: We don't use accessToken yet (stub publish), but this proves the refresh flow works.
-        // DO NOT log accessToken.
+        // 2) Fetch/cache seller policies dynamically
+        const policies = await getOrFetchEbayPolicyIdsOrThrow({
+          supabaseAdmin: supabase,
+          workspaceId: job.workspace_id,
+          userId: jobUserId,
+          env: EBAY_ENV,
+          marketplaceId: EBAY_MARKETPLACE_ID,
+          accessToken,
+        });
 
-        // c) Stub publish (replace later with real eBay calls using accessToken)
+        // 3) Stub publish (real eBay calls come next step)
         const stubItemId = `STUB-${job.listing_id}`;
         const stubUrl = `https://www.ebay.com/itm/${stubItemId}`;
 
-        // Update listing -> published
         const { error: listingUpdErr } = await supabase
           .from("listings")
           .update({
@@ -552,7 +560,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           throw new Error(`listing update failed: ${listingUpdErr.message}`);
         }
 
-        // Mark job succeeded
         const { error: jobDoneErr } = await supabase
           .from("listing_jobs")
           .update({
@@ -564,6 +571,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               ebay_listing_url: stubUrl,
               ebay_token_refreshed: refreshed,
               ebay_env: EBAY_ENV,
+              ebay_marketplace_id: EBAY_MARKETPLACE_ID,
+              ebay_policy_source: policies.source,
+              ebay_policy_ids: {
+                paymentPolicyId: policies.paymentPolicyId,
+                fulfillmentPolicyId: policies.fulfillmentPolicyId,
+                returnPolicyId: policies.returnPolicyId,
+              },
             },
             error_message: null,
             error_json: null,
@@ -579,13 +593,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           listingId: job.listing_id,
           outcome: "succeeded",
           ebayTokenRefreshed: refreshed,
+          ebayPolicySource: policies.source,
         });
         processed++;
       } catch (e: any) {
         const errMsg = e?.message || "Unknown error";
         const finishedFailAt = new Date().toISOString();
 
-        // Mark job failed
         await supabase
           .from("listing_jobs")
           .update({
@@ -596,7 +610,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           })
           .eq("id", job.id);
 
-        // Keep listing in draft and record error (per your requirement)
         await supabase
           .from("listings")
           .update({
