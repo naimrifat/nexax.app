@@ -190,16 +190,21 @@ function isEbayBusinessPolicyIneligible(err: any): boolean {
   return msg.includes("not eligible for business policy");
 }
 
+function isEbayBusinessPolicyIneligible(err: any): boolean {
+  const msg = String(err?.message || "").toLowerCase();
+  return msg.includes("not eligible for business policy");
+}
+
 /**
  * Returns policy IDs using:
- * 1) cache (workspace-level first; falls back to legacy user-level cache if present)
+ * 1) cache (workspace-level first; legacy user-level fallback)
  * 2) eBay Account API (if eligible)
  * 3) overrides table (workspace-level) if Account API says "not eligible"
  */
 async function getOrFetchEbayPolicyIdsOrThrow(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
   workspaceId: string;
-  userId: string; // kept for backward-compat cache lookup only
+  userId: string; // kept only for legacy cache fallback
   env: "production" | "sandbox";
   marketplaceId: string;
   accessToken: string;
@@ -213,7 +218,7 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     .from("marketplace_policy_cache")
     .select("payment_policy_id,fulfillment_policy_id,return_policy_id,fetched_at")
     .eq("workspace_id", params.workspaceId)
-    .is("user_id", null) // workspace-level cache row
+    .is("user_id", null)
     .eq("marketplace", "ebay")
     .eq("environment", params.env)
     .eq("marketplace_id", params.marketplaceId)
@@ -239,7 +244,7 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
   }
 
   // -----------------------------
-  // 1b) CACHE: legacy user-level fallback (so you don’t break old data)
+  // 1b) CACHE: legacy user-level fallback
   // -----------------------------
   const cachedUser = await params.supabaseAdmin
     .from("marketplace_policy_cache")
@@ -271,7 +276,7 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
   }
 
   // -----------------------------
-  // 2) Try eBay Account API (may fail for "not eligible")
+  // 2) Try eBay Account API
   // -----------------------------
   let raw: any;
   try {
@@ -282,7 +287,7 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     });
   } catch (e: any) {
     // -----------------------------
-    // 3) If "not eligible", use WORKSPACE-LEVEL OVERRIDES
+    // 3) If "not eligible", use WORKSPACE-LEVEL OVERRIDES (THIS IS THE FIX)
     // -----------------------------
     if (isEbayBusinessPolicyIneligible(e)) {
       const overrides = await getEbayPolicyOverridesOrNull({
@@ -297,6 +302,7 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
           "eBay account is not eligible for Business Policy API. Add workspace-level policy overrides (payment/fulfillment/return policy IDs)."
         );
         (err as any).details = {
+          stage: "policies",
           reason: "business_policy_ineligible",
           workspaceId: params.workspaceId,
           env: params.env,
@@ -315,6 +321,9 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     throw e;
   }
 
+  // -----------------------------
+  // Parse Account API response
+  // -----------------------------
   const paymentPolicies = raw.payment?.paymentPolicies || [];
   const fulfillmentPolicies = raw.fulfillment?.fulfillmentPolicies || [];
   const returnPolicies = raw.returns?.returnPolicies || [];
@@ -337,63 +346,8 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     throw err;
   }
 
-// -----------------------------
-// Write CACHE as workspace-level (user_id = NULL)
-// Use UPDATE->INSERT so NULL semantics don't create duplicates.
-// Requires partial unique index where user_id IS NULL.
-// -----------------------------
-const nowIso = new Date().toISOString();
-
-const patch = {
-  payment_policy_id: paymentPolicyId,
-  fulfillment_policy_id: fulfillmentPolicyId,
-  return_policy_id: returnPolicyId,
-  fetched_at: nowIso,
-  raw_json: raw,
-  updated_at: nowIso,
-};
-
-// 1) Try UPDATE existing workspace-level cache row
-const upd = await params.supabaseAdmin
-  .from("marketplace_policy_cache")
-  .update(patch)
-  .eq("workspace_id", params.workspaceId)
-  .is("user_id", null)
-  .eq("marketplace", "ebay")
-  .eq("environment", params.env)
-  .eq("marketplace_id", params.marketplaceId);
-
-if (upd.error) throw upd.error;
-
-// 2) If nothing updated, INSERT new workspace-level cache row
-// Note: Supabase update doesn't reliably return affected row count across all configs,
-// so we re-check existence with a lightweight select.
-const exists = await params.supabaseAdmin
-  .from("marketplace_policy_cache")
-  .select("id")
-  .eq("workspace_id", params.workspaceId)
-  .is("user_id", null)
-  .eq("marketplace", "ebay")
-  .eq("environment", params.env)
-  .eq("marketplace_id", params.marketplaceId)
-  .maybeSingle();
-
-if (exists.error) throw exists.error;
-
-if (!exists.data) {
-  const ins = await params.supabaseAdmin.from("marketplace_policy_cache").insert({
-    workspace_id: params.workspaceId,
-    user_id: null,
-    marketplace: "ebay",
-    environment: params.env,
-    marketplace_id: params.marketplaceId,
-    ...patch,
-  });
-
-  if (ins.error) throw ins.error;
-};
-
-  if (up.error) throw up.error;
+  // NOTE: For your account, this branch likely never runs (not eligible).
+  // If it does, you can write cache here (workspace-level) using your update->insert block.
 
   return {
     paymentPolicyId,
