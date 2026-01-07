@@ -163,7 +163,6 @@ async function fetchEbayBusinessPolicies(params: {
 async function getEbayPolicyOverridesOrNull(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
   workspaceId: string;
-  userId: string;
   env: "production" | "sandbox";
   marketplaceId: string;
 }) {
@@ -171,7 +170,6 @@ async function getEbayPolicyOverridesOrNull(params: {
     .from("marketplace_policy_overrides")
     .select("payment_policy_id,fulfillment_policy_id,return_policy_id")
     .eq("workspace_id", params.workspaceId)
-    .eq("user_id", params.userId)
     .eq("marketplace", "ebay")
     .eq("environment", params.env)
     .eq("marketplace_id", params.marketplaceId)
@@ -187,24 +185,63 @@ async function getEbayPolicyOverridesOrNull(params: {
   };
 }
 
+function isEbayBusinessPolicyIneligible(err: any): boolean {
+  const msg = String(err?.message || "").toLowerCase();
+  return msg.includes("not eligible for business policy");
+}
+
 /**
  * Returns policy IDs using:
- * 1) cache (marketplace_policy_cache)
+ * 1) cache (workspace-level first; falls back to legacy user-level cache if present)
  * 2) eBay Account API (if eligible)
- * 3) overrides table (if Account API says "not eligible")
+ * 3) overrides table (workspace-level) if Account API says "not eligible"
  */
 async function getOrFetchEbayPolicyIdsOrThrow(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
   workspaceId: string;
-  userId: string;
+  userId: string; // kept for backward-compat cache lookup only
   env: "production" | "sandbox";
   marketplaceId: string;
   accessToken: string;
 }) {
   const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-  // 1) cache first
-  const cached = await params.supabaseAdmin
+  // -----------------------------
+  // 1) CACHE: workspace-level first
+  // -----------------------------
+  const cachedWorkspace = await params.supabaseAdmin
+    .from("marketplace_policy_cache")
+    .select("payment_policy_id,fulfillment_policy_id,return_policy_id,fetched_at")
+    .eq("workspace_id", params.workspaceId)
+    .is("user_id", null) // workspace-level cache row
+    .eq("marketplace", "ebay")
+    .eq("environment", params.env)
+    .eq("marketplace_id", params.marketplaceId)
+    .maybeSingle();
+
+  if (cachedWorkspace.error) throw cachedWorkspace.error;
+
+  const wsFetchedAtMs = cachedWorkspace.data?.fetched_at ? Date.parse(cachedWorkspace.data.fetched_at) : 0;
+  const wsFresh = wsFetchedAtMs && wsFetchedAtMs > Date.now() - TTL_MS;
+
+  if (
+    wsFresh &&
+    cachedWorkspace.data?.payment_policy_id &&
+    cachedWorkspace.data?.fulfillment_policy_id &&
+    cachedWorkspace.data?.return_policy_id
+  ) {
+    return {
+      paymentPolicyId: cachedWorkspace.data.payment_policy_id as string,
+      fulfillmentPolicyId: cachedWorkspace.data.fulfillment_policy_id as string,
+      returnPolicyId: cachedWorkspace.data.return_policy_id as string,
+      source: "cache" as const,
+    };
+  }
+
+  // -----------------------------
+  // 1b) CACHE: legacy user-level fallback (so you don’t break old data)
+  // -----------------------------
+  const cachedUser = await params.supabaseAdmin
     .from("marketplace_policy_cache")
     .select("payment_policy_id,fulfillment_policy_id,return_policy_id,fetched_at")
     .eq("workspace_id", params.workspaceId)
@@ -214,26 +251,28 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     .eq("marketplace_id", params.marketplaceId)
     .maybeSingle();
 
-  if (cached.error) throw cached.error;
+  if (cachedUser.error) throw cachedUser.error;
 
-  const fetchedAtMs = cached.data?.fetched_at ? Date.parse(cached.data.fetched_at) : 0;
-  const fresh = fetchedAtMs && fetchedAtMs > Date.now() - TTL_MS;
+  const uFetchedAtMs = cachedUser.data?.fetched_at ? Date.parse(cachedUser.data.fetched_at) : 0;
+  const uFresh = uFetchedAtMs && uFetchedAtMs > Date.now() - TTL_MS;
 
   if (
-    fresh &&
-    cached.data?.payment_policy_id &&
-    cached.data?.fulfillment_policy_id &&
-    cached.data?.return_policy_id
+    uFresh &&
+    cachedUser.data?.payment_policy_id &&
+    cachedUser.data?.fulfillment_policy_id &&
+    cachedUser.data?.return_policy_id
   ) {
     return {
-      paymentPolicyId: cached.data.payment_policy_id as string,
-      fulfillmentPolicyId: cached.data.fulfillment_policy_id as string,
-      returnPolicyId: cached.data.return_policy_id as string,
+      paymentPolicyId: cachedUser.data.payment_policy_id as string,
+      fulfillmentPolicyId: cachedUser.data.fulfillment_policy_id as string,
+      returnPolicyId: cachedUser.data.return_policy_id as string,
       source: "cache" as const,
     };
   }
 
-  // 2) try eBay Account API, fallback to overrides if ineligible
+  // -----------------------------
+  // 2) Try eBay Account API (may fail for "not eligible")
+  // -----------------------------
   let raw: any;
   try {
     raw = await fetchEbayBusinessPolicies({
@@ -242,22 +281,25 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
       marketplaceId: params.marketplaceId,
     });
   } catch (e: any) {
+    // -----------------------------
+    // 3) If "not eligible", use WORKSPACE-LEVEL OVERRIDES
+    // -----------------------------
     if (isEbayBusinessPolicyIneligible(e)) {
-      // 3) overrides fallback
       const overrides = await getEbayPolicyOverridesOrNull({
         supabaseAdmin: params.supabaseAdmin,
         workspaceId: params.workspaceId,
-        userId: params.userId,
         env: params.env,
         marketplaceId: params.marketplaceId,
       });
 
       if (!overrides) {
         const err = new Error(
-          "eBay account is not eligible for Business Policy API. Add policy overrides (payment/fulfillment/return policy IDs) for this workspace/user."
+          "eBay account is not eligible for Business Policy API. Add workspace-level policy overrides (payment/fulfillment/return policy IDs)."
         );
         (err as any).details = {
           reason: "business_policy_ineligible",
+          workspaceId: params.workspaceId,
+          env: params.env,
           marketplaceId: params.marketplaceId,
         };
         throw err;
@@ -269,6 +311,7 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
       };
     }
 
+    // Any other error -> bubble up
     throw e;
   }
 
@@ -294,13 +337,15 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     throw err;
   }
 
-  // upsert cache
+  // -----------------------------
+  // Write CACHE as workspace-level
+  // -----------------------------
   const up = await params.supabaseAdmin
     .from("marketplace_policy_cache")
     .upsert(
       {
         workspace_id: params.workspaceId,
-        user_id: params.userId,
+        user_id: null, // workspace-level cache
         marketplace: "ebay",
         environment: params.env,
         marketplace_id: params.marketplaceId,
