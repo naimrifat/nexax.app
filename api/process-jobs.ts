@@ -23,7 +23,7 @@ function getEnv(name: string): string {
  */
 function requireCronSecret(req: VercelRequest) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return; // If you don't set it, it won't block. Recommended to set.
+  if (!secret) return;
   const got = (req.headers["x-cron-secret"] || "").toString();
   if (got !== secret) {
     const err = new Error("Unauthorized");
@@ -101,7 +101,7 @@ async function ebayGetJsonOrThrow(url: string, accessToken: string) {
 
     const err = new Error(msg);
     (err as any).statusCode = res.status;
-    (err as any).details = json; // <-- KEEP FULL PAYLOAD
+    (err as any).details = json; // keep full payload
     throw err;
   }
 
@@ -127,6 +127,11 @@ function pickPolicyIdByHeuristic<T extends { name?: string }>(
 
   const first = policies[0] as any;
   return first?.[idKey] ? String(first[idKey]) : null;
+}
+
+function isEbayBusinessPolicyIneligible(err: any): boolean {
+  const msg = String(err?.message || "").toLowerCase();
+  return msg.includes("not eligible for business policy");
 }
 
 async function fetchEbayBusinessPolicies(params: {
@@ -155,17 +160,50 @@ async function fetchEbayBusinessPolicies(params: {
   return { payment, fulfillment, returns };
 }
 
+async function getEbayPolicyOverridesOrNull(params: {
+  supabaseAdmin: ReturnType<typeof createClient>;
+  workspaceId: string;
+  userId: string;
+  env: "production" | "sandbox";
+  marketplaceId: string;
+}) {
+  const { data, error } = await params.supabaseAdmin
+    .from("marketplace_policy_overrides")
+    .select("payment_policy_id,fulfillment_policy_id,return_policy_id")
+    .eq("workspace_id", params.workspaceId)
+    .eq("user_id", params.userId)
+    .eq("marketplace", "ebay")
+    .eq("environment", params.env)
+    .eq("marketplace_id", params.marketplaceId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  return {
+    paymentPolicyId: data.payment_policy_id as string,
+    fulfillmentPolicyId: data.fulfillment_policy_id as string,
+    returnPolicyId: data.return_policy_id as string,
+  };
+}
+
+/**
+ * Returns policy IDs using:
+ * 1) cache (marketplace_policy_cache)
+ * 2) eBay Account API (if eligible)
+ * 3) overrides table (if Account API says "not eligible")
+ */
 async function getOrFetchEbayPolicyIdsOrThrow(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
   workspaceId: string;
-  userId: string; // IMPORTANT: must match the id stored in marketplace_policy_cache.user_id
+  userId: string;
   env: "production" | "sandbox";
-  marketplaceId: string; // e.g. EBAY_US
+  marketplaceId: string;
   accessToken: string;
 }) {
   const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-  // Try cache first
+  // 1) cache first
   const cached = await params.supabaseAdmin
     .from("marketplace_policy_cache")
     .select("payment_policy_id,fulfillment_policy_id,return_policy_id,fetched_at")
@@ -195,11 +233,44 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     };
   }
 
-  const raw = await fetchEbayBusinessPolicies({
-    accessToken: params.accessToken,
-    env: params.env,
-    marketplaceId: params.marketplaceId,
-  });
+  // 2) try eBay Account API, fallback to overrides if ineligible
+  let raw: any;
+  try {
+    raw = await fetchEbayBusinessPolicies({
+      accessToken: params.accessToken,
+      env: params.env,
+      marketplaceId: params.marketplaceId,
+    });
+  } catch (e: any) {
+    if (isEbayBusinessPolicyIneligible(e)) {
+      // 3) overrides fallback
+      const overrides = await getEbayPolicyOverridesOrNull({
+        supabaseAdmin: params.supabaseAdmin,
+        workspaceId: params.workspaceId,
+        userId: params.userId,
+        env: params.env,
+        marketplaceId: params.marketplaceId,
+      });
+
+      if (!overrides) {
+        const err = new Error(
+          "eBay account is not eligible for Business Policy API. Add policy overrides (payment/fulfillment/return policy IDs) for this workspace/user."
+        );
+        (err as any).details = {
+          reason: "business_policy_ineligible",
+          marketplaceId: params.marketplaceId,
+        };
+        throw err;
+      }
+
+      return {
+        ...overrides,
+        source: "override" as const,
+      };
+    }
+
+    throw e;
+  }
 
   const paymentPolicies = raw.payment?.paymentPolicies || [];
   const fulfillmentPolicies = raw.fulfillment?.fulfillmentPolicies || [];
@@ -223,7 +294,7 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     throw err;
   }
 
-  // Upsert cache
+  // upsert cache
   const up = await params.supabaseAdmin
     .from("marketplace_policy_cache")
     .upsert(
@@ -303,12 +374,6 @@ async function refreshEbayAccessTokenOrThrow(params: {
   };
 }
 
-/**
- * Find a connection row. We try:
- * 1) user_id = provided job user_id (if present)
- * 2) fallback mapping via users table:
- *    - users.id <-> users.auth_user_id
- */
 async function findMarketplaceConnection(params: {
   supabaseAdmin: ReturnType<typeof createClient>;
   workspaceId: string;
@@ -471,7 +536,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       outcome: "succeeded" | "failed" | "skipped";
       message?: string;
       ebayTokenRefreshed?: boolean;
-      ebayPolicySource?: "cache" | "ebay";
+      ebayPolicySource?: "cache" | "ebay" | "override";
     }> = [];
 
     let processed = 0;
@@ -479,7 +544,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const job of jobs) {
       const startedAt = new Date().toISOString();
 
-      // Enforce max_attempts before claiming (fast fail)
       const attempts = Number(job.attempts ?? 0);
       const maxAttempts = Number(job.max_attempts ?? 0) || 3;
       if (attempts >= maxAttempts) {
@@ -498,7 +562,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
-      // Claim job
       const { data: claimed, error: claimErr } = await supabase
         .from("listing_jobs")
         .update({
@@ -526,7 +589,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const jobUserId = await resolveJobUserId({ supabaseAdmin: supabase, job });
 
-        // 1) Ensure valid eBay access token
         const { accessToken, refreshed } = await getValidEbayAccessTokenOrThrow({
           supabaseAdmin: supabase,
           workspaceId: job.workspace_id,
@@ -534,7 +596,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           env: EBAY_ENV,
         });
 
-        // 2) Fetch/cache seller policies dynamically
         const policies = await getOrFetchEbayPolicyIdsOrThrow({
           supabaseAdmin: supabase,
           workspaceId: job.workspace_id,
@@ -544,7 +605,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           accessToken,
         });
 
-        // 3) Stub publish (real eBay calls come next step)
         const stubItemId = `STUB-${job.listing_id}`;
         const stubUrl = `https://www.ebay.com/itm/${stubItemId}`;
 
@@ -604,20 +664,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const errMsg = e?.message || "Unknown error";
         const finishedFailAt = new Date().toISOString();
 
-await supabase
-  .from("listing_jobs")
-  .update({
-    status: "failed",
-    finished_at: finishedFailAt,
-    error_message: errMsg,
-    error_json: {
-      stage: "publish",
-      message: errMsg,
-      statusCode: e?.statusCode || null,
-      details: e?.details || null,
-    },
-  })
-  .eq("id", job.id);
+        await supabase
+          .from("listing_jobs")
+          .update({
+            status: "failed",
+            finished_at: finishedFailAt,
+            error_message: errMsg,
+            error_json: {
+              stage: "publish",
+              message: errMsg,
+              statusCode: e?.statusCode || null,
+              details: e?.details || null,
+            },
+          })
+          .eq("id", job.id);
 
         await supabase
           .from("listings")
