@@ -90,14 +90,18 @@ async function ebayGetJsonOrThrow(url: string, accessToken: string) {
   const json = (await res.json().catch(() => ({}))) as any;
 
   if (!res.ok) {
+    const e0 = json?.errors?.[0];
+
     const msg =
-      json?.errors?.[0]?.message ||
+      e0?.longMessage ||
+      e0?.message ||
       json?.error_description ||
       json?.error ||
       `eBay API failed: ${res.status}`;
+
     const err = new Error(msg);
     (err as any).statusCode = res.status;
-    (err as any).details = json;
+    (err as any).details = json; // <-- KEEP FULL PAYLOAD
     throw err;
   }
 
@@ -600,15 +604,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const errMsg = e?.message || "Unknown error";
         const finishedFailAt = new Date().toISOString();
 
-        await supabase
-          .from("listing_jobs")
-          .update({
-            status: "failed",
-            finished_at: finishedFailAt,
-            error_message: errMsg,
-            error_json: { stage: "publish", message: errMsg },
-          })
-          .eq("id", job.id);
+await supabase
+  .from("listing_jobs")
+  .update({
+    status: "failed",
+    finished_at: finishedFailAt,
+    error_message: errMsg,
+    error_json: {
+      stage: "publish",
+      message: errMsg,
+      statusCode: e?.statusCode || null,
+      details: e?.details || null,
+    },
+  })
+  .eq("id", job.id);
 
         await supabase
           .from("listings")
