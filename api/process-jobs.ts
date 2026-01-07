@@ -337,27 +337,61 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     throw err;
   }
 
-  // -----------------------------
-  // Write CACHE as workspace-level
-  // -----------------------------
-  const up = await params.supabaseAdmin
-    .from("marketplace_policy_cache")
-    .upsert(
-      {
-        workspace_id: params.workspaceId,
-        user_id: null, // workspace-level cache
-        marketplace: "ebay",
-        environment: params.env,
-        marketplace_id: params.marketplaceId,
-        payment_policy_id: paymentPolicyId,
-        fulfillment_policy_id: fulfillmentPolicyId,
-        return_policy_id: returnPolicyId,
-        fetched_at: new Date().toISOString(),
-        raw_json: raw,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "workspace_id,user_id,marketplace,environment,marketplace_id" }
-    );
+// -----------------------------
+// Write CACHE as workspace-level (user_id = NULL)
+// Use UPDATE->INSERT so NULL semantics don't create duplicates.
+// Requires partial unique index where user_id IS NULL.
+// -----------------------------
+const nowIso = new Date().toISOString();
+
+const patch = {
+  payment_policy_id: paymentPolicyId,
+  fulfillment_policy_id: fulfillmentPolicyId,
+  return_policy_id: returnPolicyId,
+  fetched_at: nowIso,
+  raw_json: raw,
+  updated_at: nowIso,
+};
+
+// 1) Try UPDATE existing workspace-level cache row
+const upd = await params.supabaseAdmin
+  .from("marketplace_policy_cache")
+  .update(patch)
+  .eq("workspace_id", params.workspaceId)
+  .is("user_id", null)
+  .eq("marketplace", "ebay")
+  .eq("environment", params.env)
+  .eq("marketplace_id", params.marketplaceId);
+
+if (upd.error) throw upd.error;
+
+// 2) If nothing updated, INSERT new workspace-level cache row
+// Note: Supabase update doesn't reliably return affected row count across all configs,
+// so we re-check existence with a lightweight select.
+const exists = await params.supabaseAdmin
+  .from("marketplace_policy_cache")
+  .select("id")
+  .eq("workspace_id", params.workspaceId)
+  .is("user_id", null)
+  .eq("marketplace", "ebay")
+  .eq("environment", params.env)
+  .eq("marketplace_id", params.marketplaceId)
+  .maybeSingle();
+
+if (exists.error) throw exists.error;
+
+if (!exists.data) {
+  const ins = await params.supabaseAdmin.from("marketplace_policy_cache").insert({
+    workspace_id: params.workspaceId,
+    user_id: null,
+    marketplace: "ebay",
+    environment: params.env,
+    marketplace_id: params.marketplaceId,
+    ...patch,
+  });
+
+  if (ins.error) throw ins.error;
+};
 
   if (up.error) throw up.error;
 
