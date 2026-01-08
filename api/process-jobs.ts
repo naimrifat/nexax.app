@@ -129,9 +129,31 @@ function pickPolicyIdByHeuristic<T extends { name?: string }>(
   return first?.[idKey] ? String(first[idKey]) : null;
 }
 
+/**
+ * eBay will return varying wording for accounts that can't use Business Policies API.
+ * We match on message strings AND (when present) the eBay error payload (errorId).
+ */
 function isEbayBusinessPolicyIneligible(err: any): boolean {
   const msg = String(err?.message || "").toLowerCase();
-  return msg.includes("not eligible for business policy");
+  const e0 = err?.details?.errors?.[0];
+
+  const longMsg = String(e0?.longMessage || "").toLowerCase();
+  const shortMsg = String(e0?.message || "").toLowerCase();
+  const errorId = Number(e0?.errorId ?? NaN);
+
+  // Common eligibility/opt-in error id seen in Sell Account API responses
+  if (errorId === 20403) return true;
+
+  const hay = [msg, longMsg, shortMsg].join(" | ");
+
+  return (
+    hay.includes("not eligible for business policy") ||
+    hay.includes("not eligible for business policy api") ||
+    hay.includes("not opted in") ||
+    hay.includes("not opted into business policies") ||
+    hay.includes("not opted in to business policies") ||
+    hay.includes("business policies are not enabled")
+  );
 }
 
 async function fetchEbayBusinessPolicies(params: {
@@ -166,33 +188,29 @@ async function getEbayPolicyOverridesOrNull(params: {
   env: "production" | "sandbox";
   marketplaceId: string;
 }) {
+  const envNorm = (params.env || "production").trim().toLowerCase() as "production" | "sandbox";
+  const marketplaceIdNorm = (params.marketplaceId || "").trim().toUpperCase();
+
   const { data, error } = await params.supabaseAdmin
     .from("marketplace_policy_overrides")
     .select("payment_policy_id,fulfillment_policy_id,return_policy_id")
     .eq("workspace_id", params.workspaceId)
     .eq("marketplace", "ebay")
-    .eq("environment", params.env)
-    .eq("marketplace_id", params.marketplaceId)
+    .eq("environment", envNorm)
+    .eq("marketplace_id", marketplaceIdNorm)
     .maybeSingle();
 
   if (error) throw error;
   if (!data) return null;
 
+  // If any are missing, treat as not configured
+  if (!data.payment_policy_id || !data.fulfillment_policy_id || !data.return_policy_id) return null;
+
   return {
-    paymentPolicyId: data.payment_policy_id as string,
-    fulfillmentPolicyId: data.fulfillment_policy_id as string,
-    returnPolicyId: data.return_policy_id as string,
+    paymentPolicyId: String(data.payment_policy_id),
+    fulfillmentPolicyId: String(data.fulfillment_policy_id),
+    returnPolicyId: String(data.return_policy_id),
   };
-}
-
-function isEbayBusinessPolicyIneligible(err: any): boolean {
-  const msg = String(err?.message || "").toLowerCase();
-  return msg.includes("not eligible for business policy");
-}
-
-function isEbayBusinessPolicyIneligible(err: any): boolean {
-  const msg = String(err?.message || "").toLowerCase();
-  return msg.includes("not eligible for business policy");
 }
 
 /**
@@ -211,6 +229,9 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
 }) {
   const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+  const envNorm = (params.env || "production").trim().toLowerCase() as "production" | "sandbox";
+  const marketplaceIdNorm = (params.marketplaceId || "").trim().toUpperCase();
+
   // -----------------------------
   // 1) CACHE: workspace-level first
   // -----------------------------
@@ -220,8 +241,8 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     .eq("workspace_id", params.workspaceId)
     .is("user_id", null)
     .eq("marketplace", "ebay")
-    .eq("environment", params.env)
-    .eq("marketplace_id", params.marketplaceId)
+    .eq("environment", envNorm)
+    .eq("marketplace_id", marketplaceIdNorm)
     .maybeSingle();
 
   if (cachedWorkspace.error) throw cachedWorkspace.error;
@@ -236,9 +257,9 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     cachedWorkspace.data?.return_policy_id
   ) {
     return {
-      paymentPolicyId: cachedWorkspace.data.payment_policy_id as string,
-      fulfillmentPolicyId: cachedWorkspace.data.fulfillment_policy_id as string,
-      returnPolicyId: cachedWorkspace.data.return_policy_id as string,
+      paymentPolicyId: String(cachedWorkspace.data.payment_policy_id),
+      fulfillmentPolicyId: String(cachedWorkspace.data.fulfillment_policy_id),
+      returnPolicyId: String(cachedWorkspace.data.return_policy_id),
       source: "cache" as const,
     };
   }
@@ -252,8 +273,8 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     .eq("workspace_id", params.workspaceId)
     .eq("user_id", params.userId)
     .eq("marketplace", "ebay")
-    .eq("environment", params.env)
-    .eq("marketplace_id", params.marketplaceId)
+    .eq("environment", envNorm)
+    .eq("marketplace_id", marketplaceIdNorm)
     .maybeSingle();
 
   if (cachedUser.error) throw cachedUser.error;
@@ -268,9 +289,9 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     cachedUser.data?.return_policy_id
   ) {
     return {
-      paymentPolicyId: cachedUser.data.payment_policy_id as string,
-      fulfillmentPolicyId: cachedUser.data.fulfillment_policy_id as string,
-      returnPolicyId: cachedUser.data.return_policy_id as string,
+      paymentPolicyId: String(cachedUser.data.payment_policy_id),
+      fulfillmentPolicyId: String(cachedUser.data.fulfillment_policy_id),
+      returnPolicyId: String(cachedUser.data.return_policy_id),
       source: "cache" as const,
     };
   }
@@ -282,31 +303,32 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
   try {
     raw = await fetchEbayBusinessPolicies({
       accessToken: params.accessToken,
-      env: params.env,
-      marketplaceId: params.marketplaceId,
+      env: envNorm,
+      marketplaceId: marketplaceIdNorm,
     });
   } catch (e: any) {
     // -----------------------------
-    // 3) If "not eligible", use WORKSPACE-LEVEL OVERRIDES (THIS IS THE FIX)
+    // 3) If ineligible, use WORKSPACE-LEVEL OVERRIDES
     // -----------------------------
     if (isEbayBusinessPolicyIneligible(e)) {
       const overrides = await getEbayPolicyOverridesOrNull({
         supabaseAdmin: params.supabaseAdmin,
         workspaceId: params.workspaceId,
-        env: params.env,
-        marketplaceId: params.marketplaceId,
+        env: envNorm,
+        marketplaceId: marketplaceIdNorm,
       });
 
       if (!overrides) {
         const err = new Error(
-          "eBay account is not eligible for Business Policy API. Add workspace-level policy overrides (payment/fulfillment/return policy IDs)."
+          "eBay account is not eligible for Business Policy API (or Business Policies are not enabled). Add workspace-level policy overrides (payment/fulfillment/return policy IDs)."
         );
         (err as any).details = {
           stage: "policies",
           reason: "business_policy_ineligible",
           workspaceId: params.workspaceId,
-          env: params.env,
-          marketplaceId: params.marketplaceId,
+          env: envNorm,
+          marketplaceId: marketplaceIdNorm,
+          ebayError: e?.details || null,
         };
         throw err;
       }
@@ -337,6 +359,10 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
       "Could not resolve eBay business policies. Ensure the seller account has payment/fulfillment/return policies configured for this marketplace."
     );
     (err as any).details = {
+      stage: "policies",
+      reason: "policies_missing_or_unresolvable",
+      env: envNorm,
+      marketplaceId: marketplaceIdNorm,
       got: {
         paymentPolicies: paymentPolicies.length,
         fulfillmentPolicies: fulfillmentPolicies.length,
@@ -345,9 +371,6 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
     };
     throw err;
   }
-
-  // NOTE: For your account, this branch likely never runs (not eligible).
-  // If it does, you can write cache here (workspace-level) using your update->insert block.
 
   return {
     paymentPolicyId,
@@ -503,10 +526,7 @@ async function getValidEbayAccessTokenOrThrow(params: {
   return { accessToken: refreshed.access_token, refreshed: true, connectionId: conn.id };
 }
 
-async function resolveJobUserId(params: {
-  supabaseAdmin: ReturnType<typeof createClient>;
-  job: JobRow;
-}) {
+async function resolveJobUserId(params: { supabaseAdmin: ReturnType<typeof createClient>; job: JobRow }) {
   if (params.job.user_id) return params.job.user_id;
 
   const { data, error } = await params.supabaseAdmin
@@ -540,11 +560,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       auth: { persistSession: false },
     });
 
-    const EBAY_ENV = ((process.env.EBAY_ENV || "production").toLowerCase() === "sandbox" ? "sandbox" : "production") as
+    const EBAY_ENV = ((process.env.EBAY_ENV || "production").trim().toLowerCase() === "sandbox" ? "sandbox" : "production") as
       | "production"
       | "sandbox";
 
-    const EBAY_MARKETPLACE_ID = process.env.EBAY_MARKETPLACE_ID || "EBAY_US";
+    const EBAY_MARKETPLACE_ID = (process.env.EBAY_MARKETPLACE_ID || "EBAY_US").trim().toUpperCase();
 
     const limitRaw = (req.query.limit || (req.body as any)?.limit || "10").toString();
     const limit = Math.max(1, Math.min(50, Number(limitRaw) || 10));
@@ -579,6 +599,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const attempts = Number(job.attempts ?? 0);
       const maxAttempts = Number(job.max_attempts ?? 0) || 3;
+
       if (attempts >= maxAttempts) {
         const msg = `max_attempts exceeded (${attempts}/${maxAttempts})`;
         await supabase
@@ -638,6 +659,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           accessToken,
         });
 
+        // Stub publish for now
         const stubItemId = `STUB-${job.listing_id}`;
         const stubUrl = `https://www.ebay.com/itm/${stubItemId}`;
 
