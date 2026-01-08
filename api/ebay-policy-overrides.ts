@@ -82,7 +82,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 const u = await serviceClient
   .from("users")
   .select("workspace_id")
-  .eq("auth_user_id", user.id)   // <-- IMPORTANT: auth_user_id, not id
+  .eq("auth_provider_user_id", user.id) // <-- correct mapping column
   .maybeSingle();
 
 if (u.error) {
