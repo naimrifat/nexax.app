@@ -547,163 +547,189 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
       ],
     });
 
-    const visionJSON = safeJSON(vision.choices?.[0]?.message?.content || '{}', {});
-    const detected = visionJSON.detected || {};
-    const title = visionJSON.title || '';
-    const description = visionJSON.description || '';
+    type VisionJSON = {
+  detected?: {
+    department?: string;
+    sizeTypeHint?: string;
+    size?: string;
+    [k: string]: any;
+  };
+  title?: string;
+  description?: string;
+  keywords?: any; // allow string[] or other
+  [k: string]: any;
+};
 
-    // coarse, model-independent inferences
-    const categoryGuessingText = `${title}\n${description}`;
-    const department = detected.department || inferDepartmentFromPath(categoryGuessingText);
-    const sizeType =
-      detected.sizeTypeHint ||
-      inferSizeType({
-        size: detected.size,
-        title,
-        categoryPath: categoryGuessingText,
-      });
+type ReconcileJSON = {
+  final_specifics?: Array<{ name: string; value: any }>;
+  [k: string]: any;
+};
 
-    /* ----------------------------------------
-       eBay: category suggestion + aspects
-    -----------------------------------------*/
-    const origin = req.headers.origin || `https://${req.headers.host}`;
-    const ebayApiUrl = `${origin}/api/ebay-categories`;
+const visionJSON = safeJSON(
+  vision.choices?.[0]?.message?.content || "{}",
+  {
+    detected: {},
+    title: "",
+    description: "",
+    keywords: [],
+  } satisfies VisionJSON
+) as VisionJSON;
 
-    // Suggest category
-    let category = {
-      id: '11450',
-      name: 'Clothing, Shoes & Accessories',
-      path: 'Clothing, Shoes & Accessories',
+const detected = (visionJSON.detected || {}) as NonNullable<VisionJSON["detected"]>;
+const title = visionJSON.title || "";
+const description = visionJSON.description || "";
+
+// coarse, model-independent inferences
+const categoryGuessingText = `${title}\n${description}`;
+const department = detected.department || inferDepartmentFromPath(categoryGuessingText);
+const sizeType =
+  detected.sizeTypeHint ||
+  inferSizeType({
+    size: detected.size,
+    title,
+    categoryPath: categoryGuessingText,
+  });
+
+/* ----------------------------------------
+   eBay: category suggestion + aspects
+-----------------------------------------*/
+const origin = req.headers.origin || `https://${req.headers.host}`;
+const ebayApiUrl = `${origin}/api/ebay-categories`;
+
+// Suggest category
+let category = {
+  id: "11450",
+  name: "Clothing, Shoes & Accessories",
+  path: "Clothing, Shoes & Accessories",
+};
+let categorySuggestions: any[] = [];
+
+try {
+  const catResp = await fetch(ebayApiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "getSuggestedCategories",
+      title,
+      keywords: Array.isArray(visionJSON.keywords) ? visionJSON.keywords : [],
+    }),
+  });
+
+  if (catResp.ok) {
+    const catData = await catResp.json();
+    category = {
+      id: catData.categoryId || category.id,
+      name: catData.categoryName || category.name,
+      path: catData.categoryPath || catData.categoryName || category.path,
     };
-    let categorySuggestions: any[] = [];
+    categorySuggestions = (catData.suggestions || []).map((s: any) => ({
+      id: s.id,
+      name: s.name,
+      path: s.path || s.name,
+    }));
+  }
+} catch {
+  // keep defaults
+}
 
-    try {
-      const catResp = await fetch(ebayApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'getSuggestedCategories',
-          title,
-          keywords: visionJSON.keywords || [],
-        }),
-      });
-
-      if (catResp.ok) {
-        const catData = await catResp.json();
-        category = {
-          id: catData.categoryId || category.id,
-          name: catData.categoryName || category.name,
-          path: catData.categoryPath || catData.categoryName || category.path,
-        };
-        categorySuggestions = (catData.suggestions || []).map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          path: s.path || s.name,
-        }));
-      }
-    } catch {
-      // keep defaults
-    }
-
-    // Pull aspects for the chosen category
-    let aspects: AspectSchema[] = [];
-    try {
-      const sp = await fetch(ebayApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'getCategorySpecifics', categoryId: category.id }),
-      });
-      if (sp.ok) {
-        const data = await sp.json();
-        aspects = (data?.aspects ?? []).map((a: any) => ({
-          name: a.name,
-          required: !!a.required,
-          type: a.type,
-          multi: !!a.multi,
-          selectionOnly: a.type === 'SelectionOnly',
-          freeTextAllowed: a.type !== 'SelectionOnly',
-          values: Array.isArray(a.values) ? a.values : [],
-        }));
-      }
-    } catch {
-      aspects = [];
-    }
-
-    // Build fast lookup maps for schema enforcement
-    const { byName, optionSets, canonicalValue } = buildSchemaMaps(aspects);
-
-    /* ----------------------------------------
-       Stage B: Reconcile to eBay aspects (AI guided)
-    -----------------------------------------*/
-    const aspectsForModel = aspects.map((a) => ({
+// Pull aspects for the chosen category
+let aspects: AspectSchema[] = [];
+try {
+  const sp = await fetch(ebayApiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "getCategorySpecifics", categoryId: category.id }),
+  });
+  if (sp.ok) {
+    const data = await sp.json();
+    aspects = (data?.aspects ?? []).map((a: any) => ({
       name: a.name,
       required: !!a.required,
-      selectionOnly: a.selectionOnly,
+      type: a.type,
       multi: !!a.multi,
-      freeTextAllowed: a.freeTextAllowed,
-      options: (a.values || []).slice(0, 150), // cap for tokens
+      selectionOnly: a.type === "SelectionOnly",
+      freeTextAllowed: a.type !== "SelectionOnly",
+      values: Array.isArray(a.values) ? a.values : [],
     }));
+  }
+} catch {
+  aspects = [];
+}
 
-    const userPrompt = buildReconcileUserPrompt({
-      categoryPath: category.path,
-      title,
-      description,
-      detected,
-      aspectsForModel,
-    });
+// Build fast lookup maps for schema enforcement
+const { byName, optionSets, canonicalValue } = buildSchemaMaps(aspects);
 
-    const reconcile = await callOpenAIChat({
-      model: 'gpt-5.1',
-      response_format: { type: 'json_object' },
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: RECONCILE_SYSTEM_PROMPT },
+/* ----------------------------------------
+   Stage B: Reconcile to eBay aspects (AI guided)
+-----------------------------------------*/
+const aspectsForModel = aspects.map((a) => ({
+  name: a.name,
+  required: !!a.required,
+  selectionOnly: a.selectionOnly,
+  multi: !!a.multi,
+  freeTextAllowed: a.freeTextAllowed,
+  options: (a.values || []).slice(0, 150), // cap for tokens
+}));
+
+const userPrompt = buildReconcileUserPrompt({
+  categoryPath: category.path,
+  title,
+  description,
+  detected,
+  aspectsForModel,
+});
+
+const reconcile = await callOpenAIChat({
+  model: "gpt-5.1",
+  response_format: { type: "json_object" },
+  temperature: 0.2,
+  messages: [
+    { role: "system", content: RECONCILE_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
         {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: userPrompt,
-            },
-          ],
+          type: "text",
+          text: userPrompt,
         },
       ],
-    });
+    },
+  ],
+});
 
-    const recJSON = safeJSON(reconcile.choices?.[0]?.message?.content || '{}', {});
-    let aiSpecifics: Array<{ name: string; value: any }> = Array.isArray(recJSON.final_specifics)
-      ? recJSON.final_specifics
-      : [];
+const recJSON = safeJSON(
+  reconcile.choices?.[0]?.message?.content || "{}",
+  { final_specifics: [] } satisfies ReconcileJSON
+) as ReconcileJSON;
 
-    // --- Post-validate AI specifics against schema (strict) ---
-    const mappingLog: string[] = [];
-    const sanitizedSpecifics: Array<{
-      name: string;
-      value: string | string[];
-      source: 'ai' | 'fallback';
-    }> = [];
+let aiSpecifics: Array<{ name: string; value: any }> = Array.isArray(recJSON.final_specifics)
+  ? recJSON.final_specifics
+  : [];
 
-    for (const s of aiSpecifics) {
-      const key = norm(s.name);
-      const a = byName.get(key);
-      if (!a) continue;
+// --- Post-validate AI specifics against schema (strict) ---
+const mappingLog: string[] = [];
+const sanitizedSpecifics: Array<{
+  name: string;
+  value: string | string[];
+  source: "ai" | "fallback";
+}> = [];
 
-      const normalized = normalizeValueForAspect(
-        a,
-        s.value,
-        optionSets.get(key),
-        canonicalValue.get(key)
-      );
+for (const s of aiSpecifics) {
+  const key = norm(s.name);
+  const a = byName.get(key);
+  if (!a) continue;
 
-      if (!normalized.length) {
-        mappingLog.push(`AI → rejected or empty for "${a.name}"`);
-        sanitizedSpecifics.push({ name: a.name, value: a.multi ? [] : '', source: 'ai' });
-      } else {
-        const v = a.multi ? normalized : normalized[0];
-        mappingLog.push(`AI → accepted for "${a.name}": ${JSON.stringify(v)}`);
-        sanitizedSpecifics.push({ name: a.name, value: v, source: 'ai' });
-      }
-    }
+  const normalized = normalizeValueForAspect(a, s.value, optionSets.get(key), canonicalValue.get(key));
+
+  if (!normalized.length) {
+    mappingLog.push(`AI → rejected or empty for "${a.name}"`);
+    sanitizedSpecifics.push({ name: a.name, value: a.multi ? [] : "", source: "ai" });
+  } else {
+    const v = a.multi ? normalized : normalized[0];
+    mappingLog.push(`AI → accepted for "${a.name}": ${JSON.stringify(v)}`);
+    sanitizedSpecifics.push({ name: a.name, value: v, source: "ai" });
+  }
+}
 
     let finalSpecifics: Array<{ name: string; value: any }> = sanitizedSpecifics.map(
       ({ name, value }) => ({ name, value })
