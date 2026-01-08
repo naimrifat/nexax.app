@@ -6,6 +6,8 @@ export const config = {
   maxDuration: 60,
 };
 
+type SupabaseAdmin = any;
+
 function makeRequestId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -117,7 +119,7 @@ function pickPolicyIdByHeuristic<T extends { name?: string }>(
 
   const lowered = policies.map((p) => ({
     p,
-    n: String(p?.name || "").toLowerCase(),
+    n: String((p as any)?.name || "").toLowerCase(),
   }));
 
   for (const needle of preferredNameContains) {
@@ -183,7 +185,7 @@ async function fetchEbayBusinessPolicies(params: {
 }
 
 async function getEbayPolicyOverridesOrNull(params: {
-  supabaseAdmin: ReturnType<typeof createClient>;
+  supabaseAdmin: SupabaseAdmin;
   workspaceId: string;
   env: "production" | "sandbox";
   marketplaceId: string;
@@ -203,13 +205,15 @@ async function getEbayPolicyOverridesOrNull(params: {
   if (error) throw error;
   if (!data) return null;
 
+  const row = data as any;
+
   // If any are missing, treat as not configured
-  if (!data.payment_policy_id || !data.fulfillment_policy_id || !data.return_policy_id) return null;
+  if (!row.payment_policy_id || !row.fulfillment_policy_id || !row.return_policy_id) return null;
 
   return {
-    paymentPolicyId: String(data.payment_policy_id),
-    fulfillmentPolicyId: String(data.fulfillment_policy_id),
-    returnPolicyId: String(data.return_policy_id),
+    paymentPolicyId: String(row.payment_policy_id),
+    fulfillmentPolicyId: String(row.fulfillment_policy_id),
+    returnPolicyId: String(row.return_policy_id),
   };
 }
 
@@ -220,7 +224,7 @@ async function getEbayPolicyOverridesOrNull(params: {
  * 3) overrides table (workspace-level) if Account API says "not eligible"
  */
 async function getOrFetchEbayPolicyIdsOrThrow(params: {
-  supabaseAdmin: ReturnType<typeof createClient>;
+  supabaseAdmin: SupabaseAdmin;
   workspaceId: string;
   userId: string; // kept only for legacy cache fallback
   env: "production" | "sandbox";
@@ -247,19 +251,15 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
 
   if (cachedWorkspace.error) throw cachedWorkspace.error;
 
-  const wsFetchedAtMs = cachedWorkspace.data?.fetched_at ? Date.parse(cachedWorkspace.data.fetched_at) : 0;
+  const wsRow = (cachedWorkspace.data as any) || null;
+  const wsFetchedAtMs = wsRow?.fetched_at ? Date.parse(wsRow.fetched_at) : 0;
   const wsFresh = wsFetchedAtMs && wsFetchedAtMs > Date.now() - TTL_MS;
 
-  if (
-    wsFresh &&
-    cachedWorkspace.data?.payment_policy_id &&
-    cachedWorkspace.data?.fulfillment_policy_id &&
-    cachedWorkspace.data?.return_policy_id
-  ) {
+  if (wsFresh && wsRow?.payment_policy_id && wsRow?.fulfillment_policy_id && wsRow?.return_policy_id) {
     return {
-      paymentPolicyId: String(cachedWorkspace.data.payment_policy_id),
-      fulfillmentPolicyId: String(cachedWorkspace.data.fulfillment_policy_id),
-      returnPolicyId: String(cachedWorkspace.data.return_policy_id),
+      paymentPolicyId: String(wsRow.payment_policy_id),
+      fulfillmentPolicyId: String(wsRow.fulfillment_policy_id),
+      returnPolicyId: String(wsRow.return_policy_id),
       source: "cache" as const,
     };
   }
@@ -279,19 +279,15 @@ async function getOrFetchEbayPolicyIdsOrThrow(params: {
 
   if (cachedUser.error) throw cachedUser.error;
 
-  const uFetchedAtMs = cachedUser.data?.fetched_at ? Date.parse(cachedUser.data.fetched_at) : 0;
+  const uRow = (cachedUser.data as any) || null;
+  const uFetchedAtMs = uRow?.fetched_at ? Date.parse(uRow.fetched_at) : 0;
   const uFresh = uFetchedAtMs && uFetchedAtMs > Date.now() - TTL_MS;
 
-  if (
-    uFresh &&
-    cachedUser.data?.payment_policy_id &&
-    cachedUser.data?.fulfillment_policy_id &&
-    cachedUser.data?.return_policy_id
-  ) {
+  if (uFresh && uRow?.payment_policy_id && uRow?.fulfillment_policy_id && uRow?.return_policy_id) {
     return {
-      paymentPolicyId: String(cachedUser.data.payment_policy_id),
-      fulfillmentPolicyId: String(cachedUser.data.fulfillment_policy_id),
-      returnPolicyId: String(cachedUser.data.return_policy_id),
+      paymentPolicyId: String(uRow.payment_policy_id),
+      fulfillmentPolicyId: String(uRow.fulfillment_policy_id),
+      returnPolicyId: String(uRow.return_policy_id),
       source: "cache" as const,
     };
   }
@@ -431,7 +427,7 @@ async function refreshEbayAccessTokenOrThrow(params: {
 }
 
 async function findMarketplaceConnection(params: {
-  supabaseAdmin: ReturnType<typeof createClient>;
+  supabaseAdmin: SupabaseAdmin;
   workspaceId: string;
   userId: string;
   env: string;
@@ -450,13 +446,15 @@ async function findMarketplaceConnection(params: {
   if (q.error) throw q.error;
   if (q.data) return q.data as MarketplaceConnectionRow;
 
+  // Legacy lookups (users table can map auth ids)
   const m1 = await supabaseAdmin.from("users").select("id").eq("auth_user_id", userId).maybeSingle();
-  if (!m1.error && m1.data?.id) {
+  const m1row = (m1 as any).data;
+  if (!m1.error && m1row?.id) {
     q = await supabaseAdmin
       .from("marketplace_connections")
       .select("id,workspace_id,user_id,marketplace,environment,access_token,refresh_token,expires_at,updated_at")
       .eq("workspace_id", workspaceId)
-      .eq("user_id", m1.data.id)
+      .eq("user_id", m1row.id)
       .eq("marketplace", "ebay")
       .eq("environment", env)
       .maybeSingle();
@@ -465,12 +463,13 @@ async function findMarketplaceConnection(params: {
   }
 
   const m2 = await supabaseAdmin.from("users").select("auth_user_id").eq("id", userId).maybeSingle();
-  if (!m2.error && m2.data?.auth_user_id) {
+  const m2row = (m2 as any).data;
+  if (!m2.error && m2row?.auth_user_id) {
     q = await supabaseAdmin
       .from("marketplace_connections")
       .select("id,workspace_id,user_id,marketplace,environment,access_token,refresh_token,expires_at,updated_at")
       .eq("workspace_id", workspaceId)
-      .eq("user_id", m2.data.auth_user_id)
+      .eq("user_id", m2row.auth_user_id)
       .eq("marketplace", "ebay")
       .eq("environment", env)
       .maybeSingle();
@@ -482,7 +481,7 @@ async function findMarketplaceConnection(params: {
 }
 
 async function getValidEbayAccessTokenOrThrow(params: {
-  supabaseAdmin: ReturnType<typeof createClient>;
+  supabaseAdmin: SupabaseAdmin;
   workspaceId: string;
   userId: string;
   env: "production" | "sandbox";
@@ -526,7 +525,7 @@ async function getValidEbayAccessTokenOrThrow(params: {
   return { accessToken: refreshed.access_token, refreshed: true, connectionId: conn.id };
 }
 
-async function resolveJobUserId(params: { supabaseAdmin: ReturnType<typeof createClient>; job: JobRow }) {
+async function resolveJobUserId(params: { supabaseAdmin: SupabaseAdmin; job: JobRow }) {
   if (params.job.user_id) return params.job.user_id;
 
   const { data, error } = await params.supabaseAdmin
@@ -537,7 +536,8 @@ async function resolveJobUserId(params: { supabaseAdmin: ReturnType<typeof creat
 
   if (error) throw error;
 
-  const createdBy = (data as any)?.created_by;
+  const row = (data as any) || null;
+  const createdBy = row?.created_by;
   if (createdBy) return String(createdBy);
 
   throw new Error("Job is missing user_id and listing.created_by could not be resolved.");
@@ -556,13 +556,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const SUPABASE_URL = getEnv("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = getEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    const supabase: SupabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
 
-    const EBAY_ENV = ((process.env.EBAY_ENV || "production").trim().toLowerCase() === "sandbox" ? "sandbox" : "production") as
-      | "production"
-      | "sandbox";
+    const EBAY_ENV = ((process.env.EBAY_ENV || "production").trim().toLowerCase() === "sandbox"
+      ? "sandbox"
+      : "production") as "production" | "sandbox";
 
     const EBAY_MARKETPLACE_ID = (process.env.EBAY_MARKETPLACE_ID || "EBAY_US").trim().toUpperCase();
 
@@ -597,8 +597,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const job of jobs) {
       const startedAt = new Date().toISOString();
 
-      const attempts = Number(job.attempts ?? 0);
-      const maxAttempts = Number(job.max_attempts ?? 0) || 3;
+      const attempts = Number((job as any).attempts ?? 0);
+      const maxAttempts = Number((job as any).max_attempts ?? 0) || 3;
 
       if (attempts >= maxAttempts) {
         const msg = `max_attempts exceeded (${attempts}/${maxAttempts})`;
