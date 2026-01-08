@@ -79,20 +79,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "Missing workspace_id", requestId });
     }
 
-    // TODO: Adjust table name if yours differs
-    const mem = await serviceClient
-      .from("workspace_members")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", user.id)
-      .maybeSingle();
+const u = await serviceClient
+  .from("users")
+  .select("workspace_id")
+  .eq("id", user.id)
+  .maybeSingle();
 
-    if (mem.error) {
-      return res.status(500).json({ error: "Failed to verify workspace membership", requestId, details: mem.error.message });
-    }
-    if (!mem.data) {
-      return res.status(403).json({ error: "Forbidden", requestId });
-    }
+if (u.error) {
+  return res.status(500).json({
+    error: "Failed to resolve user workspace",
+    requestId,
+    details: u.error.message,
+  });
+}
+
+if (!u.data || u.data.workspace_id !== workspaceId) {
+  return res.status(403).json({ error: "Forbidden", requestId });
+}
 
     // 3) Read current overrides
     const env = normalizeEnv((req.query.env as any) || body.env || "production");
