@@ -6,6 +6,8 @@ export const config = {
   maxDuration: 60,
 };
 
+type SupabaseAdmin = any;
+
 function makeRequestId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -58,15 +60,33 @@ async function ebayGetJsonOrThrow(url: string, accessToken: string) {
   return json;
 }
 
+/**
+ * Keep this broad and defensive. eBay wording can vary.
+ * (We could reuse the stronger matcher from process-jobs later.)
+ */
 function isEbayBusinessPolicyIneligible(err: any): boolean {
   const msg = String(err?.message || "").toLowerCase();
-  return msg.includes("not eligible for business policy");
+  const e0 = err?.details?.errors?.[0];
+  const longMsg = String(e0?.longMessage || "").toLowerCase();
+  const shortMsg = String(e0?.message || "").toLowerCase();
+  const errorId = Number(e0?.errorId ?? NaN);
+
+  if (errorId === 20403) return true;
+
+  const hay = [msg, longMsg, shortMsg].join(" | ");
+  return (
+    hay.includes("not eligible for business policy") ||
+    hay.includes("not eligible for business policy api") ||
+    hay.includes("not opted in") ||
+    hay.includes("not opted into business policies") ||
+    hay.includes("not opted in to business policies") ||
+    hay.includes("business policies are not enabled")
+  );
 }
 
 /**
- * --- Token refresh helpers (copied from your process-jobs.ts pattern) ---
+ * --- Token refresh helpers ---
  */
-
 function parseExpiresAtMs(expiresAt: string | null): number | null {
   if (!expiresAt) return null;
   const t = Date.parse(expiresAt);
@@ -140,15 +160,14 @@ type MarketplaceConnectionRow = {
 };
 
 async function getValidEbayAccessTokenOrThrow(params: {
-  supabaseAdmin: ReturnType<typeof createClient>;
+  supabaseAdmin: SupabaseAdmin;
   workspaceId: string;
   authUserId: string; // Supabase auth user id
   env: "production" | "sandbox";
 }) {
   const scopes = getEnv("EBAY_OAUTH_SCOPES");
 
-  // Your schema: marketplace_connections.user_id is the auth user id (based on your screenshots)
-  const { data: conn, error } = await params.supabaseAdmin
+  const { data, error } = await params.supabaseAdmin
     .from("marketplace_connections")
     .select("id,workspace_id,user_id,marketplace,environment,access_token,refresh_token,expires_at")
     .eq("workspace_id", params.workspaceId)
@@ -158,8 +177,9 @@ async function getValidEbayAccessTokenOrThrow(params: {
     .maybeSingle();
 
   if (error) throw error;
-  if (!conn) throw new Error("No eBay account connected for this user/workspace.");
-  const c = conn as MarketplaceConnectionRow;
+  if (!data) throw new Error("No eBay account connected for this user/workspace.");
+
+  const c = data as unknown as MarketplaceConnectionRow;
 
   if (!c.refresh_token) throw new Error("eBay connection is missing refresh_token. Reconnect eBay.");
 
@@ -220,20 +240,25 @@ async function fetchEbayBusinessPolicyLists(params: {
   const fulfillmentPolicies = Array.isArray(fulfillment?.fulfillmentPolicies) ? fulfillment.fulfillmentPolicies : [];
   const returnPolicies = Array.isArray(returns?.returnPolicies) ? returns.returnPolicies : [];
 
-  // Normalize to {id,name}
   return {
-    paymentPolicies: paymentPolicies.map((p: any) => ({
-      id: String(p?.paymentPolicyId || ""),
-      name: String(p?.name || ""),
-    })).filter((x: any) => x.id),
-    fulfillmentPolicies: fulfillmentPolicies.map((p: any) => ({
-      id: String(p?.fulfillmentPolicyId || ""),
-      name: String(p?.name || ""),
-    })).filter((x: any) => x.id),
-    returnPolicies: returnPolicies.map((p: any) => ({
-      id: String(p?.returnPolicyId || ""),
-      name: String(p?.name || ""),
-    })).filter((x: any) => x.id),
+    paymentPolicies: paymentPolicies
+      .map((p: any) => ({
+        id: String(p?.paymentPolicyId || ""),
+        name: String(p?.name || ""),
+      }))
+      .filter((x: any) => x.id),
+    fulfillmentPolicies: fulfillmentPolicies
+      .map((p: any) => ({
+        id: String(p?.fulfillmentPolicyId || ""),
+        name: String(p?.name || ""),
+      }))
+      .filter((x: any) => x.id),
+    returnPolicies: returnPolicies
+      .map((p: any) => ({
+        id: String(p?.returnPolicyId || ""),
+        name: String(p?.name || ""),
+      }))
+      .filter((x: any) => x.id),
   };
 }
 
@@ -251,12 +276,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const authHeader = req.headers.authorization || "";
 
-    const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    const userClient: any = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: authHeader ? { Authorization: authHeader } : {} },
       auth: { persistSession: false },
     });
 
-    const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    const admin: SupabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
 
@@ -287,7 +312,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (u.error) {
       return res.status(500).json({ error: "Failed to resolve user workspace", requestId, details: u.error.message });
     }
-    if (!u.data || u.data.workspace_id !== workspaceId) {
+
+    const uRow = (u.data as any) || null;
+    if (!uRow || uRow.workspace_id !== workspaceId) {
       return res.status(403).json({ error: "Forbidden", requestId });
     }
 
@@ -318,7 +345,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ...lists,
       });
     } catch (e: any) {
-      // If ineligible, don't hard fail — return a usable response for UI
       if (isEbayBusinessPolicyIneligible(e)) {
         return res.status(200).json({
           success: true,
