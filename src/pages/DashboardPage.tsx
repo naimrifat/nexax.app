@@ -217,13 +217,21 @@ const DashboardPage: React.FC = () => {
 
   const filteredListings = useMemo(() => {
     return listingItems
-      .filter((item) => {
-        if (activeFilter === "all") return true;
-        return item.status === activeFilter;
-      })
+.filter((item) => {
+  if (activeFilter === "all") return true;
+
+  const status = (item.status || "").toLowerCase();
+
+  if (activeFilter === "active") return status === "published";
+  if (activeFilter === "draft") return status === "draft";
+  if (activeFilter === "sold") return status === "sold";
+
+  // fallback: if you ever pass a real status directly
+  return status === String(activeFilter).toLowerCase();
+})
       .filter((item) => {
         if (!searchQuery) return true;
-        return item.title.toLowerCase().includes(searchQuery.toLowerCase());
+        return (item.title || "").toLowerCase().includes(searchQuery.toLowerCase());
       })
       .sort((a, b) => {
         const dateA = new Date(a.date).getTime();
