@@ -1254,63 +1254,221 @@ export default function ResultsPage() {
           />
         </section>
 
-        {/* Shipping & Policies */}
-        <section style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-            <h3 style={{ margin: 0 }}>Shipping & Policies</h3>
+{/* Shipping & Policies */}
+<section style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+    <h3 style={{ margin: 0 }}>Shipping & Policies</h3>
 
-            <button
-              type="button"
-              onClick={() => workspaceId && fetchPolicyLists(workspaceId)}
-              disabled={policyLoading || !workspaceId}
-              style={{
-                padding: '8px 12px',
-                background: policyLoading ? '#999' : '#f3f4f6',
-                border: '1px solid #ddd',
-                borderRadius: 6,
-                cursor: policyLoading ? 'default' : 'pointer',
-                fontSize: 12,
-              }}
-              title="Reload policy lists from eBay (if eligible)"
-            >
-              {policyLoading ? 'Loading…' : 'Reload policies'}
-            </button>
-          </div>
+    <button
+      type="button"
+      onClick={() => workspaceId && fetchPolicyLists(workspaceId)}
+      disabled={policyLoading || !workspaceId}
+      style={{
+        padding: '8px 12px',
+        background: policyLoading ? '#999' : '#f3f4f6',
+        border: '1px solid #ddd',
+        borderRadius: 6,
+        cursor: policyLoading ? 'default' : 'pointer',
+        fontSize: 12,
+      }}
+      title="Reload policy lists from eBay (if eligible)"
+    >
+      {policyLoading ? 'Loading…' : 'Reload policies'}
+    </button>
+  </div>
 
-          {policyError ? <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>{policyError}</div> : null}
+  {policyError ? <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>{policyError}</div> : null}
 
-          {!policyListsAvailable ? (
-            <div style={{ marginTop: 10, fontSize: 13, color: '#666' }}>
-              Policy lists are not available for this account (or could not be fetched). You can still paste policy IDs below.
-            </div>
-          ) : null}
+  {!paymentPolicies.length && !returnPolicies.length && !fulfillmentPolicies.length ? (
+    <div style={{ marginTop: 10, fontSize: 13, color: '#666' }}>
+      Policy lists are not available for this account (or could not be fetched). You can still paste policy IDs below.
+    </div>
+  ) : null}
 
-          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Payment policy</label>
-              {paymentPolicies.length > 0 ? (
-                <select
-                  value={ebayPaymentPolicyId}
-                  onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
-                  disabled={policyLoading}
-                  style={{ width: '100%', padding: 10 }}
-                >
-                  <option value="">Select…</option>
-                  {paymentPolicies.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.id})
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={ebayPaymentPolicyId}
-                  onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
-                  placeholder="Enter payment policy ID"
-                  style={{ width: '100%', padding: 10 }}
-                />
-              )}
-            </div>
+  {/* Row 1: Shipping policy + package + irregular */}
+  <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 12 }}>
+    <div>
+      <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Shipping policy</label>
+      {fulfillmentPolicies.length > 0 ? (
+        <select
+          value={ebayFulfillmentPolicyId}
+          onChange={(e) => setEbayFulfillmentPolicyId(e.target.value)}
+          disabled={policyLoading}
+          style={{ width: '100%', padding: 10 }}
+        >
+          <option value="">Select…</option>
+          {fulfillmentPolicies.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} ({p.id})
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          value={ebayFulfillmentPolicyId}
+          onChange={(e) => setEbayFulfillmentPolicyId(e.target.value)}
+          placeholder="Enter shipping policy ID"
+          style={{ width: '100%', padding: 10 }}
+        />
+      )}
+    </div>
+
+    <div>
+      <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Package weight (optional)</label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            value={packageWeightLb}
+            onChange={(e) => setPackageWeightLb(e.target.value)}
+            inputMode="numeric"
+            placeholder="0"
+            style={{ width: '100%', padding: 10 }}
+          />
+          <span style={{ fontSize: 12, color: '#666' }}>lb</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            value={packageWeightOz}
+            onChange={(e) => setPackageWeightOz(e.target.value)}
+            inputMode="numeric"
+            placeholder="0–15"
+            style={{ width: '100%', padding: 10 }}
+          />
+          <span style={{ fontSize: 12, color: '#666' }}>oz</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Package dimensions (optional)</label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            value={packageLengthIn}
+            onChange={(e) => setPackageLengthIn(e.target.value)}
+            inputMode="decimal"
+            placeholder="0"
+            style={{ width: '100%', padding: 10 }}
+          />
+          <span style={{ fontSize: 12, color: '#666' }}>in</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            value={packageWidthIn}
+            onChange={(e) => setPackageWidthIn(e.target.value)}
+            inputMode="decimal"
+            placeholder="0"
+            style={{ width: '100%', padding: 10 }}
+          />
+          <span style={{ fontSize: 12, color: '#666' }}>in</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            value={packageHeightIn}
+            onChange={(e) => setPackageHeightIn(e.target.value)}
+            inputMode="decimal"
+            placeholder="0"
+            style={{ width: '100%', padding: 10 }}
+          />
+          <span style={{ fontSize: 12, color: '#666' }}>in</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Irregular package</label>
+      <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden' }}>
+        <button
+          type="button"
+          onClick={() => setIrregularPackage(true)}
+          style={{
+            flex: 1,
+            padding: '10px 12px',
+            background: irregularPackage ? '#10b981' : '#fff',
+            color: irregularPackage ? '#fff' : '#111',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          Yes
+        </button>
+        <button
+          type="button"
+          onClick={() => setIrregularPackage(false)}
+          style={{
+            flex: 1,
+            padding: '10px 12px',
+            background: !irregularPackage ? '#10b981' : '#fff',
+            color: !irregularPackage ? '#fff' : '#111',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          No
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {/* Row 2: Return + Payment */}
+  <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+    <div>
+      <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Return policy</label>
+      {returnPolicies.length > 0 ? (
+        <select
+          value={ebayReturnPolicyId}
+          onChange={(e) => setEbayReturnPolicyId(e.target.value)}
+          disabled={policyLoading}
+          style={{ width: '100%', padding: 10 }}
+        >
+          <option value="">Select…</option>
+          {returnPolicies.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} ({p.id})
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          value={ebayReturnPolicyId}
+          onChange={(e) => setEbayReturnPolicyId(e.target.value)}
+          placeholder="Enter return policy ID"
+          style={{ width: '100%', padding: 10 }}
+        />
+      )}
+    </div>
+
+    <div>
+      <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Payment policy</label>
+      {paymentPolicies.length > 0 ? (
+        <select
+          value={ebayPaymentPolicyId}
+          onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
+          disabled={policyLoading}
+          style={{ width: '100%', padding: 10 }}
+        >
+          <option value="">Select…</option>
+          {paymentPolicies.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} ({p.id})
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          value={ebayPaymentPolicyId}
+          onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
+          placeholder="Enter payment policy ID"
+          style={{ width: '100%', padding: 10 }}
+        />
+      )}
+    </div>
+  </div>
+</section>
 
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Return policy</label>
