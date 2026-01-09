@@ -57,6 +57,8 @@ type AiData = {
   detected?: AiDetected;
 };
 
+type PolicyOption = { id: string; name: string };
+
 /* ---------- Timeout helper ---------- */
 async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): Promise<T> {
   let timeoutId: any;
@@ -111,6 +113,22 @@ function sanitizeHostedImages(arr: any): string[] {
     .map((u) => u.trim())
     .filter(Boolean)
     .filter(isHostedImageUrl);
+}
+
+function toIntOrNull(v: string): number | null {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+function toNumOrNull(v: string): number | null {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return n;
 }
 
 /* ---------- Size helpers ---------- */
@@ -376,6 +394,25 @@ export default function ResultsPage() {
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
 
+  // Shipping & Policies (per listing)
+  const [policyLoading, setPolicyLoading] = useState(false);
+  const [policyError, setPolicyError] = useState<string | null>(null);
+
+  const [paymentPolicies, setPaymentPolicies] = useState<PolicyOption[]>([]);
+  const [returnPolicies, setReturnPolicies] = useState<PolicyOption[]>([]);
+  const [fulfillmentPolicies, setFulfillmentPolicies] = useState<PolicyOption[]>([]);
+
+  const [ebayPaymentPolicyId, setEbayPaymentPolicyId] = useState<string>('');
+  const [ebayReturnPolicyId, setEbayReturnPolicyId] = useState<string>('');
+  const [ebayFulfillmentPolicyId, setEbayFulfillmentPolicyId] = useState<string>('');
+
+  const [packageWeightLb, setPackageWeightLb] = useState<string>('');
+  const [packageWeightOz, setPackageWeightOz] = useState<string>('');
+  const [packageLengthIn, setPackageLengthIn] = useState<string>('');
+  const [packageWidthIn, setPackageWidthIn] = useState<string>('');
+  const [packageHeightIn, setPackageHeightIn] = useState<string>('');
+  const [irregularPackage, setIrregularPackage] = useState<boolean>(false);
+
   // ----------------------------
   // Refs
   // ----------------------------
@@ -402,6 +439,72 @@ export default function ResultsPage() {
     if (!workspaceId || !internalUserId) throw new Error('Tenancy not ready');
     return { authUserId: user.id, workspaceId, internalUserId };
   }, [authLoading, user?.id, workspaceId, internalUserId, refreshTenancy]);
+
+  // ----------------------------
+  // Policy lists loader
+  // ----------------------------
+  const fetchPolicyLists = useCallback(async (wsId: string) => {
+    setPolicyLoading(true);
+    setPolicyError(null);
+
+    try {
+      const {
+        data: { session },
+        error: sessionErr,
+      } = await supabase.auth.getSession();
+
+      if (sessionErr || !session?.access_token) {
+        throw new Error('Not logged in. Please sign in again.');
+      }
+
+      // Keep these fixed for now (matches your current single-marketplace reality)
+      const env = 'production';
+      const marketplaceId = 'EBAY_US';
+
+      const qs = new URLSearchParams({
+        workspace_id: wsId,
+        env,
+        marketplace_id: marketplaceId,
+      });
+
+      const res = await fetch(`/api/ebay-policy-lists?${qs.toString()}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || 'Failed to fetch eBay policy lists');
+
+      setPaymentPolicies(Array.isArray(json.paymentPolicies) ? json.paymentPolicies : []);
+      setReturnPolicies(Array.isArray(json.returnPolicies) ? json.returnPolicies : []);
+      setFulfillmentPolicies(Array.isArray(json.fulfillmentPolicies) ? json.fulfillmentPolicies : []);
+
+      // Prefill ONLY if empty (do not override existing values)
+      if (!ebayPaymentPolicyId && Array.isArray(json.paymentPolicies) && json.paymentPolicies[0]?.id) {
+        setEbayPaymentPolicyId(String(json.paymentPolicies[0].id));
+      }
+      if (!ebayReturnPolicyId && Array.isArray(json.returnPolicies) && json.returnPolicies[0]?.id) {
+        setEbayReturnPolicyId(String(json.returnPolicies[0].id));
+      }
+      if (!ebayFulfillmentPolicyId && Array.isArray(json.fulfillmentPolicies) && json.fulfillmentPolicies[0]?.id) {
+        setEbayFulfillmentPolicyId(String(json.fulfillmentPolicies[0].id));
+      }
+    } catch (e: any) {
+      setPolicyError(e?.message || 'Failed to load policies');
+      setPaymentPolicies([]);
+      setReturnPolicies([]);
+      setFulfillmentPolicies([]);
+    } finally {
+      setPolicyLoading(false);
+    }
+  }, [ebayPaymentPolicyId, ebayReturnPolicyId, ebayFulfillmentPolicyId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    void fetchPolicyLists(workspaceId);
+  }, [workspaceId, fetchPolicyLists]);
 
   // ----------------------------
   // Helpers
@@ -589,7 +692,11 @@ export default function ResultsPage() {
           const { data, error: readErr } = await withTimeout(
             supabase
               .from('listings')
-              .select('id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at')
+              .select(
+                'id,title,description,category_id,category_path,price,currency,images,listing_json,status,marketplace,updated_at,created_at,' +
+                  'ebay_payment_policy_id,ebay_return_policy_id,ebay_fulfillment_policy_id,' +
+                  'package_weight_lb,package_weight_oz,package_length_in,package_width_in,package_height_in,irregular_package'
+              )
               .eq('id', listingIdParam)
               .eq('workspace_id', t.workspaceId)
               .single(),
@@ -640,6 +747,20 @@ export default function ResultsPage() {
 
           const baseSpecs: ItemSpecific[] = Array.isArray(lj.item_specifics) ? lj.item_specifics : [];
           setSpecifics(applySizeTypeFilterToSpecifics(baseSpecs, getCategoryPathString(cat)));
+
+          // Prefill Shipping & Policies from DB row
+          setEbayPaymentPolicyId(String(row.ebay_payment_policy_id || ''));
+          setEbayReturnPolicyId(String(row.ebay_return_policy_id || ''));
+          setEbayFulfillmentPolicyId(String(row.ebay_fulfillment_policy_id || ''));
+
+          setPackageWeightLb(row.package_weight_lb != null ? String(row.package_weight_lb) : '');
+          setPackageWeightOz(row.package_weight_oz != null ? String(row.package_weight_oz) : '');
+
+          setPackageLengthIn(row.package_length_in != null ? String(row.package_length_in) : '');
+          setPackageWidthIn(row.package_width_in != null ? String(row.package_width_in) : '');
+          setPackageHeightIn(row.package_height_in != null ? String(row.package_height_in) : '');
+
+          setIrregularPackage(!!row.irregular_package);
 
           setLoading(false);
           return;
@@ -786,6 +907,20 @@ export default function ResultsPage() {
           ...listingData,
           internal_user_id: t.internalUserId,
         },
+
+        // Per-listing Shipping & Policies columns
+        ebay_payment_policy_id: ebayPaymentPolicyId || null,
+        ebay_return_policy_id: ebayReturnPolicyId || null,
+        ebay_fulfillment_policy_id: ebayFulfillmentPolicyId || null,
+
+        package_weight_lb: toIntOrNull(packageWeightLb),
+        package_weight_oz: toIntOrNull(packageWeightOz),
+
+        package_length_in: toNumOrNull(packageLengthIn),
+        package_width_in: toNumOrNull(packageWidthIn),
+        package_height_in: toNumOrNull(packageHeightIn),
+
+        irregular_package: !!irregularPackage,
       };
 
       let savedId = listingId;
@@ -916,6 +1051,8 @@ export default function ResultsPage() {
       </div>
     );
   }
+
+  const policyListsAvailable = paymentPolicies.length > 0 || returnPolicies.length > 0 || fulfillmentPolicies.length > 0;
 
   return (
     <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
@@ -1115,6 +1252,184 @@ export default function ResultsPage() {
             onChange={(e) => setPrice(e.target.value)}
             style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
           />
+        </section>
+
+        {/* Shipping & Policies */}
+        <section style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <h3 style={{ margin: 0 }}>Shipping & Policies</h3>
+
+            <button
+              type="button"
+              onClick={() => workspaceId && fetchPolicyLists(workspaceId)}
+              disabled={policyLoading || !workspaceId}
+              style={{
+                padding: '8px 12px',
+                background: policyLoading ? '#999' : '#f3f4f6',
+                border: '1px solid #ddd',
+                borderRadius: 6,
+                cursor: policyLoading ? 'default' : 'pointer',
+                fontSize: 12,
+              }}
+              title="Reload policy lists from eBay (if eligible)"
+            >
+              {policyLoading ? 'Loading…' : 'Reload policies'}
+            </button>
+          </div>
+
+          {policyError ? <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>{policyError}</div> : null}
+
+          {!policyListsAvailable ? (
+            <div style={{ marginTop: 10, fontSize: 13, color: '#666' }}>
+              Policy lists are not available for this account (or could not be fetched). You can still paste policy IDs below.
+            </div>
+          ) : null}
+
+          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Payment policy</label>
+              {paymentPolicies.length > 0 ? (
+                <select
+                  value={ebayPaymentPolicyId}
+                  onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
+                  disabled={policyLoading}
+                  style={{ width: '100%', padding: 10 }}
+                >
+                  <option value="">Select…</option>
+                  {paymentPolicies.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.id})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={ebayPaymentPolicyId}
+                  onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
+                  placeholder="Enter payment policy ID"
+                  style={{ width: '100%', padding: 10 }}
+                />
+              )}
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Return policy</label>
+              {returnPolicies.length > 0 ? (
+                <select
+                  value={ebayReturnPolicyId}
+                  onChange={(e) => setEbayReturnPolicyId(e.target.value)}
+                  disabled={policyLoading}
+                  style={{ width: '100%', padding: 10 }}
+                >
+                  <option value="">Select…</option>
+                  {returnPolicies.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.id})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={ebayReturnPolicyId}
+                  onChange={(e) => setEbayReturnPolicyId(e.target.value)}
+                  placeholder="Enter return policy ID"
+                  style={{ width: '100%', padding: 10 }}
+                />
+              )}
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Fulfillment policy</label>
+              {fulfillmentPolicies.length > 0 ? (
+                <select
+                  value={ebayFulfillmentPolicyId}
+                  onChange={(e) => setEbayFulfillmentPolicyId(e.target.value)}
+                  disabled={policyLoading}
+                  style={{ width: '100%', padding: 10 }}
+                >
+                  <option value="">Select…</option>
+                  {fulfillmentPolicies.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.id})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={ebayFulfillmentPolicyId}
+                  onChange={(e) => setEbayFulfillmentPolicyId(e.target.value)}
+                  placeholder="Enter fulfillment policy ID"
+                  style={{ width: '100%', padding: 10 }}
+                />
+              )}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+            <div style={{ gridColumn: 'span 1' }}>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Weight (lb)</label>
+              <input
+                value={packageWeightLb}
+                onChange={(e) => setPackageWeightLb(e.target.value)}
+                inputMode="numeric"
+                placeholder="0"
+                style={{ width: '100%', padding: 10 }}
+              />
+            </div>
+
+            <div style={{ gridColumn: 'span 1' }}>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Weight (oz)</label>
+              <input
+                value={packageWeightOz}
+                onChange={(e) => setPackageWeightOz(e.target.value)}
+                inputMode="numeric"
+                placeholder="0–15"
+                style={{ width: '100%', padding: 10 }}
+              />
+            </div>
+
+            <div style={{ gridColumn: 'span 1' }}>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Length (in)</label>
+              <input
+                value={packageLengthIn}
+                onChange={(e) => setPackageLengthIn(e.target.value)}
+                inputMode="decimal"
+                placeholder="0"
+                style={{ width: '100%', padding: 10 }}
+              />
+            </div>
+
+            <div style={{ gridColumn: 'span 1' }}>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Width (in)</label>
+              <input
+                value={packageWidthIn}
+                onChange={(e) => setPackageWidthIn(e.target.value)}
+                inputMode="decimal"
+                placeholder="0"
+                style={{ width: '100%', padding: 10 }}
+              />
+            </div>
+
+            <div style={{ gridColumn: 'span 1' }}>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Height (in)</label>
+              <input
+                value={packageHeightIn}
+                onChange={(e) => setPackageHeightIn(e.target.value)}
+                inputMode="decimal"
+                placeholder="0"
+                style={{ width: '100%', padding: 10 }}
+              />
+            </div>
+
+            <div style={{ gridColumn: 'span 1', display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
+              <input
+                type="checkbox"
+                checked={irregularPackage}
+                onChange={(e) => setIrregularPackage(e.target.checked)}
+              />
+              <span style={{ fontSize: 13 }}>Irregular</span>
+            </div>
+          </div>
         </section>
 
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
