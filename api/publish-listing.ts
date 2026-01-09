@@ -119,6 +119,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const blobOrObjectUrls = incomingUrls.filter(isBlobOrObjectUrl);
     const nonHttpUrls = incomingUrls.filter((u) => !isBlobOrObjectUrl(u) && !isHttpUrl(u));
     const imageUrls = incomingUrls.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u));
+    const paymentId = String(listing.ebay_payment_policy_id || '').trim();
+const returnId = String(listing.ebay_return_policy_id || '').trim();
+const fulfillId = String(listing.ebay_fulfillment_policy_id || '').trim();
+
+const lb = listing.package_weight_lb;
+const oz = listing.package_weight_oz;
+    const L = listing.package_length_in;
+const W = listing.package_width_in;
+const H = listing.package_height_in;
+
+const hasDims =
+  (typeof L === 'number' && L > 0) &&
+  (typeof W === 'number' && W > 0) &&
+  (typeof H === 'number' && H > 0);
+
+if (!hasDims) missing.push('Package dimensions (L/W/H)');
+
+const hasWeight =
+  (typeof lb === 'number' && lb >= 0 && lb !== null) ||
+  (typeof oz === 'number' && oz >= 0 && oz !== null);
+
+const missing: string[] = [];
+if (!paymentId) missing.push('Payment policy');
+if (!returnId) missing.push('Return policy');
+if (!fulfillId) missing.push('Fulfillment policy');
+if (!hasWeight) missing.push('Package weight');
+
+if (missing.length) {
+  return res.status(400).json({
+    error: 'Missing required Shipping & Policies fields',
+    missing,
+    hint: 'Open the listing editor and complete the Shipping & Policies section, then Save Draft and retry publishing.',
+    requestId,
+  });
+}
 
     const errors: string[] = [];
 
