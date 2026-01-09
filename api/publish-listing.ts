@@ -85,10 +85,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     /* -------------------------------------------------------
        3) Load listing (ownership enforced)
+       IMPORTANT: include policy/package columns because validation needs them
     ------------------------------------------------------- */
     const { data: listing, error: listingErr } = await userClient
       .from('listings')
-      .select('id, workspace_id, created_by, status, marketplace, title, description, category_id, images, price')
+      .select(
+        [
+          'id',
+          'workspace_id',
+          'created_by',
+          'status',
+          'marketplace',
+          'title',
+          'description',
+          'category_id',
+          'images',
+          'price',
+
+          // Shipping & Policies columns (per listing)
+          'ebay_payment_policy_id',
+          'ebay_return_policy_id',
+          // This is "Shipping policy" in UI, called "Fulfillment policy" in eBay Account API
+          'ebay_fulfillment_policy_id',
+
+          // Optional package fields
+          'package_weight_lb',
+          'package_weight_oz',
+          'package_length_in',
+          'package_width_in',
+          'package_height_in',
+          'irregular_package',
+        ].join(',')
+      )
       .eq('id', listingId)
       .single();
 
@@ -97,71 +125,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Keep this explicit guard even if RLS exists — clearer error and safer.
-    if (listing.created_by !== user.id) {
+    if ((listing as any).created_by !== user.id) {
       return res.status(403).json({ error: 'Forbidden', requestId });
     }
 
     // Only eBay flow for now.
-    if ((listing.marketplace || 'ebay').toLowerCase() !== 'ebay') {
+    if (((listing as any).marketplace || 'ebay').toLowerCase() !== 'ebay') {
       return res.status(400).json({ error: 'Only eBay publishing is supported currently', requestId });
     }
 
-    if (listing.status === 'published') {
+    if ((listing as any).status === 'published') {
       return res.status(400).json({ error: 'Listing already published', requestId });
     }
 
     /* -------------------------------------------------------
-       4) Image + listing validation (KEEPING YOUR LOGIC)
+       4) Shipping & Policies validation (UPDATED to match your UX)
+       REQUIRED: policy IDs only
+       OPTIONAL: weight/dimensions/irregular
     ------------------------------------------------------- */
-    const rawImages = body?.images ?? body?.image_urls ?? listing?.images ?? [];
+    const paymentId = String((listing as any).ebay_payment_policy_id || '').trim();
+    const returnId = String((listing as any).ebay_return_policy_id || '').trim();
+    const shippingPolicyId = String((listing as any).ebay_fulfillment_policy_id || '').trim(); // UI name: Shipping policy
+
+    const missingPolicies: string[] = [];
+    if (!shippingPolicyId) missingPolicies.push('Shipping policy');
+    if (!returnId) missingPolicies.push('Return policy');
+    if (!paymentId) missingPolicies.push('Payment policy');
+
+    if (missingPolicies.length) {
+      return res.status(400).json({
+        error: 'Missing required policy IDs',
+        missing: missingPolicies,
+        hint: 'Complete the Shipping & Policies section, save the draft, and retry publishing.',
+        requestId,
+      });
+    }
+
+    /* -------------------------------------------------------
+       5) Image + listing validation (KEEPING YOUR LOGIC)
+    ------------------------------------------------------- */
+    const rawImages = body?.images ?? body?.image_urls ?? (listing as any)?.images ?? [];
     const incomingUrls = normalizeStringArray(rawImages);
 
     const blobOrObjectUrls = incomingUrls.filter(isBlobOrObjectUrl);
     const nonHttpUrls = incomingUrls.filter((u) => !isBlobOrObjectUrl(u) && !isHttpUrl(u));
     const imageUrls = incomingUrls.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u));
-    const paymentId = String(listing.ebay_payment_policy_id || '').trim();
-const returnId = String(listing.ebay_return_policy_id || '').trim();
-const fulfillId = String(listing.ebay_fulfillment_policy_id || '').trim();
-
-const lb = listing.package_weight_lb;
-const oz = listing.package_weight_oz;
-    const L = listing.package_length_in;
-const W = listing.package_width_in;
-const H = listing.package_height_in;
-
-const hasDims =
-  (typeof L === 'number' && L > 0) &&
-  (typeof W === 'number' && W > 0) &&
-  (typeof H === 'number' && H > 0);
-
-if (!hasDims) missing.push('Package dimensions (L/W/H)');
-
-const hasWeight =
-  (typeof lb === 'number' && lb >= 0 && lb !== null) ||
-  (typeof oz === 'number' && oz >= 0 && oz !== null);
-
-const missing: string[] = [];
-if (!paymentId) missing.push('Payment policy');
-if (!returnId) missing.push('Return policy');
-if (!fulfillId) missing.push('Fulfillment policy');
-if (!hasWeight) missing.push('Package weight');
-
-if (missing.length) {
-  return res.status(400).json({
-    error: 'Missing required Shipping & Policies fields',
-    missing,
-    hint: 'Open the listing editor and complete the Shipping & Policies section, then Save Draft and retry publishing.',
-    requestId,
-  });
-}
 
     const errors: string[] = [];
 
-    if (!listing.title?.trim()) errors.push('Title is required.');
-    if (!listing.description?.trim()) errors.push('Description is required.');
-    if (!listing.category_id) errors.push('Category is required.');
+    if (!(listing as any).title?.trim()) errors.push('Title is required.');
+    if (!(listing as any).description?.trim()) errors.push('Description is required.');
+    if (!(listing as any).category_id) errors.push('Category is required.');
     if (!imageUrls.length) errors.push('At least one hosted image URL is required.');
-    if (typeof listing.price !== 'number' || listing.price <= 0) errors.push('Price must be greater than 0.');
+    if (typeof (listing as any).price !== 'number' || (listing as any).price <= 0) errors.push('Price must be greater than 0.');
 
     if (blobOrObjectUrls.length) errors.push('Blob/data/file image URLs are not allowed.');
     if (nonHttpUrls.length) errors.push('Image URLs must be http/https.');
@@ -176,7 +192,7 @@ if (missing.length) {
           last_publish_error: 'Validation failed',
           last_publish_error_details: { stage: 'validation', errors },
         })
-        .eq('id', listing.id);
+        .eq('id', (listing as any).id);
 
       return res.status(400).json({
         error: 'Validation failed',
@@ -186,15 +202,14 @@ if (missing.length) {
     }
 
     /* -------------------------------------------------------
-       5) Verify eBay connection exists for THIS user/workspace/env
-          (this was wrong in your version: user_id was checked as NULL)
+       6) Verify eBay connection exists for THIS user/workspace/env
     ------------------------------------------------------- */
     const env = String(process.env.EBAY_ENV || 'production').toLowerCase();
 
     const { data: connection, error: connErr } = await serviceClient
       .from('marketplace_connections')
       .select('id, expires_at, refresh_token')
-      .eq('workspace_id', listing.workspace_id)
+      .eq('workspace_id', (listing as any).workspace_id)
       .eq('user_id', user.id)
       .eq('marketplace', 'ebay')
       .eq('environment', env)
@@ -213,7 +228,7 @@ if (missing.length) {
           last_publish_error: 'No eBay connection found',
           last_publish_error_details: { stage: 'connection', env },
         })
-        .eq('id', listing.id);
+        .eq('id', (listing as any).id);
 
       return res.status(400).json({
         error: 'No eBay account connected. Connect eBay in Settings.',
@@ -221,9 +236,7 @@ if (missing.length) {
       });
     }
 
-    // Optional: if token is expired but refresh_token exists, we still allow enqueue
-    // because the worker will refresh before publishing.
-    // If refresh_token is missing and access token expired, you may choose to block.
+    // Worker will refresh if needed, but if expired and no refresh_token, block.
     const accessExpired = connection.expires_at ? new Date(connection.expires_at).getTime() <= Date.now() : true;
     if (accessExpired && !connection.refresh_token) {
       await serviceClient
@@ -233,7 +246,7 @@ if (missing.length) {
           last_publish_error: 'eBay token expired',
           last_publish_error_details: { stage: 'connection', env, accessExpired: true, hasRefreshToken: false },
         })
-        .eq('id', listing.id);
+        .eq('id', (listing as any).id);
 
       return res.status(400).json({
         error: 'eBay connection expired. Please reconnect eBay in Settings.',
@@ -242,13 +255,13 @@ if (missing.length) {
     }
 
     /* -------------------------------------------------------
-       6) Enqueue publish job
+       7) Enqueue publish job
           Guard against duplicate queued jobs for same listing.
     ------------------------------------------------------- */
     const { data: existingJob, error: existingErr } = await serviceClient
       .from('listing_jobs')
       .select('id,status')
-      .eq('listing_id', listing.id)
+      .eq('listing_id', (listing as any).id)
       .eq('job_type', 'publish')
       .in('status', ['queued', 'running'])
       .order('created_at', { ascending: false })
@@ -269,7 +282,7 @@ if (missing.length) {
           last_publish_error: null,
           last_publish_error_details: null,
         })
-        .eq('id', listing.id);
+        .eq('id', (listing as any).id);
 
       return res.status(200).json({
         success: true,
@@ -282,8 +295,8 @@ if (missing.length) {
     const { data: job, error: jobErr } = await serviceClient
       .from('listing_jobs')
       .insert({
-        listing_id: listing.id,
-        workspace_id: listing.workspace_id,
+        listing_id: (listing as any).id,
+        workspace_id: (listing as any).workspace_id,
         user_id: user.id,
         job_type: 'publish',
         status: 'queued',
@@ -307,7 +320,7 @@ if (missing.length) {
         last_publish_error: null,
         last_publish_error_details: null,
       })
-      .eq('id', listing.id);
+      .eq('id', (listing as any).id);
 
     return res.status(200).json({
       success: true,
