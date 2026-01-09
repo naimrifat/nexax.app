@@ -1,4 +1,4 @@
-import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from './prompts/reconcilePrompt.js';
+import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from "../lib/prompts/reconcilePrompt.js";
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export const config = {
