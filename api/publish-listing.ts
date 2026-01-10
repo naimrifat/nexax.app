@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { getValidEbayToken } from "./_lib/ebay-token-manager.js";
+import { ensureMerchantLocation } from "./_lib/ebay-merchant-location.js";
 
 
 export const config = {
@@ -55,7 +56,7 @@ function pickEbayApiBase(env: string) {
  */
 async function publishToEbayInventoryApi(opts: {
   env: string;
-  accessToken: string;
+  : string;
   marketplaceId: string; // e.g. EBAY_US
   listing: any;
   requestId: string;
