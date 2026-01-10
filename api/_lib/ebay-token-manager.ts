@@ -196,7 +196,8 @@ export async function getValidEbayToken(
     }
 
     return refreshed.access_token;
-  } finally {
-    await admin.rpc('release_ebay_refresh_lock', { p_workspace_id: workspaceId }).catch(() => null);
-  }
+  } finally
+    try {
+  await admin.rpc('release_ebay_refresh_lock', { p_workspace_id: workspaceId });
+} catch {
 }
