@@ -1023,7 +1023,7 @@ export default function ResultsPage() {
         return;
       }
 
-      alert(`Publish queued. Job ID: ${data.jobId}`);
+      alert(`Published to eBay.\nListing: ${data.ebayListingUrl || data.ebayListingId || 'OK'}`);
     } catch (err: any) {
       console.error('[Publish] unexpected error:', err);
       alert(err?.message || 'An unexpected error occurred while publishing.');
