@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
+import { getValidEbayToken } from "../lib/ebay-token-manager";
 
 export const config = {
   api: { bodyParser: { sizeLimit: "1mb" } },
@@ -62,7 +63,6 @@ async function ebayGetJsonOrThrow(url: string, accessToken: string) {
 
 /**
  * Keep this broad and defensive. eBay wording can vary.
- * (We could reuse the stronger matcher from process-jobs later.)
  */
 function isEbayBusinessPolicyIneligible(err: any): boolean {
   const msg = String(err?.message || "").toLowerCase();
@@ -82,132 +82,6 @@ function isEbayBusinessPolicyIneligible(err: any): boolean {
     hay.includes("not opted in to business policies") ||
     hay.includes("business policies are not enabled")
   );
-}
-
-/**
- * --- Token refresh helpers ---
- */
-function parseExpiresAtMs(expiresAt: string | null): number | null {
-  if (!expiresAt) return null;
-  const t = Date.parse(expiresAt);
-  return Number.isFinite(t) ? t : null;
-}
-
-function isExpiredOrNear(expiresAtMs: number | null, skewSeconds = 120): boolean {
-  if (!expiresAtMs) return true;
-  return expiresAtMs <= Date.now() + skewSeconds * 1000;
-}
-
-function base64BasicAuth(clientId: string, clientSecret: string) {
-  return Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-}
-
-function ebayTokenHost(env: string) {
-  return env === "sandbox" ? "api.sandbox.ebay.com" : "api.ebay.com";
-}
-
-async function refreshEbayAccessTokenOrThrow(params: {
-  env: "production" | "sandbox";
-  refreshToken: string;
-  scopes: string; // space-separated
-}) {
-  const clientId = getEnv("EBAY_CLIENT_ID");
-  const clientSecret = getEnv("EBAY_CLIENT_SECRET");
-
-  const url = `https://${ebayTokenHost(params.env)}/identity/v1/oauth2/token`;
-
-  const body = new URLSearchParams();
-  body.set("grant_type", "refresh_token");
-  body.set("refresh_token", params.refreshToken);
-  body.set("scope", params.scopes);
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${base64BasicAuth(clientId, clientSecret)}`,
-    },
-    body: body.toString(),
-  });
-
-  const json = (await res.json().catch(() => ({}))) as any;
-
-  if (!res.ok) {
-    const msg = json?.error_description || json?.error || "Failed to refresh eBay token";
-    const err = new Error(msg);
-    (err as any).details = json;
-    throw err;
-  }
-
-  return json as {
-    access_token: string;
-    expires_in: number;
-    token_type: string;
-    refresh_token?: string;
-    refresh_token_expires_in?: number;
-  };
-}
-
-type MarketplaceConnectionRow = {
-  id: string;
-  workspace_id: string;
-  user_id: string;
-  marketplace: string;
-  environment: string;
-  access_token: string | null;
-  refresh_token: string | null;
-  expires_at: string | null;
-};
-
-async function getValidEbayAccessTokenOrThrow(params: {
-  supabaseAdmin: SupabaseAdmin;
-  workspaceId: string;
-  authUserId: string; // Supabase auth user id
-  env: "production" | "sandbox";
-}) {
-  const scopes = getEnv("EBAY_OAUTH_SCOPES");
-
-  const { data, error } = await params.supabaseAdmin
-    .from("marketplace_connections")
-    .select("id,workspace_id,user_id,marketplace,environment,access_token,refresh_token,expires_at")
-    .eq("workspace_id", params.workspaceId)
-    .eq("user_id", params.authUserId)
-    .eq("marketplace", "ebay")
-    .eq("environment", params.env)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) throw new Error("No eBay account connected for this user/workspace.");
-
-  const c = data as unknown as MarketplaceConnectionRow;
-
-  if (!c.refresh_token) throw new Error("eBay connection is missing refresh_token. Reconnect eBay.");
-
-  const expiresAtMs = parseExpiresAtMs(c.expires_at);
-  const needsRefresh = isExpiredOrNear(expiresAtMs, 120);
-
-  if (!needsRefresh && c.access_token) {
-    return { accessToken: c.access_token, refreshed: false };
-  }
-
-  const refreshed = await refreshEbayAccessTokenOrThrow({
-    env: params.env,
-    refreshToken: c.refresh_token,
-    scopes,
-  });
-
-  const newExpiresAt = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
-
-  const patch: any = {
-    access_token: refreshed.access_token,
-    expires_at: newExpiresAt,
-  };
-  if (refreshed.refresh_token) patch.refresh_token = refreshed.refresh_token;
-
-  const up = await params.supabaseAdmin.from("marketplace_connections").update(patch).eq("id", c.id);
-  if (up.error) throw up.error;
-
-  return { accessToken: refreshed.access_token, refreshed: true };
 }
 
 /**
@@ -237,7 +111,9 @@ async function fetchEbayBusinessPolicyLists(params: {
   );
 
   const paymentPolicies = Array.isArray(payment?.paymentPolicies) ? payment.paymentPolicies : [];
-  const fulfillmentPolicies = Array.isArray(fulfillment?.fulfillmentPolicies) ? fulfillment.fulfillmentPolicies : [];
+  const fulfillmentPolicies = Array.isArray(fulfillment?.fulfillmentPolicies)
+    ? fulfillment.fulfillmentPolicies
+    : [];
   const returnPolicies = Array.isArray(returns?.returnPolicies) ? returns.returnPolicies : [];
 
   return {
@@ -310,7 +186,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .maybeSingle();
 
     if (u.error) {
-      return res.status(500).json({ error: "Failed to resolve user workspace", requestId, details: u.error.message });
+      return res.status(500).json({
+        error: "Failed to resolve user workspace",
+        requestId,
+        details: u.error.message,
+      });
     }
 
     const uRow = (u.data as any) || null;
@@ -318,13 +198,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: "Forbidden", requestId });
     }
 
-    // Get eBay access token (refresh if needed)
-    const { accessToken, refreshed } = await getValidEbayAccessTokenOrThrow({
-      supabaseAdmin: admin,
-      workspaceId,
-      authUserId: user.id,
-      env,
-    });
+    // Get eBay access token (centralized)
+    const accessToken = await getValidEbayToken(workspaceId, env);
 
     // Fetch lists from eBay
     try {
@@ -340,7 +215,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         workspace_id: workspaceId,
         environment: env,
         marketplace_id: marketplaceId,
-        token_refreshed: refreshed,
+        token_refreshed: null, // token manager doesn't expose metadata
         source: "ebay",
         ...lists,
       });
@@ -352,7 +227,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           workspace_id: workspaceId,
           environment: env,
           marketplace_id: marketplaceId,
-          token_refreshed: refreshed,
+          token_refreshed: null,
           source: "ineligible",
           paymentPolicies: [],
           returnPolicies: [],
@@ -370,6 +245,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || "Internal server error", requestId });
+    const statusCode = Number(err?.statusCode || 500);
+
+    return res.status(statusCode).json({
+      error: err?.message || "Internal server error",
+      requestId,
+      code: err?.code || null,
+      details: err?.details || null,
+    });
   }
 }
