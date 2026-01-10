@@ -95,113 +95,110 @@ async function refreshToken(params: {
  */
 export async function getValidEbayToken(
   workspaceId: string,
-  env: EbayEnv = 'production'
+  env: EbayEnv = "production"
 ): Promise<string> {
   const admin = adminClient();
 
-  // 1) Load connection row (workspace-level)
   const { data, error } = await admin
-    .from('marketplace_connections')
-    .select('id,workspace_id,marketplace,environment,access_token,refresh_token,expires_at')
-    .eq('workspace_id', workspaceId)
-    .eq('marketplace', 'ebay')
-    .eq('environment', env)
+    .from("marketplace_connections")
+    .select("id,workspace_id,marketplace,environment,access_token,refresh_token,expires_at")
+    .eq("workspace_id", workspaceId)
+    .eq("marketplace", "ebay")
+    .eq("environment", env)
     .maybeSingle<MarketplaceConnection>();
 
   if (error) throw error;
+
   if (!data) {
-    throw Object.assign(new Error('eBay is not connected for this workspace'), {
-      code: 'EBAY_NOT_CONNECTED',
+    throw Object.assign(new Error("eBay is not connected for this workspace"), {
+      code: "EBAY_NOT_CONNECTED",
       statusCode: 400,
     });
   }
 
   if (!data.refresh_token) {
-    throw Object.assign(new Error('Missing eBay refresh token. Please reconnect eBay.'), {
-      code: 'EBAY_NO_REFRESH_TOKEN',
+    throw Object.assign(new Error("Missing eBay refresh token. Please reconnect eBay."), {
+      code: "EBAY_NO_REFRESH_TOKEN",
       statusCode: 400,
     });
   }
 
-  // 2) If still valid, return quickly
+  // fast path
   if (data.access_token && !isExpiredSoon(data.expires_at, 90)) {
     return data.access_token;
   }
 
-  // 3) Acquire advisory lock (non-blocking)
-  const { data: lockOk, error: lockErr } = await admin.rpc('acquire_ebay_refresh_lock', {
-    p_workspace_id: workspaceId,
-  });
+  // lock attempt (optional)
+  let lockHeld = false;
 
-  if (lockErr) {
-    // If this fails, you didn't run the SQL or permissions are wrong
-    throw new Error(`Token refresh lock RPC failed: ${lockErr.message}`);
-  }
-
-  if (lockOk !== true) {
-    // Another request is currently refreshing. Tell client to retry.
-    throw Object.assign(new Error('eBay token refresh in progress. Please retry.'), {
-      code: 'EBAY_REFRESH_LOCK_BUSY',
-      statusCode: 429,
+  try {
+    const { data: lockOk, error: lockErr } = await admin.rpc("acquire_ebay_refresh_lock", {
+      p_workspace_id: workspaceId,
     });
+
+    if (!lockErr && lockOk === true) {
+      lockHeld = true;
+    } else if (!lockErr && lockOk !== true) {
+      throw Object.assign(new Error("eBay token refresh in progress. Please retry."), {
+        code: "EBAY_REFRESH_LOCK_BUSY",
+        statusCode: 429,
+      });
+    } else if (lockErr) {
+      // RPC missing or permissions; proceed without lock
+      console.warn("[ebay-token-manager] lock RPC unavailable", { message: lockErr.message });
+    }
+  } catch (e: any) {
+    if (e?.code === "EBAY_REFRESH_LOCK_BUSY") throw e;
+    // otherwise ignore and proceed without lock
   }
 
   try {
-    // 4) Re-read inside lock (another request may have refreshed already)
+    // re-read in case another request refreshed
     const { data: latest, error: latestErr } = await admin
-      .from('marketplace_connections')
-      .select('id,access_token,refresh_token,expires_at')
-      .eq('id', data.id)
-      .maybeSingle<Pick<MarketplaceConnection, 'id' | 'access_token' | 'refresh_token' | 'expires_at'>>();
+      .from("marketplace_connections")
+      .select("id,access_token,refresh_token,expires_at")
+      .eq("id", data.id)
+      .maybeSingle();
 
     if (latestErr) throw latestErr;
 
     if (latest?.access_token && !isExpiredSoon(latest.expires_at, 90)) {
-      return latest.access_token;
+      return String(latest.access_token);
     }
 
-    if (!latest?.refresh_token) {
-      throw Object.assign(new Error('Missing eBay refresh token. Please reconnect eBay.'), {
-        code: 'EBAY_NO_REFRESH_TOKEN',
+    const refreshTok = String(latest?.refresh_token || data.refresh_token || "");
+    if (!refreshTok) {
+      throw Object.assign(new Error("Missing eBay refresh token. Please reconnect eBay."), {
+        code: "EBAY_NO_REFRESH_TOKEN",
         statusCode: 400,
       });
     }
 
-    // 5) Refresh against eBay
-    const refreshed = await refreshToken({ env, refreshToken: latest.refresh_token });
+    const refreshed = await refreshToken({ env, refreshToken: refreshTok });
 
     const update: any = {
       access_token: refreshed.access_token,
       expires_at: computeExpiresAt(refreshed.expires_in),
     };
+    if (refreshed.refresh_token) update.refresh_token = refreshed.refresh_token;
 
-    if (refreshed.refresh_token) {
-      update.refresh_token = refreshed.refresh_token;
-    }
-
-    // 6) Persist
-    const { error: upErr } = await admin
-      .from('marketplace_connections')
-      .update(update)
-      .eq('id', data.id);
-
+    const { error: upErr } = await admin.from("marketplace_connections").update(update).eq("id", data.id);
     if (upErr) {
-      // Refresh succeeded but DB update failed; still return the token (but log loudly)
-      console.error('[ebay-token-manager] DB update failed', {
+      console.error("[ebay-token-manager] DB update failed", {
         workspaceId,
         connectionId: data.id,
         error: upErr.message,
       });
-      return refreshed.access_token;
     }
 
     return refreshed.access_token;
   } finally {
-  if (lockHeld) {
-    try {
-      await admin.rpc('release_ebay_refresh_lock', { p_workspace_id: workspaceId });
-    } catch {
-      // ignore
+    if (lockHeld) {
+      try {
+        await admin.rpc("release_ebay_refresh_lock", { p_workspace_id: workspaceId });
+      } catch {
+        // ignore unlock failure
+      }
     }
   }
 }
