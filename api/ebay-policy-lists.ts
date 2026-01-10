@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { getValidEbayToken } from "../lib/ebay-token-manager";
+import { getValidEbayToken } from "./_lib/ebay-token-manager";
+
 
 export const config = {
   api: { bodyParser: { sizeLimit: "1mb" } },
