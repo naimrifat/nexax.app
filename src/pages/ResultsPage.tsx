@@ -1049,6 +1049,12 @@ export default function ResultsPage() {
       }
 
       if (!res.ok) {
+        if (res.status === 409) {
+          const msg = String(data?.message || '').trim();
+          setPublishErrors([msg || 'Publishing in progress. Please wait and refresh.']);
+          return;
+        }
+
         if (res.status === 400 && Array.isArray(data?.errors)) {
           setPublishErrors(data.errors);
           return;
