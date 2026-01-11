@@ -237,6 +237,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           'price',
           'currency',
           'listing_json',
+          'ebay_item_id',
+          'ebay_listing_url',
           'ebay_payment_policy_id',
           'ebay_return_policy_id',
           'ebay_fulfillment_policy_id',
@@ -261,8 +263,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Only eBay publishing is supported currently', requestId });
     }
 
-    if ((listing as any).status === 'published') {
-      return res.status(400).json({ error: 'Listing already published', requestId });
+    const status = String((listing as any).status || 'draft').toLowerCase();
+    const existingEbayListingUrl = (listing as any).ebay_listing_url || null;
+    const existingEbayItemId = (listing as any).ebay_item_id || null;
+
+    if (status === 'published') {
+      if (existingEbayListingUrl || existingEbayItemId) {
+        return res.status(200).json({ ok: true, alreadyPublished: true, ebay_listing_url: existingEbayListingUrl, ebay_item_id: existingEbayItemId });
+      }
+      return res.status(409).json({ ok: false, message: 'Listing is already published.', requestId });
+    }
+
+    if (status === 'publishing') {
+      return res.status(409).json({ ok: false, message: 'Publishing in progress. Please wait and refresh.', requestId });
     }
 
     // 4) Validations (must run before any eBay calls)
@@ -323,55 +336,89 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ errors });
     }
 
+    const priorStatus = (listing as any).status ?? 'draft';
 
-    // 5) Get valid token (centralized)
-    const env = String(process.env.EBAY_ENV || 'production').toLowerCase() as 'production' | 'sandbox';
-    const accessToken = await getValidEbayToken(String((listing as any).workspace_id), env);
-    
+    const { data: publishingLockRows, error: publishingLockErr } = await serviceClient
+      .from('listings')
+      .update({
+        status: 'publishing',
+        published_at: null,
+      })
+      .eq('id', (listing as any).id)
+      .eq('status', priorStatus)
+      .select('id');
+
+    if (publishingLockErr) throw publishingLockErr;
+    if (!publishingLockRows || (publishingLockRows as any[]).length === 0) {
+      return res.status(409).json({ ok: false, message: 'Publishing in progress. Please wait and refresh.', requestId });
+    }
+
+    try {
+      // 5) Get valid token (centralized)
+      const env = String(process.env.EBAY_ENV || 'production').toLowerCase() as 'production' | 'sandbox';
+      const accessToken = await getValidEbayToken(String((listing as any).workspace_id), env);
+      
 await ensureMerchantLocation({
   env,
   accessToken,
   merchantLocationKey: "mainWarehouse",
   requestId,
 });
-    // 6) Publish
-    const EBAY_MARKETPLACE_ID = String(process.env.EBAY_MARKETPLACE_ID || 'EBAY_US');
+      // 6) Publish
+      const EBAY_MARKETPLACE_ID = String(process.env.EBAY_MARKETPLACE_ID || 'EBAY_US');
 
-    const publishResult = await publishToEbayInventoryApi({
-      env,
-      accessToken,
-      marketplaceId: EBAY_MARKETPLACE_ID,
-      listing,
-      requestId,
-    });
+      const publishResult = await publishToEbayInventoryApi({
+        env,
+        accessToken,
+        marketplaceId: EBAY_MARKETPLACE_ID,
+        listing,
+        requestId,
+      });
 
-    // 7) Update DB as published
-    const finishedAt = nowIso();
-    const { error: listingUpdErr } = await serviceClient
-      .from('listings')
-      .update({
-        status: 'published',
-        published_at: finishedAt,
-        ebay_item_id: publishResult.ebayListingId,
-        ebay_listing_url: publishResult.ebayListingUrl,
-        last_publish_attempt_at: finishedAt,
-        last_publish_error: null,
-        last_publish_error_details: null,
-      })
-      .eq('id', (listing as any).id);
+      // 7) Update DB as published
+      const finishedAt = nowIso();
+      const { error: listingUpdErr } = await serviceClient
+        .from('listings')
+        .update({
+          status: 'published',
+          published_at: finishedAt,
+          ebay_item_id: publishResult.ebayListingId,
+          ebay_listing_url: publishResult.ebayListingUrl,
+          last_publish_attempt_at: finishedAt,
+          last_publish_error: null,
+          last_publish_error_details: null,
+        })
+        .eq('id', (listing as any).id);
 
-    if (listingUpdErr) throw new Error(`listing update failed: ${listingUpdErr.message}`);
+      if (listingUpdErr) throw new Error(`listing update failed: ${listingUpdErr.message}`);
 
-    return res.status(200).json({
-      success: true,
-      requestId,
-      env,
-      refreshed: null, // token manager currently does not expose metadata
-      marketplaceId: EBAY_MARKETPLACE_ID,
-      offerId: publishResult.offerId,
-      ebayListingId: publishResult.ebayListingId,
-      ebayListingUrl: publishResult.ebayListingUrl,
-    });
+      return res.status(200).json({
+        success: true,
+        requestId,
+        env,
+        refreshed: null, // token manager currently does not expose metadata
+        marketplaceId: EBAY_MARKETPLACE_ID,
+        offerId: publishResult.offerId,
+        ebayListingId: publishResult.ebayListingId,
+        ebayListingUrl: publishResult.ebayListingUrl,
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || 'Publish failed');
+
+      await serviceClient
+        .from('listings')
+        .update({
+          status: 'draft',
+          listing_json: { ...(listingJson || {}), publish_error: msg },
+          last_publish_attempt_at: nowIso(),
+          last_publish_error: msg,
+          last_publish_error_details: { stage: 'publish', error: msg },
+        })
+        .eq('id', (listing as any).id);
+
+      throw err;
+    }
+
   } catch (err: any) {
     const statusCode = Number(err?.statusCode || 500);
 
