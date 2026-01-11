@@ -507,12 +507,14 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
     }
   };
 
+  const listingHref = `/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`;
+
   const handleEdit = () => {
-    navigate(`/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`);
+    navigate(listingHref);
   };
 
   const handleView = () => {
-    navigate(`/results?mode=edit&listingId=${encodeURIComponent(listing.id)}`);
+    navigate(listingHref);
   };
 
   const handleDuplicate = async () => {
@@ -607,17 +609,23 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden transition-all hover:shadow-md">
       <div className="flex flex-col sm:flex-row">
         <div className="sm:w-48 h-48 sm:h-auto bg-gray-100">
-          {listing.image ? (
-            <img src={listing.image} alt={listing.title} className="w-full h-full object-cover" loading="lazy" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No image</div>
-          )}
+          <Link to={listingHref} className="block w-full h-full">
+            {listing.image ? (
+              <img src={listing.image} alt={listing.title} className="w-full h-full object-cover" loading="lazy" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No image</div>
+            )}
+          </Link>
         </div>
 
         <div className="flex-1 p-4 flex flex-col sm:flex-row">
           <div className="flex-1">
             <div className="flex justify-between">
-              <h3 className="text-lg font-semibold text-gray-900 mb-1 line-clamp-2">{listing.title}</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1 line-clamp-2">
+                <Link to={listingHref} className="block hover:underline">
+                  {listing.title}
+                </Link>
+              </h3>
 
               <div className="relative" data-menu-root>
                 <button
