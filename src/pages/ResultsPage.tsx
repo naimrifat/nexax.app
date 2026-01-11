@@ -1151,24 +1151,15 @@ export default function ResultsPage() {
         </section>
 
         <section style={{ marginTop: 24 }}>
-          <h3>SKU</h3>
-          <input
-            placeholder="Enter SKU..."
-            value={sku}
-            onChange={(e) => setSku(e.target.value)}
-            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
-          />
-        </section>
-
-        <section style={{ marginTop: 24 }}>
-          <h3>Description</h3>
-          <textarea
-            placeholder="Enter description..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={2}
-            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
-          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <h3 style={{ margin: 0 }}>SKU</h3>
+            <input
+              placeholder="Enter SKU..."
+              value={sku}
+              onChange={(e) => setSku(e.target.value)}
+              style={{ flex: 1, padding: 12, fontSize: 14 }}
+            />
+          </div>
         </section>
 
         <section style={{ marginTop: 24 }}>
@@ -1242,6 +1233,17 @@ export default function ResultsPage() {
           <button type="button" onClick={addSpecific} style={{ marginTop: 12, padding: '8px 16px', fontSize: 14 }}>
             + Add Custom Specific
           </button>
+        </section>
+
+        <section style={{ marginTop: 24 }}>
+          <h3>Description</h3>
+          <textarea
+            placeholder="Enter description..."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
+          />
         </section>
 
         <section style={{ marginTop: 24 }}>
