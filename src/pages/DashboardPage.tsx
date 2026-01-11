@@ -320,7 +320,7 @@ const DashboardPage: React.FC = () => {
 
           {/* Filters and Search */}
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
+          <div className="sticky top-20 z-40 bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div className="flex flex-wrap gap-2">
                 <FilterButton
