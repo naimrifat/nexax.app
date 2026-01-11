@@ -236,6 +236,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           'images',
           'price',
           'currency',
+          'listing_json',
           'ebay_payment_policy_id',
           'ebay_return_policy_id',
           'ebay_fulfillment_policy_id',
@@ -264,40 +265,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Listing already published', requestId });
     }
 
-    // 4) Validations
+    // 4) Validations (must run before any eBay calls)
     const rawImages = body?.images ?? body?.image_urls ?? (listing as any)?.images ?? [];
     const incomingUrls = normalizeStringArray(rawImages);
 
-    const blobOrObjectUrls = incomingUrls.filter(isBlobOrObjectUrl);
-    const nonHttpUrls = incomingUrls.filter((u) => !isBlobOrObjectUrl(u) && !isHttpUrl(u));
-    const imageUrls = incomingUrls.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u));
+    const invalidImageUrls = incomingUrls.filter((u) => !isHttpUrl(u));
 
     const errors: string[] = [];
     if (!(listing as any).title?.trim()) errors.push('Title is required.');
     if (!(listing as any).description?.trim()) errors.push('Description is required.');
     if (!(listing as any).category_id) errors.push('Category is required.');
-    if (!imageUrls.length) errors.push('At least one hosted image URL is required.');
     if (typeof (listing as any).price !== 'number' || (listing as any).price <= 0) errors.push('Price must be greater than 0.');
-    if (blobOrObjectUrls.length) errors.push('Blob/data/file image URLs are not allowed.');
-    if (nonHttpUrls.length) errors.push('Image URLs must be http/https.');
+    if (!incomingUrls.length) errors.push('At least one image URL is required.');
+    if (invalidImageUrls.length) errors.push('All image URLs must be http/https.');
 
-    const paymentId = String((listing as any).ebay_payment_policy_id || '').trim();
-    const returnId = String((listing as any).ebay_return_policy_id || '').trim();
-    const shippingId = String((listing as any).ebay_fulfillment_policy_id || '').trim();
+    const listingJson: any = (listing as any).listing_json || {};
 
-    const missingPolicies: string[] = [];
-    if (!shippingId) missingPolicies.push('Shipping policy');
-    if (!returnId) missingPolicies.push('Return policy');
-    if (!paymentId) missingPolicies.push('Payment policy');
+    const paymentPolicyId = String(
+      listingJson.paymentPolicyId ??
+        listingJson.ebay_payment_policy_id ??
+        listingJson.ebayPaymentPolicyId ??
+        (listing as any).ebay_payment_policy_id ??
+        ''
+    ).trim();
 
-    if (missingPolicies.length) {
-      return res.status(400).json({
-        error: 'Missing required policy IDs',
-        missing: missingPolicies,
-        hint: 'Complete the Shipping & Policies section, save the draft, and retry publishing.',
-        requestId,
-      });
-    }
+    const returnPolicyId = String(
+      listingJson.returnPolicyId ??
+        listingJson.ebay_return_policy_id ??
+        listingJson.ebayReturnPolicyId ??
+        (listing as any).ebay_return_policy_id ??
+        ''
+    ).trim();
+
+    const fulfillmentPolicyId = String(
+      listingJson.fulfillmentPolicyId ??
+        listingJson.shippingPolicyId ??
+        listingJson.ebay_fulfillment_policy_id ??
+        listingJson.ebayFulfillmentPolicyId ??
+        (listing as any).ebay_fulfillment_policy_id ??
+        ''
+    ).trim();
+
+    if (!paymentPolicyId) errors.push('Payment policy ID is required.');
+    if (!returnPolicyId) errors.push('Return policy ID is required.');
+    if (!fulfillmentPolicyId) errors.push('Fulfillment (shipping) policy ID is required.');
 
     if (errors.length) {
       await serviceClient
@@ -309,8 +320,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
         .eq('id', (listing as any).id);
 
-      return res.status(400).json({ error: 'Validation failed', requestId, details: errors });
+      return res.status(400).json({ errors });
     }
+
 
     // 5) Get valid token (centralized)
     const env = String(process.env.EBAY_ENV || 'production').toLowerCase() as 'production' | 'sandbox';
