@@ -376,6 +376,7 @@ export default function ResultsPage() {
   const [mainImageIndex, setMainImageIndex] = useState(0);
 
   const [title, setTitle] = useState('');
+  const [sku, setSku] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.00');
   const [keywords, setKeywords] = useState('');
@@ -627,6 +628,7 @@ export default function ResultsPage() {
 
     return {
       title: title.trim(),
+      sku: sku.trim(),
       description: description.trim(),
       marketplace: 'ebay',
       category: category ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs } : null,
@@ -651,7 +653,7 @@ export default function ResultsPage() {
       images: orderedImages,
       mainImageIndex: 0,
     };
-  }, [category, images, mainImageIndex, price, specifics, keywords, title, description]);
+  }, [category, images, mainImageIndex, price, specifics, keywords, title, sku, description]);
 
   const assertHostedImagesOrThrow = (arr: string[]) => {
     const bad = (arr || []).filter((u) => !isHostedImageUrl(u));
@@ -715,6 +717,7 @@ export default function ResultsPage() {
           setListingId(row.id);
 
           setTitle((row.title ?? lj.title ?? '') as string);
+          setSku(String(lj?.sku ?? ''));
           setDescription((row.description ?? lj.description ?? '') as string);
 
           const priceVal =
@@ -1145,6 +1148,16 @@ export default function ResultsPage() {
             maxLength={80}
           />
           <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
+        </section>
+
+        <section style={{ marginTop: 24 }}>
+          <h3>SKU</h3>
+          <input
+            placeholder="Enter SKU..."
+            value={sku}
+            onChange={(e) => setSku(e.target.value)}
+            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
+          />
         </section>
 
         <section style={{ marginTop: 24 }}>
