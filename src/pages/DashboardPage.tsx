@@ -308,18 +308,9 @@ const DashboardPage: React.FC = () => {
                 Create New Listing
               </Link>
 
-              <button
-                type="button"
-                onClick={() => void fetchListings()}
-                className="btn border border-gray-300 text-gray-700 hover:bg-gray-100 px-4 py-2 rounded-md font-semibold"
-                disabled={loading}
-              >
-                Refresh
-              </button>
             </div>
           </div>
 
-          <TestDbPanel />
 
           {loadError && (
             <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700">
