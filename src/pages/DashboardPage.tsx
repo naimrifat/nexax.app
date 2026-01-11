@@ -42,6 +42,7 @@ type ListingRow = {
 type DashboardListing = {
   id: string;
   title: string;
+  sku: string;
   image: string;
   platforms: string[];
   date: string;
@@ -60,6 +61,7 @@ function safeArray(v: unknown): string[] {
 function firstString(v: unknown, fallback = ""): string {
   return typeof v === "string" ? v : fallback;
 }
+
 
 function isHostedImageUrl(u: string): boolean {
   const s = String(u || "").trim();
@@ -115,6 +117,7 @@ function normalizeListing(row: ListingRow): DashboardListing {
   return {
     id: row.id,
     title,
+    sku: firstString(lj?.sku, "").trim(),
     image: pickCoverImage(row),
     platforms,
     date,
@@ -675,6 +678,9 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
 
 
             {getStatusBadge(String(listing.status))}
+            {listing.sku ? (
+              <div className="mt-3 text-sm text-gray-700">SKU: {listing.sku}</div>
+            ) : null}
           </div>
 
           <div className="flex sm:flex-col justify-between sm:justify-center sm:items-end sm:ml-6 mt-4 sm:mt-0 pt-4 sm:pt-0 border-t sm:border-t-0 border-gray-100">
