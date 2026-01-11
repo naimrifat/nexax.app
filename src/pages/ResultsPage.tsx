@@ -1152,12 +1152,12 @@ export default function ResultsPage() {
 
         <section style={{ marginTop: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <h3 style={{ margin: 0 }}>SKU</h3>
+            <h4 style={{ margin: 0 }}>SKU</h4>
             <input
               placeholder="Enter SKU..."
               value={sku}
               onChange={(e) => setSku(e.target.value)}
-              style={{ flex: 1, padding: 12, fontSize: 14 }}
+              style={{ width: '25%', minWidth: 160, padding: 12, fontSize: 14 }}
             />
           </div>
         </section>
