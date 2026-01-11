@@ -641,11 +641,11 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
                 {isMenuOpen && (
                   <div className="absolute right-0 mt-1 w-56 bg-white rounded-md shadow-lg border border-gray-100 z-10">
                     <div className="py-1">
-                      <ActionButton icon={<Eye className="w-4 h-4" />} label="View" onClick={handleView} />
                       <ActionButton icon={<Edit className="w-4 h-4" />} label="Edit" onClick={handleEdit} />
                       <ActionButton icon={<Copy className="w-4 h-4" />} label="Duplicate to Draft" onClick={handleDuplicate} />
                       <ActionButton icon={<Download className="w-4 h-4" />} label="Download JSON" onClick={handleDownloadJson} />
                       <ActionButton icon={<ExternalLink className="w-4 h-4" />} label="Open in Marketplace" onClick={handleOpenMarketplace} />
+
                       <div className="border-t border-gray-100 my-1" />
                       <ActionButton
                         icon={<Trash className="w-4 h-4 text-red-500" />}
@@ -666,12 +666,13 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
             </div>
 
             <div className="flex flex-wrap gap-1.5 mb-3">
-              {listing.platforms.map((platform) => (
+              {listing.platforms.filter((platform) => platform.trim()).map((platform) => (
                 <span key={platform} className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded-full">
                   {platform}
                 </span>
               ))}
             </div>
+
 
             {getStatusBadge(String(listing.status))}
           </div>
@@ -691,10 +692,6 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
             )}
 
             <div className="flex sm:flex-col gap-2">
-              <button onClick={handleView} className="btn btn-outline py-1.5 text-sm px-3 flex items-center justify-center" type="button">
-                <Eye className="w-4 h-4 mr-1.5" />
-                View
-              </button>
 
               <button onClick={handleEdit} className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center" type="button">
                 <Edit className="w-4 h-4 mr-1.5" />
