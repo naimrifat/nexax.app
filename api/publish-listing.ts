@@ -324,14 +324,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!fulfillmentPolicyId) errors.push('Fulfillment (shipping) policy ID is required.');
 
     if (errors.length) {
-      await serviceClient
-        .from('listings')
-        .update({
-          last_publish_attempt_at: nowIso(),
-          last_publish_error: 'Validation failed',
-          last_publish_error_details: { stage: 'validation', errors },
-        })
-        .eq('id', (listing as any).id);
+      try {
+        await serviceClient
+          .from('listings')
+          .update({
+            last_publish_attempt_at: nowIso(),
+            last_publish_error: 'Validation failed',
+            last_publish_error_details: { stage: 'validation', errors },
+          })
+          .eq('id', (listing as any).id);
+      } catch (e) {
+        console.error('[publish] failed to persist validation error', { requestId, e });
+      }
 
       return res.status(400).json({ errors });
     }
