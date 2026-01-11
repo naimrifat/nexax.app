@@ -1,4 +1,5 @@
 // src/pages/DashboardPage.tsx
+// line-ending test
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -69,6 +70,8 @@ function isHostedImageUrl(u: string): boolean {
   if (s.startsWith("blob:")) return false;
   if (s.startsWith("data:")) return false;
   return /^https?:\/\//i.test(s);
+  // line-ending test
+
 }
 
 function pickCoverImage(row: ListingRow): string {
