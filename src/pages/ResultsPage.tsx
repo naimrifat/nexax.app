@@ -975,14 +975,42 @@ export default function ResultsPage() {
   // Publish
   // ----------------------------
   const handlePublish = async () => {
-    if (!title.trim() || !description.trim() || !category) {
-      alert('Title, description, and category are required.');
+    const validateBeforePublish = (): string[] => {
+      const errors: string[] = [];
+
+      if (!title.trim()) errors.push('Title is required.');
+      if (!description.trim()) errors.push('Description is required.');
+      if (!category?.id) errors.push('Category is required.');
+
+      const priceNum = parseFloat(price || '0');
+      if (!Number.isFinite(priceNum) || priceNum <= 0) errors.push('Price must be greater than 0.');
+
+      if (!images.length) errors.push('At least one image is required.');
+
+      const paymentPolicyId = String(ebayPaymentPolicyId || '').trim();
+      const returnPolicyId = String(ebayReturnPolicyId || '').trim();
+      const fulfillmentPolicyId = String(ebayFulfillmentPolicyId || '').trim();
+
+      if (!paymentPolicyId) errors.push('Payment policy ID is required.');
+      if (!returnPolicyId) errors.push('Return policy ID is required.');
+      if (!fulfillmentPolicyId) errors.push('Fulfillment (shipping) policy ID is required.');
+
+      try {
+        const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
+        assertHostedImagesOrThrow(orderedImages);
+      } catch (err: any) {
+        errors.push(err?.message || 'Images must be hosted http(s) URLs.');
+      }
+
+      return errors;
+    };
+
+    const clientErrors = validateBeforePublish();
+    if (clientErrors.length) {
+      alert(`Fix these before publishing:\n\n- ${clientErrors.join('\n- ')}`);
       return;
     }
-    if (!images.length) {
-      alert('At least one image is required.');
-      return;
-    }
+
     if (!listingId) {
       alert('Please click "Save Draft" first (we need a saved Draft ID before publishing).');
       return;
@@ -991,9 +1019,6 @@ export default function ResultsPage() {
     setPublishing(true);
 
     try {
-      const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
-      assertHostedImagesOrThrow(orderedImages);
-
       const {
         data: { session },
         error: sessionErr,
@@ -1021,6 +1046,11 @@ export default function ResultsPage() {
       }
 
       if (!res.ok) {
+        if (res.status === 400 && Array.isArray(data?.errors)) {
+          alert(`Publish blocked:\n\n- ${data.errors.join('\n- ')}`);
+          return;
+        }
+
         console.error('[Publish] error:', data);
         alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
         return;
