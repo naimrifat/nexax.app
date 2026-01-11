@@ -391,6 +391,7 @@ export default function ResultsPage() {
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
+  const [publishErrors, setPublishErrors] = useState<string[]>([]);
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -974,45 +975,47 @@ export default function ResultsPage() {
   // ----------------------------
   // Publish
   // ----------------------------
+  const validateBeforePublish = (): string[] => {
+    const errors: string[] = [];
+
+    if (!title.trim()) errors.push('Title is required.');
+    if (!description.trim()) errors.push('Description is required.');
+    if (!category?.id) errors.push('Category is required.');
+
+    const priceNum = parseFloat(price || '0');
+    if (!Number.isFinite(priceNum) || priceNum <= 0) errors.push('Price must be greater than 0.');
+
+    if (!images.length) errors.push('At least one image is required.');
+
+    const paymentPolicyId = String(ebayPaymentPolicyId || '').trim();
+    const returnPolicyId = String(ebayReturnPolicyId || '').trim();
+    const fulfillmentPolicyId = String(ebayFulfillmentPolicyId || '').trim();
+
+    if (!paymentPolicyId) errors.push('Payment policy ID is required.');
+    if (!returnPolicyId) errors.push('Return policy ID is required.');
+    if (!fulfillmentPolicyId) errors.push('Fulfillment (shipping) policy ID is required.');
+
+    try {
+      const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
+      assertHostedImagesOrThrow(orderedImages);
+    } catch (err: any) {
+      errors.push(err?.message || 'Images must be hosted http(s) URLs.');
+    }
+
+    return errors;
+  };
+
   const handlePublish = async () => {
-    const validateBeforePublish = (): string[] => {
-      const errors: string[] = [];
-
-      if (!title.trim()) errors.push('Title is required.');
-      if (!description.trim()) errors.push('Description is required.');
-      if (!category?.id) errors.push('Category is required.');
-
-      const priceNum = parseFloat(price || '0');
-      if (!Number.isFinite(priceNum) || priceNum <= 0) errors.push('Price must be greater than 0.');
-
-      if (!images.length) errors.push('At least one image is required.');
-
-      const paymentPolicyId = String(ebayPaymentPolicyId || '').trim();
-      const returnPolicyId = String(ebayReturnPolicyId || '').trim();
-      const fulfillmentPolicyId = String(ebayFulfillmentPolicyId || '').trim();
-
-      if (!paymentPolicyId) errors.push('Payment policy ID is required.');
-      if (!returnPolicyId) errors.push('Return policy ID is required.');
-      if (!fulfillmentPolicyId) errors.push('Fulfillment (shipping) policy ID is required.');
-
-      try {
-        const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
-        assertHostedImagesOrThrow(orderedImages);
-      } catch (err: any) {
-        errors.push(err?.message || 'Images must be hosted http(s) URLs.');
-      }
-
-      return errors;
-    };
+    setPublishErrors([]);
 
     const clientErrors = validateBeforePublish();
     if (clientErrors.length) {
-      alert(`Fix these before publishing:\n\n- ${clientErrors.join('\n- ')}`);
+      setPublishErrors(clientErrors);
       return;
     }
 
     if (!listingId) {
-      alert('Please click "Save Draft" first (we need a saved Draft ID before publishing).');
+      setPublishErrors(['Please click "Save Draft" first (we need a saved Draft ID before publishing).']);
       return;
     }
 
@@ -1025,7 +1028,7 @@ export default function ResultsPage() {
       } = await supabase.auth.getSession();
 
       if (sessionErr || !session?.access_token) {
-        alert('You are not logged in. Please sign in again and retry.');
+        setPublishErrors(['You are not logged in. Please sign in again and retry.']);
         return;
       }
 
@@ -1042,24 +1045,25 @@ export default function ResultsPage() {
       try {
         data = await res.json();
       } catch {
-        data = { error: 'Invalid JSON response from server' };
+        data = {};
       }
 
       if (!res.ok) {
         if (res.status === 400 && Array.isArray(data?.errors)) {
-          alert(`Publish blocked:\n\n- ${data.errors.join('\n- ')}`);
+          setPublishErrors(data.errors);
           return;
         }
 
-        console.error('[Publish] error:', data);
-        alert(`An error occurred: ${JSON.stringify(data, null, 2)}`);
+        const msg = String(data?.error || data?.message || '').trim();
+        setPublishErrors([`Publishing failed. Please try again.${msg ? ` ${msg}` : ''}`]);
         return;
       }
 
+      setPublishErrors([]);
       alert(`Published to eBay.\nListing: ${data.ebayListingUrl || data.ebayListingId || 'OK'}`);
     } catch (err: any) {
-      console.error('[Publish] unexpected error:', err);
-      alert(err?.message || 'An unexpected error occurred while publishing.');
+      const msg = String(err?.message || '').trim();
+      setPublishErrors([`An unexpected error occurred while publishing.${msg ? ` ${msg}` : ''}`]);
     } finally {
       setPublishing(false);
     }
@@ -1583,6 +1587,26 @@ export default function ResultsPage() {
             Cancel
           </button>
         </div>
+
+        {publishErrors.length ? (
+          <div
+            style={{
+              marginTop: 12,
+              border: '1px solid #fecaca',
+              background: '#fef2f2',
+              color: '#991b1b',
+              borderRadius: 6,
+              padding: 12,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Fix these before publishing:</div>
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {publishErrors.map((e, idx) => (
+                <li key={idx}>{e}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         {saveError ? <div style={{ marginTop: 10, color: 'red', fontSize: 14 }}>{saveError}</div> : null}
 
