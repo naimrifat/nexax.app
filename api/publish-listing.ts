@@ -8,6 +8,10 @@ export const config = {
   maxDuration: 60,
 };
 
+function respond(res, status, payload) {
+  return res.status(status).json(payload);
+}
+
 function makeRequestId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -138,7 +142,7 @@ async function publishToEbayInventoryApi(opts: {
       firstErrString: JSON.stringify(firstErr, null, 2),
       bodyJsonString: JSON.stringify(j, null, 2),
     });
-    throw new Error(firstErr.message || firstErr.longMessage || j.message || 'eBay API error');
+    throw new Error(`eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${firstErr.message || firstErr.longMessage || j.message || 'eBay API error'}`);
   }
 
   // 2) Create offer
@@ -197,7 +201,7 @@ async function publishToEbayInventoryApi(opts: {
       parameters: firstErr.parameters,
       body: offerJson,
     });
-    throw new Error(firstErr.message || firstErr.longMessage || offerJson.message || 'eBay API error');
+    throw new Error(`eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${firstErr.message || firstErr.longMessage || offerJson.message || 'eBay API error'}`);
   }
 
   const offerId = String(offerJson.offerId || '');
@@ -235,7 +239,7 @@ async function publishToEbayInventoryApi(opts: {
       parameters: firstErr.parameters,
       body: pubJson,
     });
-    throw new Error(firstErr.message || firstErr.longMessage || pubJson.message || 'eBay API error');
+    throw new Error(`eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${firstErr.message || firstErr.longMessage || pubJson.message || 'eBay API error'}`);
   }
 
   const ebayListingId = String(pubJson.listingId || pubJson.itemId || '');
@@ -253,7 +257,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const requestId = makeRequestId();
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed', requestId });
+    return respond(res, 405, { ok: false, requestId, code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' });
   }
 
   try {
@@ -277,13 +281,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const user = authData?.user;
 
     if (authErr || !user) {
-      return res.status(401).json({ error: 'Unauthorized', requestId });
+      return respond(res, 401, { ok: false, requestId, code: 'UNAUTHORIZED', message: 'Unauthorized' });
     }
 
     // 2) Input
     const body: any = req.body || {};
     const listingId = body.listing_id || body.listingId || body.id;
-    if (!listingId) return res.status(400).json({ error: 'Missing listing_id', requestId });
+    if (!listingId) return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors: ['Missing listing_id'] });
 
     // 3) Load listing
     const { data: listing, error: listingErr } = await userClient
@@ -318,14 +322,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq('id', listingId)
       .single();
 
-    if (listingErr || !listing) return res.status(404).json({ error: 'Listing not found', requestId });
+    if (listingErr || !listing) return respond(res, 404, { ok: false, requestId, code: 'NOT_FOUND', message: 'Listing not found' });
 
     if ((listing as any).created_by !== user.id) {
-      return res.status(403).json({ error: 'Forbidden', requestId });
+      return respond(res, 403, { ok: false, requestId, code: 'FORBIDDEN', message: 'Forbidden' });
     }
 
     if (((listing as any).marketplace || 'ebay').toLowerCase() !== 'ebay') {
-      return res.status(400).json({ error: 'Only eBay publishing is supported currently', requestId });
+      return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors: ['Only eBay publishing is supported currently'] });
     }
 
     const status = String((listing as any).status || 'draft').toLowerCase();
@@ -334,21 +338,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // PRIORITY 2: Idempotency short-circuits (no eBay calls)
     if (status === 'published') {
-      return res.status(200).json({
+      return respond(res, 200, {
         ok: true,
-        alreadyPublished: true,
-        ebay_listing_url: existingEbayListingUrl,
-        ebay_item_id: existingEbayItemId,
         requestId,
+        message: 'Already published',
+        ebay_item_id: existingEbayItemId,
+        ebay_listing_url: existingEbayListingUrl,
       });
     }
 
     if (status === 'publishing') {
-      return res.status(409).json({
+      return respond(res, 409, {
         ok: false,
+        requestId,
         code: 'PUBLISH_IN_PROGRESS',
         message: 'Publishing in progress. Please wait and refresh.',
-        requestId,
+        errors: ['Publishing is already in progress for this listing.'],
       });
     }
 
@@ -411,7 +416,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.error('[publish] failed to persist validation error', { requestId, e });
       }
 
-      return res.status(400).json({ errors, requestId });
+      return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors });
     }
 
     // PRIORITY 2: Atomic publish lock (prevents double publish)
@@ -441,29 +446,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!currErr && curr) {
         const currStatus = String((curr as any).status || '').toLowerCase();
         if (currStatus === 'published') {
-          return res.status(200).json({
+          return respond(res, 200, {
             ok: true,
-            alreadyPublished: true,
+            message: 'Already published',
             ebay_listing_url: (curr as any).ebay_listing_url || null,
             ebay_item_id: (curr as any).ebay_item_id || null,
             requestId,
           });
         }
         if (currStatus === 'publishing') {
-          return res.status(409).json({
+          return respond(res, 409, {
             ok: false,
             code: 'PUBLISH_IN_PROGRESS',
             message: 'Publishing in progress. Please wait and refresh.',
+            errors: ['Publishing is already in progress for this listing.'],
             requestId,
           });
         }
       }
 
       // Fallback: treat as in progress (safe default)
-      return res.status(409).json({
+      return respond(res, 409, {
         ok: false,
         code: 'PUBLISH_IN_PROGRESS',
         message: 'Publishing in progress. Please wait and refresh.',
+        errors: ['Publishing is already in progress for this listing.'],
         requestId,
       });
     }
