@@ -30,11 +30,16 @@ interface AuthContextValue {
   // Back-compat: only means “auth bootstrap in progress”
   isLoading: boolean;
 
+  tenancyError: string | null;
+  isTenancyLoading: boolean;
+  retryTenancy: () => Promise<void>;
+
   signUp: (email: string, password: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshTenancy: () => Promise<void>;
 }
+
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
@@ -85,6 +90,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [tenancyStatus, setTenancyStatus] = useState<TenancyStatus>("idle");
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [tenancyError, setTenancyError] = useState<string | null>(null);
+  const [isTenancyLoading, setIsTenancyLoading] = useState<boolean>(false);
+
 
   const currentAuthIdRef = useRef<string | null>(null);
   const ensuredForAuthIdRef = useRef<string | null>(null);
@@ -97,6 +105,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setWorkspaceId(null);
     setInternalUserId(null);
     setTenancyStatus("idle");
+    setTenancyError(null);
+    setIsTenancyLoading(false);
     ensuredForAuthIdRef.current = null;
     ensureInFlightByAuthIdRef.current.clear();
   }, []);
@@ -118,6 +128,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (existing) return await existing;
 
       setTenancyStatus("resolving");
+      setTenancyError(null);
+      setIsTenancyLoading(true);
       console.log("[Auth] Ensuring tenancy for", authUserId);
 
       const p = (async (): Promise<TenancyResult> => {
@@ -149,7 +161,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               );
 
               if (error) {
-                console.error("[Auth] ensure_user_and_workspace failed:", error);
+                console.warn("[Auth] ensure_user_and_workspace failed:", error);
                 throw error;
               }
 
@@ -185,6 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error("ensure_user_and_workspace timed out after retries");
         } finally {
           ensureInFlightByAuthIdRef.current.delete(authUserId);
+          setIsTenancyLoading(false);
         }
       })();
 
@@ -235,6 +248,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setWorkspaceId(res.workspaceId);
         setInternalUserId(res.internalUserId);
         setTenancyStatus("ready");
+        setTenancyError(null);
+        setIsTenancyLoading(false);
 
         console.log("[Auth] tenancy ensured", {
           authUserId: authIdAtStart,
@@ -247,8 +262,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const msg = String(e?.message ?? "");
         setTenancyStatus(msg.includes("Tenancy missing") ? "missing" : "error");
+        setTenancyError("We couldn’t load your workspace. Please retry.");
+        setIsTenancyLoading(false);
 
-        console.error("[Auth] tenancy ensure failed:", e);
+        console.error("[Auth] tenancy ensure failed", { bootstrapId: bootstrapIdRef.current, message: msg });
 
         setWorkspaceId(null);
         setInternalUserId(null);
@@ -268,6 +285,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     console.log("[Auth] 🚀 Starting bootstrap...", { bootstrapId });
     setIsLoading(true);
+    setIsTenancyLoading(false);
+    setTenancyError(null);
     setAuthStatus("booting");
 
     try {
@@ -326,6 +345,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const authUserId = currentAuthIdRef.current;
     if (!authUserId) return;
 
+    setTenancyError(null);
+    setIsTenancyLoading(true);
+
     ensuredForAuthIdRef.current = null;
     ensureInFlightByAuthIdRef.current.delete(authUserId);
     setTenancyStatus("resolving");
@@ -339,16 +361,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setWorkspaceId(res.workspaceId);
       setInternalUserId(res.internalUserId);
       setTenancyStatus("ready");
+      setTenancyError(null);
     } catch (e: any) {
       if (currentAuthIdRef.current !== authUserId) return;
 
       const msg = String(e?.message ?? "");
       setTenancyStatus(msg.includes("Tenancy missing") ? "missing" : "error");
+      setTenancyError("We couldn’t load your workspace. Please retry.");
       setWorkspaceId(null);
       setInternalUserId(null);
       ensuredForAuthIdRef.current = null;
+    } finally {
+      setIsTenancyLoading(false);
     }
   }, [ensureWorkspaceOnceFor]);
+
+  const retryTenancy = useCallback(async () => {
+    await refreshTenancy();
+  }, [refreshTenancy]);
+
 
   const signUp = async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();
@@ -391,11 +422,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     authStatus,
     tenancyStatus,
     isLoading,
+    tenancyError,
+    isTenancyLoading,
+    retryTenancy,
     signUp,
     login,
     logout,
     refreshTenancy,
   };
+
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
