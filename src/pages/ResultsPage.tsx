@@ -1041,35 +1041,35 @@ export default function ResultsPage() {
         body: JSON.stringify({ listing_id: listingId }),
       });
 
-      let data: any = {};
+      let body: any = {};
       try {
-        data = await res.json();
+        body = await res.json();
       } catch {
-        data = {};
+        body = {};
       }
 
-      if (!res.ok) {
-        if (res.status === 409) {
-          const msg = String(data?.message || '').trim();
-          setPublishErrors([msg || 'Publishing in progress. Please wait and refresh.']);
-          return;
-        }
-
-        if (res.status === 400 && Array.isArray(data?.errors)) {
-          setPublishErrors(data.errors);
-          return;
-        }
-
-        const msg = String(data?.error || data?.message || '').trim();
-        setPublishErrors([`Publishing failed. Please try again.${msg ? ` ${msg}` : ''}`]);
+      if (res.ok && body?.ok === true) {
+        setPublishErrors([]);
+        const url = body?.ebay_listing_url ? String(body.ebay_listing_url) : '';
+        const itemId = body?.ebay_item_id ? String(body.ebay_item_id) : '';
+        setDraftStatus(`Published successfully${itemId ? ` (eBay item: ${itemId})` : ''}${url ? ` - ${url}` : ''}`);
         return;
       }
 
-      setPublishErrors([]);
-      alert(`Published to eBay.\nListing: ${data.ebayListingUrl || data.ebayListingId || 'OK'}`);
+      if (res.status === 409 || body?.code === 'PUBLISH_IN_PROGRESS') {
+        setPublishErrors(['Publishing in progress… please wait and refresh.']);
+        return;
+      }
+
+      if (Array.isArray(body?.errors) && body.errors.length) {
+        setPublishErrors(body.errors.map((e: any) => String(e)));
+        return;
+      }
+
+      const msg = body?.message ? String(body.message) : '';
+      setPublishErrors([msg || 'Publishing failed. Please try again.']);
     } catch (err: any) {
-      const msg = String(err?.message || '').trim();
-      setPublishErrors([`An unexpected error occurred while publishing.${msg ? ` ${msg}` : ''}`]);
+      setPublishErrors(['Publishing failed. Please try again.']);
     } finally {
       setPublishing(false);
     }
