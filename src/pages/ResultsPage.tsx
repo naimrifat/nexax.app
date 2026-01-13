@@ -392,6 +392,7 @@ export default function ResultsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
   const [publishErrors, setPublishErrors] = useState<string[]>([]);
+  const [publishSuccess, setPublishSuccess] = useState<{ ebay_item_id?: string | null; ebay_listing_url?: string | null } | null>(null);
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -1007,6 +1008,7 @@ export default function ResultsPage() {
 
   const handlePublish = async () => {
     setPublishErrors([]);
+    setPublishSuccess(null);
 
     const clientErrors = validateBeforePublish();
     if (clientErrors.length) {
@@ -1050,14 +1052,15 @@ export default function ResultsPage() {
 
       if (res.ok && body?.ok === true) {
         setPublishErrors([]);
-        const url = body?.ebay_listing_url ? String(body.ebay_listing_url) : '';
-        const itemId = body?.ebay_item_id ? String(body.ebay_item_id) : '';
-        setDraftStatus(`Published successfully${itemId ? ` (eBay item: ${itemId})` : ''}${url ? ` - ${url}` : ''}`);
+        setPublishSuccess({
+          ebay_item_id: body?.ebay_item_id != null ? String(body.ebay_item_id) : null,
+          ebay_listing_url: body?.ebay_listing_url != null ? String(body.ebay_listing_url) : null,
+        });
         return;
       }
 
       if (res.status === 409 || body?.code === 'PUBLISH_IN_PROGRESS') {
-        setPublishErrors(['Publishing in progress… please wait and refresh.']);
+        setPublishErrors(['Publishing in progress. Please wait and refresh.']);
         return;
       }
 
@@ -1593,6 +1596,29 @@ export default function ResultsPage() {
             Cancel
           </button>
         </div>
+
+        {publishSuccess ? (
+          <div
+            style={{
+              marginTop: 12,
+              border: '1px solid #bbf7d0',
+              background: '#f0fdf4',
+              color: '#166534',
+              borderRadius: 6,
+              padding: 12,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Published successfully</div>
+            {publishSuccess.ebay_item_id ? <div style={{ fontSize: 14 }}>eBay item id: {publishSuccess.ebay_item_id}</div> : null}
+            {publishSuccess.ebay_listing_url ? (
+              <div style={{ fontSize: 14, marginTop: 4 }}>
+                <a href={publishSuccess.ebay_listing_url} target="_blank" rel="noreferrer" style={{ color: '#166534', textDecoration: 'underline' }}>
+                  View on eBay
+                </a>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {publishErrors.length ? (
           <div
