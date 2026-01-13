@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { getValidEbayToken } from "./_lib/ebay-token-manager.js";
-
+import { ensureMerchantLocation } from "./_lib/ebay-merchant-location.js";
 
 export const config = {
   api: { bodyParser: { sizeLimit: '2mb' } },
@@ -267,15 +267,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const existingEbayListingUrl = (listing as any).ebay_listing_url || null;
     const existingEbayItemId = (listing as any).ebay_item_id || null;
 
+    // PRIORITY 2: Idempotency short-circuits (no eBay calls)
     if (status === 'published') {
-      if (existingEbayListingUrl || existingEbayItemId) {
-        return res.status(200).json({ ok: true, alreadyPublished: true, ebay_listing_url: existingEbayListingUrl, ebay_item_id: existingEbayItemId });
-      }
-      return res.status(409).json({ ok: false, message: 'Listing is already published.', requestId });
+      return res.status(200).json({
+        ok: true,
+        alreadyPublished: true,
+        ebay_listing_url: existingEbayListingUrl,
+        ebay_item_id: existingEbayItemId,
+        requestId,
+      });
     }
 
     if (status === 'publishing') {
-      return res.status(409).json({ ok: false, message: 'Publishing in progress. Please wait and refresh.', requestId });
+      return res.status(409).json({
+        ok: false,
+        code: 'PUBLISH_IN_PROGRESS',
+        message: 'Publishing in progress. Please wait and refresh.',
+        requestId,
+      });
     }
 
     // 4) Validations (must run before any eBay calls)
@@ -337,11 +346,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.error('[publish] failed to persist validation error', { requestId, e });
       }
 
-      return res.status(400).json({ errors });
+      return res.status(400).json({ errors, requestId });
     }
 
-    const priorStatus = (listing as any).status ?? 'draft';
-
+    // PRIORITY 2: Atomic publish lock (prevents double publish)
+    // Only one request can transition draft -> publishing.
     const { data: publishingLockRows, error: publishingLockErr } = await serviceClient
       .from('listings')
       .update({
@@ -349,25 +358,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         published_at: null,
       })
       .eq('id', (listing as any).id)
-      .eq('status', priorStatus)
+      .eq('workspace_id', (listing as any).workspace_id)
+      .eq('status', 'draft')
       .select('id');
 
     if (publishingLockErr) throw publishingLockErr;
+
     if (!publishingLockRows || (publishingLockRows as any[]).length === 0) {
-      return res.status(409).json({ ok: false, message: 'Publishing in progress. Please wait and refresh.', requestId });
+      // Someone else acquired lock or status changed. Re-read status for correct idempotent response.
+      const { data: curr, error: currErr } = await serviceClient
+        .from('listings')
+        .select('status,ebay_item_id,ebay_listing_url')
+        .eq('id', (listing as any).id)
+        .eq('workspace_id', (listing as any).workspace_id)
+        .maybeSingle();
+
+      if (!currErr && curr) {
+        const currStatus = String((curr as any).status || '').toLowerCase();
+        if (currStatus === 'published') {
+          return res.status(200).json({
+            ok: true,
+            alreadyPublished: true,
+            ebay_listing_url: (curr as any).ebay_listing_url || null,
+            ebay_item_id: (curr as any).ebay_item_id || null,
+            requestId,
+          });
+        }
+        if (currStatus === 'publishing') {
+          return res.status(409).json({
+            ok: false,
+            code: 'PUBLISH_IN_PROGRESS',
+            message: 'Publishing in progress. Please wait and refresh.',
+            requestId,
+          });
+        }
+      }
+
+      // Fallback: treat as in progress (safe default)
+      return res.status(409).json({
+        ok: false,
+        code: 'PUBLISH_IN_PROGRESS',
+        message: 'Publishing in progress. Please wait and refresh.',
+        requestId,
+      });
     }
+
+    // Ensure we publish with the validated/derived values (policies + hosted images)
+    const listingForPublish = {
+      ...(listing as any),
+      images: incomingUrls,
+      ebay_payment_policy_id: paymentPolicyId,
+      ebay_return_policy_id: returnPolicyId,
+      ebay_fulfillment_policy_id: fulfillmentPolicyId,
+    };
 
     try {
       // 5) Get valid token (centralized)
       const env = String(process.env.EBAY_ENV || 'production').toLowerCase() as 'production' | 'sandbox';
       const accessToken = await getValidEbayToken(String((listing as any).workspace_id), env);
-      
-await ensureMerchantLocation({
-  env,
-  accessToken,
-  merchantLocationKey: "mainWarehouse",
-  requestId,
-});
+
+      await ensureMerchantLocation({
+        env,
+        accessToken,
+        merchantLocationKey: "mainWarehouse",
+        requestId,
+      });
+
       // 6) Publish
       const EBAY_MARKETPLACE_ID = String(process.env.EBAY_MARKETPLACE_ID || 'EBAY_US');
 
@@ -375,7 +431,7 @@ await ensureMerchantLocation({
         env,
         accessToken,
         marketplaceId: EBAY_MARKETPLACE_ID,
-        listing,
+        listing: listingForPublish,
         requestId,
       });
 
@@ -392,7 +448,8 @@ await ensureMerchantLocation({
           last_publish_error: null,
           last_publish_error_details: null,
         })
-        .eq('id', (listing as any).id);
+        .eq('id', (listing as any).id)
+        .eq('workspace_id', (listing as any).workspace_id);
 
       if (listingUpdErr) throw new Error(`listing update failed: ${listingUpdErr.message}`);
 
@@ -409,6 +466,7 @@ await ensureMerchantLocation({
     } catch (err: any) {
       const msg = String(err?.message || 'Publish failed');
 
+      // Reset from publishing so user can retry
       await serviceClient
         .from('listings')
         .update({
@@ -418,7 +476,9 @@ await ensureMerchantLocation({
           last_publish_error: msg,
           last_publish_error_details: { stage: 'publish', error: msg },
         })
-        .eq('id', (listing as any).id);
+        .eq('id', (listing as any).id)
+        .eq('workspace_id', (listing as any).workspace_id)
+        .eq('status', 'publishing');
 
       throw err;
     }
