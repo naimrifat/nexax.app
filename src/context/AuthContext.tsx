@@ -90,6 +90,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const ensuredForAuthIdRef = useRef<string | null>(null);
   const ensureInFlightByAuthIdRef = useRef<Map<string, Promise<TenancyResult>>>(new Map());
   const bootstrappedOnceRef = useRef<boolean>(false);
+  const bootstrapIdRef = useRef<string | null>(null);
+  const bootstrapStartedAtRef = useRef<number>(0);
 
   const clearTenancy = useCallback(() => {
     setWorkspaceId(null);
@@ -119,31 +121,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log("[Auth] Ensuring tenancy for", authUserId);
 
       const p = (async (): Promise<TenancyResult> => {
+        const startedAt = Date.now();
+        const bootstrapId = bootstrapIdRef.current;
+
+        const isTimeoutLike = (err: any) => {
+          const msg = String(err?.message || "").toLowerCase();
+          const name = String(err?.name || "").toLowerCase();
+          return msg.includes("timed out") || name.includes("timeout");
+        };
+
+        const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
         try {
-          // IMPORTANT: your lib/supabaseClient.ts already has a 12s abort on fetch.
-          // If you keep another timeout here at 12s, you’re double-timing out.
-          // Use a higher timeout to avoid false negatives (or remove this wrapper).
-          const { data, error } = await withTimeout(
-            supabase.rpc("ensure_user_and_workspace"),
-            30_000,
-            "ensure_user_and_workspace"
-          );
+          const backoffs = [0, 300, 900];
 
-          if (error) {
-            console.error("[Auth] ensure_user_and_workspace failed:", error);
-            throw error;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            if (backoffs[attempt - 1]) await sleep(backoffs[attempt - 1]);
+
+            try {
+              // IMPORTANT: your lib/supabaseClient.ts already has a 12s abort on fetch.
+              // If you keep another timeout here at 12s, you’re double-timing out.
+              // Use a higher timeout to avoid false negatives (or remove this wrapper).
+              const { data, error } = await withTimeout(
+                supabase.rpc("ensure_user_and_workspace"),
+                30_000,
+                "ensure_user_and_workspace"
+              );
+
+              if (error) {
+                console.error("[Auth] ensure_user_and_workspace failed:", error);
+                throw error;
+              }
+
+              const row: TenancyRow = Array.isArray(data) ? data[0] : data;
+              const ws = row?.workspace_id ?? row?.out_workspace_id ?? null;
+              const iu = row?.user_id ?? row?.out_user_id ?? null;
+
+              if (!ws || !iu) {
+                console.error("[Auth] ensure_user_and_workspace returned unexpected data:", { data });
+                throw new Error("Tenancy missing (no workspace_id/user_id)");
+              }
+
+              return { workspaceId: ws, internalUserId: iu };
+            } catch (err: any) {
+              const elapsedMs = Date.now() - startedAt;
+              const errMsg = String(err?.message || "");
+
+              if (attempt < 3 && isTimeoutLike(err)) {
+                console.warn("[Auth] tenancy ensure retry", {
+                  attempt,
+                  elapsedMs,
+                  message: errMsg,
+                  authUserId,
+                  bootstrapId,
+                });
+                continue;
+              }
+
+              throw err;
+            }
           }
 
-          const row: TenancyRow = Array.isArray(data) ? data[0] : data;
-          const ws = row?.workspace_id ?? row?.out_workspace_id ?? null;
-          const iu = row?.user_id ?? row?.out_user_id ?? null;
-
-          if (!ws || !iu) {
-            console.error("[Auth] ensure_user_and_workspace returned unexpected data:", { data });
-            throw new Error("Tenancy missing (no workspace_id/user_id)");
-          }
-
-          return { workspaceId: ws, internalUserId: iu };
+          throw new Error("ensure_user_and_workspace timed out after retries");
         } finally {
           ensureInFlightByAuthIdRef.current.delete(authUserId);
         }
@@ -172,6 +211,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       try {
         const authIdAtStart = mapped.id;
+        const ensureStartedAt = Date.now();
+        const bootstrapId = bootstrapIdRef.current;
 
         // If already ensured, mark ready
         if (
@@ -183,7 +224,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
+        console.debug("[Auth] tenancy ensure start", { bootstrapId, authUserId: authIdAtStart });
         const res = await ensureWorkspaceOnceFor(authIdAtStart);
+        console.debug("[Auth] tenancy ensure end", { bootstrapId, authUserId: authIdAtStart, ms: Date.now() - ensureStartedAt });
 
         // Stale guard
         if (currentAuthIdRef.current !== authIdAtStart) return;
@@ -197,6 +240,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           authUserId: authIdAtStart,
           workspaceId: res.workspaceId,
           internalUserId: res.internalUserId,
+          bootstrapId,
         });
       } catch (e: any) {
         if (!mapped?.id || currentAuthIdRef.current !== mapped.id) return;
@@ -218,13 +262,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (bootstrappedOnceRef.current) return;
     bootstrappedOnceRef.current = true;
 
-    console.log("[Auth] 🚀 Starting bootstrap...");
+    const bootstrapId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    bootstrapIdRef.current = bootstrapId;
+    bootstrapStartedAtRef.current = Date.now();
+
+    console.log("[Auth] 🚀 Starting bootstrap...", { bootstrapId });
     setIsLoading(true);
     setAuthStatus("booting");
 
     try {
+      console.debug("[Auth] getSession start", { bootstrapId });
+      const getSessionStartedAt = Date.now();
       const { data, error } = await supabase.auth.getSession();
-      console.log("[Auth] 📦 getSession result:", { hasSession: !!data?.session, error });
+      console.debug("[Auth] getSession end", {
+        bootstrapId,
+        ms: Date.now() - getSessionStartedAt,
+        hasSession: !!data?.session,
+        error: error ? String((error as any)?.message || error) : null,
+      });
 
       if (error) throw error;
 
@@ -239,10 +294,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthStatus("signed_out");
       clearTenancy();
     } finally {
+      const totalMs = Date.now() - bootstrapStartedAtRef.current;
+      console.debug("[Auth] bootstrap end", { bootstrapId, ms: totalMs });
+      bootstrapIdRef.current = null;
       setIsLoading(false);
       setAuthStatus(currentAuthIdRef.current ? "signed_in" : "signed_out");
     }
   }, [applyAuthUser, clearTenancy]);
+
 
   useEffect(() => {
     let mounted = true;
