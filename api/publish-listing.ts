@@ -529,15 +529,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (listingUpdErr) throw new Error(`listing update failed: ${listingUpdErr.message}`);
 
-      return res.status(200).json({
-        success: true,
+      return respond(res, 200, {
+        ok: true,
         requestId,
-        env,
-        refreshed: null, // token manager currently does not expose metadata
-        marketplaceId: EBAY_MARKETPLACE_ID,
-        offerId: publishResult.offerId,
-        ebayListingId: publishResult.ebayListingId,
-        ebayListingUrl: publishResult.ebayListingUrl,
+        message: 'Published successfully',
+        ebay_item_id: publishResult.ebayListingId,
+        ebay_listing_url: publishResult.ebayListingUrl,
       });
     } catch (err: any) {
       const msg = String(err?.message || 'Publish failed');
@@ -560,20 +557,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
   } catch (err: any) {
-    const statusCode = Number(err?.statusCode || 500);
+    const msg = String(err?.message || '');
+    const isEbay = msg.includes('eBay rejected');
 
-    console.error('❌ /api/publish-listing error', {
-      requestId,
-      message: err?.message,
-      stack: err?.stack,
-      err,
-    });
+    if (isEbay) {
+      return respond(res, 502, {
+        ok: false,
+        requestId,
+        code: 'EBAY_ERROR',
+        message: msg,
+      });
+    }
 
-    return res.status(statusCode).json({
-      error: err?.message || 'Internal server error',
+    return respond(res, 500, {
+      ok: false,
       requestId,
-      code: err?.code || null,
-      details: err?.details || null,
+      code: 'UNEXPECTED',
+      message: 'Unexpected server error.',
     });
   }
 }
