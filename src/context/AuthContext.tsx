@@ -100,6 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const bootstrappedOnceRef = useRef<boolean>(false);
   const bootstrapIdRef = useRef<string | null>(null);
   const bootstrapStartedAtRef = useRef<number>(0);
+  const bootstrapSeqRef = useRef<number>(0);
 
   const clearTenancy = useCallback(() => {
     setWorkspaceId(null);
@@ -135,6 +136,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const p = (async (): Promise<TenancyResult> => {
         const startedAt = Date.now();
         const bootstrapId = bootstrapIdRef.current;
+        const seqAtStart = bootstrapSeqRef.current;
 
         const isTimeoutLike = (err: any) => {
           const msg = String(err?.message || "").toLowerCase();
@@ -156,7 +158,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // Use a higher timeout to avoid false negatives (or remove this wrapper).
               const { data, error } = await withTimeout(
                 supabase.rpc("ensure_user_and_workspace"),
-                30_000,
+                8_000,
                 "ensure_user_and_workspace"
               );
 
@@ -197,7 +199,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error("ensure_user_and_workspace timed out after retries");
         } finally {
           ensureInFlightByAuthIdRef.current.delete(authUserId);
-          setIsTenancyLoading(false);
+          if (seqAtStart === bootstrapSeqRef.current) setIsTenancyLoading(false);
         }
       })();
 
@@ -221,6 +223,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setAuthStatus("signed_in");
+      const seqAtStart = bootstrapSeqRef.current;
 
       try {
         const authIdAtStart = mapped.id;
@@ -243,6 +246,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Stale guard
         if (currentAuthIdRef.current !== authIdAtStart) return;
+        if (seqAtStart !== bootstrapSeqRef.current) return;
 
         ensuredForAuthIdRef.current = authIdAtStart;
         setWorkspaceId(res.workspaceId);
@@ -259,6 +263,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       } catch (e: any) {
         if (!mapped?.id || currentAuthIdRef.current !== mapped.id) return;
+        if (seqAtStart !== bootstrapSeqRef.current) return;
 
         const msg = String(e?.message ?? "");
         setTenancyStatus(msg.includes("Tenancy missing") ? "missing" : "error");
@@ -279,6 +284,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (bootstrappedOnceRef.current) return;
     bootstrappedOnceRef.current = true;
 
+    const seq = ++bootstrapSeqRef.current;
     const bootstrapId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     bootstrapIdRef.current = bootstrapId;
     bootstrapStartedAtRef.current = Date.now();
@@ -307,12 +313,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       await applyAuthUser(supaUser);
     } catch (err) {
+      if (seq !== bootstrapSeqRef.current) return;
       console.error("[Auth] ❌ bootstrap failed:", err);
       currentAuthIdRef.current = null;
       setUser(null);
       setAuthStatus("signed_out");
       clearTenancy();
     } finally {
+      if (seq !== bootstrapSeqRef.current) return;
       const totalMs = Date.now() - bootstrapStartedAtRef.current;
       console.debug("[Auth] bootstrap end", { bootstrapId, ms: totalMs });
       bootstrapIdRef.current = null;
@@ -344,6 +352,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshTenancy = useCallback(async () => {
     const authUserId = currentAuthIdRef.current;
     if (!authUserId) return;
+    const seq = ++bootstrapSeqRef.current;
 
     setTenancyError(null);
     setIsTenancyLoading(true);
@@ -356,6 +365,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res = await ensureWorkspaceOnceFor(authUserId);
 
       if (currentAuthIdRef.current !== authUserId) return;
+      if (seq !== bootstrapSeqRef.current) return;
 
       ensuredForAuthIdRef.current = authUserId;
       setWorkspaceId(res.workspaceId);
@@ -364,6 +374,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setTenancyError(null);
     } catch (e: any) {
       if (currentAuthIdRef.current !== authUserId) return;
+      if (seq !== bootstrapSeqRef.current) return;
 
       const msg = String(e?.message ?? "");
       setTenancyStatus(msg.includes("Tenancy missing") ? "missing" : "error");
@@ -372,6 +383,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setInternalUserId(null);
       ensuredForAuthIdRef.current = null;
     } finally {
+      if (seq !== bootstrapSeqRef.current) return;
       setIsTenancyLoading(false);
     }
   }, [ensureWorkspaceOnceFor]);
