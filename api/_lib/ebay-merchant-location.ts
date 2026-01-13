@@ -59,6 +59,7 @@ export async function ensureMerchantLocation(params: {
       Authorization: `Bearer ${params.accessToken}`,
       'Content-Type': 'application/json',
       'Content-Language': 'en-US',
+      'Accept-Language': 'en-US',
     },
   });
 
@@ -97,6 +98,7 @@ export async function ensureMerchantLocation(params: {
       Authorization: `Bearer ${params.accessToken}`,
       'Content-Type': 'application/json',
       'Content-Language': 'en-US',
+      'Accept-Language': 'en-US',
     },
     body: JSON.stringify(payload),
   });
