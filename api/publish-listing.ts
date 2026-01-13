@@ -108,6 +108,7 @@ async function publishToEbayInventoryApi(opts: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
       'Content-Language': 'en-US',
+      'Accept-Language': 'en-US',
     },
     body: JSON.stringify(invPayload),
   });
@@ -160,6 +161,7 @@ async function publishToEbayInventoryApi(opts: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
       'Content-Language': 'en-US',
+      'Accept-Language': 'en-US',
     },
     body: JSON.stringify(offerPayload),
   });
@@ -198,6 +200,7 @@ async function publishToEbayInventoryApi(opts: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
       'Content-Language': 'en-US',
+      'Accept-Language': 'en-US',
     },
   });
 
