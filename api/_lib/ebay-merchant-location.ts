@@ -57,10 +57,11 @@ export async function ensureMerchantLocation(params: {
     method: "GET",
     headers: {
       Authorization: `Bearer ${params.accessToken}`,
-      Accept: "application/json",
-      "Content-Language": "en-US",
+      'Content-Type': 'application/json',
+      'Content-Language': 'en-US',
     },
   });
+
 
   if (getRes.status === 200) {
     return { merchantLocationKey, created: false };
@@ -94,12 +95,12 @@ export async function ensureMerchantLocation(params: {
     method: "POST",
     headers: {
       Authorization: `Bearer ${params.accessToken}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "Content-Language": "en-US",
+      'Content-Type': 'application/json',
+      'Content-Language': 'en-US',
     },
     body: JSON.stringify(payload),
   });
+
 
   // eBay returns 204 on success
   if (postRes.status === 204) {
