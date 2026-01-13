@@ -486,7 +486,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err: any) {
     const statusCode = Number(err?.statusCode || 500);
 
-    console.error('❌ /api/publish-listing error', { requestId, err });
+    console.error('❌ /api/publish-listing error', {
+      requestId,
+      message: err?.message,
+      stack: err?.stack,
+      err,
+    });
 
     return res.status(statusCode).json({
       error: err?.message || 'Internal server error',
