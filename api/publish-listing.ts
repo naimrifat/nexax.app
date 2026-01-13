@@ -113,9 +113,26 @@ async function publishToEbayInventoryApi(opts: {
   });
 
   if (!r.ok) {
-    const j = await r.json().catch(() => ({}));
-    console.error('[ebay] inventory_item PUT failed', { requestId, status: r.status, j });
-    throw new Error(j?.errors?.[0]?.message || j?.message || 'Failed to upsert inventory item');
+    const text = await r.text().catch(() => '');
+    let j: any = {};
+    try {
+      j = text ? JSON.parse(text) : {};
+    } catch {
+      j = { raw: text };
+    }
+    const firstErr = j?.errors?.[0] || {};
+    console.error('[ebay] inventory_item PUT failed', {
+      requestId,
+      status: r.status,
+      errorId: firstErr.errorId,
+      domain: firstErr.domain,
+      category: firstErr.category,
+      message: firstErr.message,
+      longMessage: firstErr.longMessage,
+      parameters: firstErr.parameters,
+      body: j,
+    });
+    throw new Error(firstErr.message || firstErr.longMessage || j.message || 'eBay API error');
   }
 
   // 2) Create offer
@@ -147,10 +164,27 @@ async function publishToEbayInventoryApi(opts: {
     body: JSON.stringify(offerPayload),
   });
 
-  const offerJson: any = await r.json().catch(() => ({}));
+  const offerText = await r.text().catch(() => '');
+  let offerJson: any = {};
+  try {
+    offerJson = offerText ? JSON.parse(offerText) : {};
+  } catch {
+    offerJson = { raw: offerText };
+  }
   if (!r.ok) {
-    console.error('[ebay] offer POST failed', { requestId, status: r.status, offerJson });
-    throw new Error(offerJson?.errors?.[0]?.message || offerJson?.message || 'Failed to create offer');
+    const firstErr = offerJson?.errors?.[0] || {};
+    console.error('[ebay] offer POST failed', {
+      requestId,
+      status: r.status,
+      errorId: firstErr.errorId,
+      domain: firstErr.domain,
+      category: firstErr.category,
+      message: firstErr.message,
+      longMessage: firstErr.longMessage,
+      parameters: firstErr.parameters,
+      body: offerJson,
+    });
+    throw new Error(firstErr.message || firstErr.longMessage || offerJson.message || 'eBay API error');
   }
 
   const offerId = String(offerJson.offerId || '');
@@ -167,10 +201,27 @@ async function publishToEbayInventoryApi(opts: {
     },
   });
 
-  const pubJson: any = await r.json().catch(() => ({}));
+  const pubText = await r.text().catch(() => '');
+  let pubJson: any = {};
+  try {
+    pubJson = pubText ? JSON.parse(pubText) : {};
+  } catch {
+    pubJson = { raw: pubText };
+  }
   if (!r.ok) {
-    console.error('[ebay] publish POST failed', { requestId, status: r.status, pubJson });
-    throw new Error(pubJson?.errors?.[0]?.message || pubJson?.message || 'Failed to publish offer');
+    const firstErr = pubJson?.errors?.[0] || {};
+    console.error('[ebay] publish POST failed', {
+      requestId,
+      status: r.status,
+      errorId: firstErr.errorId,
+      domain: firstErr.domain,
+      category: firstErr.category,
+      message: firstErr.message,
+      longMessage: firstErr.longMessage,
+      parameters: firstErr.parameters,
+      body: pubJson,
+    });
+    throw new Error(firstErr.message || firstErr.longMessage || pubJson.message || 'eBay API error');
   }
 
   const ebayListingId = String(pubJson.listingId || pubJson.itemId || '');
