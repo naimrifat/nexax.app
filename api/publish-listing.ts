@@ -393,9 +393,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ''
     ).trim();
 
-    if (!paymentPolicyId) errors.push('Payment policy ID is required.');
-    if (!returnPolicyId) errors.push('Return policy ID is required.');
-    if (!fulfillmentPolicyId) errors.push('Fulfillment (shipping) policy ID is required.');
+    if (!paymentPolicyId || paymentPolicyId.length < 5) errors.push('Payment policy ID is invalid (must be a real eBay policy ID).');
+    if (!returnPolicyId || returnPolicyId.length < 5) errors.push('Return policy ID is invalid (must be a real eBay policy ID).');
+    if (!fulfillmentPolicyId || fulfillmentPolicyId.length < 5) errors.push('Fulfillment (shipping) policy ID is invalid (must be a real eBay policy ID).');
 
     if (errors.length) {
       try {
