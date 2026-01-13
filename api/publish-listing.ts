@@ -58,9 +58,10 @@ async function publishToEbayInventoryApi(opts: {
   accessToken: string;
   marketplaceId: string; // e.g. EBAY_US
   listing: any;
+  merchantLocationKey: string;
   requestId: string;
 }) {
-  const { env, accessToken, marketplaceId, listing, requestId } = opts;
+  const { env, accessToken, marketplaceId, listing, merchantLocationKey, requestId } = opts;
   const base = pickEbayApiBase(env);
 
   // Use listing id as SKU (stable)
@@ -158,6 +159,12 @@ async function publishToEbayInventoryApi(opts: {
       price: { value: price.toFixed(2), currency },
     },
   };
+
+  const country = String(process.env.EBAY_ITEM_COUNTRY || 'US').trim();
+  const postalCode = String(process.env.EBAY_ITEM_POSTAL_CODE || '10001').trim();
+
+  offerPayload.merchantLocationKey = merchantLocationKey;
+  offerPayload.location = { country, postalCode };
 
   r = await fetch(offerUrl, {
     method: 'POST',
@@ -475,10 +482,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const env = String(process.env.EBAY_ENV || 'production').toLowerCase() as 'production' | 'sandbox';
       const accessToken = await getValidEbayToken(String((listing as any).workspace_id), env);
 
+      const merchantLocationKey = "mainWarehouse";
+
       await ensureMerchantLocation({
         env,
         accessToken,
-        merchantLocationKey: "mainWarehouse",
+        merchantLocationKey,
         requestId,
       });
 
@@ -490,8 +499,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         accessToken,
         marketplaceId: EBAY_MARKETPLACE_ID,
         listing: listingForPublish,
+        merchantLocationKey,
         requestId,
       });
+
 
       // 7) Update DB as published
       const finishedAt = nowIso();
