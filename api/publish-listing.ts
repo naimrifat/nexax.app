@@ -131,7 +131,11 @@ async function publishToEbayInventoryApi(opts: {
       message: firstErr.message,
       longMessage: firstErr.longMessage,
       parameters: firstErr.parameters,
+      bodyText: text,
       body: j,
+      firstErr,
+      firstErrString: JSON.stringify(firstErr, null, 2),
+      bodyJsonString: JSON.stringify(j, null, 2),
     });
     throw new Error(firstErr.message || firstErr.longMessage || j.message || 'eBay API error');
   }
