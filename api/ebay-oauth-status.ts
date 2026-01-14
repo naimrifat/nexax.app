@@ -1,6 +1,8 @@
 // api/ebay-oauth-status.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import { sentryCaptureException } from "./_lib/sentry.js";
+
 
 function mustEnv(name: string) {
   const v = process.env[name];
@@ -72,7 +74,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       requestId,
     });
   } catch (err: any) {
+    sentryCaptureException(err, {
+      operation: 'ebay_oauth_status',
+      requestId,
+      extras: { message: String(err?.message || ''), status: 500 },
+    });
     console.error('[ebay-oauth-status] error', { requestId, err });
     return res.status(500).json({ error: 'Internal server error', details: err?.message, requestId });
   }
+
 }
