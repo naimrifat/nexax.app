@@ -63,11 +63,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // If we have a refresh token, we can always refresh access silently.
     const connected = !!data?.id && !!data?.refresh_token;
 
+    const reason = connected ? null : !data?.id ? 'not_connected' : 'missing_refresh_token';
+
     // Optional: tell UI that a refresh will be needed soon (useful for debugging; not user-facing).
     const needsRefresh = connected && accessExpired;
 
     return res.status(200).json({
       connected,
+      reason,
       needsRefresh, // informational; you can ignore in UI
       accessExpired, // informational; you should NOT show "not connected" because of this
       updatedAt: data?.updated_at || null,
