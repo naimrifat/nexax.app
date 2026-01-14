@@ -2063,6 +2063,24 @@ export default function ResultsPage() {
             {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
           </button>
 
+          {draftSavedSuccessfully ? (
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              style={{
+                padding: '12px 24px',
+                background: '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: 4,
+                cursor: 'pointer',
+                fontSize: 16,
+                fontWeight: 600,
+              }}
+            >
+              Go to Dashboard
+            </button>
+          ) : null}
 
           <button
             type="button"
@@ -2081,26 +2099,6 @@ export default function ResultsPage() {
           </button>
         </div>
 
-        {draftSavedSuccessfully ? (
-          <div style={{ marginTop: 12 }}>
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              style={{
-                padding: '10px 16px',
-                background: '#3b82f6',
-                color: 'white',
-                border: 'none',
-                borderRadius: 6,
-                cursor: 'pointer',
-                fontSize: 14,
-                fontWeight: 700,
-              }}
-            >
-              Go to Dashboard
-            </button>
-          </div>
-        ) : null}
 
         {preflightPassed === true ? (
           <div
