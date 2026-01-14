@@ -234,7 +234,7 @@ function TokenSelect({
   return (
     <div ref={containerRef} className="relative">
       <div
-        className={`min-h-[38px] w-full flex flex-wrap items-center gap-1 rounded-md border bg-white px-2 py-1 text-sm transition focus-within:ring-2 ${
+        className={`min-h-[32px] w-full flex flex-wrap items-center gap-1 rounded-md border bg-white px-2 py-0.5 text-sm transition focus-within:ring-2 ${
           hasError ? 'border-red-500 focus-within:ring-red-500' : 'focus-within:ring-teal-500'
         } ${disabled ? 'opacity-60 cursor-not-allowed border-gray-200' : hasError ? 'border-red-500' : 'border-gray-300'}`}
         onClick={() => {
@@ -245,7 +245,7 @@ function TokenSelect({
       >
         {multi &&
           selected.map((s) => (
-            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-1">
+            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-0.5">
               {s}
               <button
                 type="button"
@@ -283,7 +283,7 @@ function TokenSelect({
           onFocus={() => !disabled && setOpen(true)}
           disabled={disabled}
           placeholder={selected.length ? '' : placeholder || 'Search & select...'}
-          className="flex-1 min-w-[120px] border-0 outline-none text-sm py-1 placeholder-gray-400"
+          className="flex-1 min-w-[120px] border-0 outline-none text-sm py-0.5 placeholder-gray-400"
         />
 
         {(multi ? selected.length > 0 : !!selected[0]) && !query && !disabled && (
