@@ -6,53 +6,62 @@ export function EbayConnectCard() {
   const { workspaceId } = useAuth();
 
   const [loading, setLoading] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [statusMsg, setStatusMsg] = useState<string>('');
 
+
   async function loadStatus() {
+    setStatusLoading(true);
     setStatusMsg('');
     setConnected(null);
 
-    const {
-      data: { session },
-      error,
-    } = await supabase.auth.getSession();
+    try {
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.getSession();
 
-    if (error || !session?.access_token) {
-      setStatusMsg('Not logged in. Please sign in again.');
-      setConnected(false);
-      return;
-    }
+      if (error || !session?.access_token) {
+        setStatusMsg('Not logged in. Please sign in again.');
+        setConnected(false);
+        return;
+      }
 
-    if (!workspaceId) {
-      setStatusMsg('Workspace not ready yet. Try again in a moment.');
-      setConnected(false);
-      return;
-    }
+      if (!workspaceId) {
+        setStatusMsg('Workspace not ready yet. Try again in a moment.');
+        setConnected(false);
+        return;
+      }
 
-    const res = await fetch('/api/ebay-oauth-status', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ workspace_id: workspaceId }),
-    });
+      const res = await fetch('/api/ebay-oauth-status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      });
 
-    const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({}));
 
-    if (!res.ok) {
-      setStatusMsg(data?.error || 'Failed to check eBay connection status.');
-      setConnected(false);
-      return;
-    }
+      if (!res.ok) {
+        setStatusMsg(data?.error || 'Failed to check eBay connection status.');
+        setConnected(false);
+        return;
+      }
 
-    setConnected(!!data.connected);
+      const isConnected = !!data.connected;
+      setConnected(isConnected);
 
-    if (data.accessExpired) {
-      setStatusMsg('eBay token expired. Please reconnect.');
+      if (!isConnected && data?.reason === 'missing_refresh_token') {
+        setStatusMsg('Expired — please reconnect');
+      }
+    } finally {
+      setStatusLoading(false);
     }
   }
+
 
   async function connect() {
     setLoading(true);
@@ -87,18 +96,20 @@ export function EbayConnectCard() {
       });
 
       const data = await res.json().catch(() => ({}));
+      const oauthUrl = data?.oauthUrl ?? data?.url;
 
-      if (!res.ok || !data?.url) {
+      if (!res.ok || !oauthUrl) {
         setStatusMsg(data?.error || 'Failed to start eBay OAuth.');
         return;
       }
 
       // Redirect user to eBay consent screen
-      window.location.href = data.url;
+      window.location.href = String(oauthUrl);
     } finally {
       setLoading(false);
     }
   }
+
 
   useEffect(() => {
     void loadStatus();
@@ -110,40 +121,43 @@ export function EbayConnectCard() {
       <h3 style={{ marginTop: 0, marginBottom: 8 }}>eBay Connection</h3>
 
       <div style={{ marginBottom: 12, color: '#555' }}>
-        Status: {connected === null ? 'Checking…' : connected ? 'Connected' : 'Not connected'}
+        Status: {connected === null ? 'Checking…' : connected ? 'Connected' : 'Disconnected'}
       </div>
+
 
       {statusMsg ? <div style={{ marginBottom: 12, color: '#b45309' }}>{statusMsg}</div> : null}
 
       <div style={{ display: 'flex', gap: 10 }}>
         <button
           onClick={connect}
-          disabled={loading}
+          disabled={loading || statusLoading}
           style={{
             padding: '10px 16px',
             borderRadius: 6,
             border: 'none',
-            background: '#0064d2',
+            background: loading || statusLoading ? '#999' : '#0064d2',
             color: '#fff',
-            cursor: loading ? 'default' : 'pointer',
+            cursor: loading || statusLoading ? 'default' : 'pointer',
           }}
         >
-          {loading ? 'Redirecting…' : connected ? 'Reconnect eBay' : 'Connect eBay'}
+          {loading ? 'Redirecting…' : 'Reconnect eBay'}
         </button>
+
 
         <button
           onClick={loadStatus}
-          disabled={loading}
+          disabled={loading || statusLoading}
           style={{
             padding: '10px 16px',
             borderRadius: 6,
             border: '1px solid #ddd',
             background: '#fff',
-            cursor: loading ? 'default' : 'pointer',
+            cursor: loading || statusLoading ? 'default' : 'pointer',
           }}
         >
           Refresh
         </button>
+
       </div>
     </div>
   );
