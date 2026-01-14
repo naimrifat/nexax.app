@@ -1,6 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { getValidEbayToken } from "./_lib/ebay-token-manager.js";
+import { sentryCaptureException } from "./_lib/sentry.js";
+
 
 
 export const config = {
@@ -169,12 +171,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } = await userClient.auth.getUser();
 
     if (authErr || !user) {
+      sentryCaptureException(new Error('Unauthorized'), {
+        operation: 'ebay_policy_lists',
+        requestId,
+        extras: { code: 'UNAUTHORIZED', status: 401, message: 'Unauthorized' },
+      });
       return res.status(401).json({ error: "Unauthorized", requestId });
     }
 
+
     // Inputs
     const workspaceId = String(req.query.workspace_id || "").trim();
-    if (!workspaceId) return res.status(400).json({ error: "Missing workspace_id", requestId });
+    if (!workspaceId) {
+      sentryCaptureException(new Error('Missing workspace_id'), {
+        operation: 'ebay_policy_lists',
+        requestId,
+        extras: { code: 'VALIDATION_ERROR', status: 400, message: 'Missing workspace_id' },
+      });
+      return res.status(400).json({ error: "Missing workspace_id", requestId });
+    }
+
 
     const env = normalizeEnv(req.query.env);
     const marketplaceId = normalizeMarketplaceId(req.query.marketplace_id);
@@ -196,8 +212,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const uRow = (u.data as any) || null;
     if (!uRow || uRow.workspace_id !== workspaceId) {
+      sentryCaptureException(new Error('Forbidden'), {
+        operation: 'ebay_policy_lists',
+        requestId,
+        workspace_id: workspaceId,
+        extras: { code: 'FORBIDDEN', status: 403, message: 'Forbidden' },
+      });
       return res.status(403).json({ error: "Forbidden", requestId });
     }
+
 
     // Get eBay access token (centralized)
     const accessToken = await getValidEbayToken(workspaceId, env);
@@ -222,7 +245,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     } catch (e: any) {
       if (isEbayBusinessPolicyIneligible(e)) {
+        sentryCaptureException(e, {
+          operation: 'ebay_policy_lists',
+          requestId,
+          workspace_id: workspaceId,
+          extras: { code: 'INELIGIBLE', status: 200, message: String(e?.message || '') },
+        });
         return res.status(200).json({
+
           success: true,
           requestId,
           workspace_id: workspaceId,
@@ -239,14 +269,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const status = e?.statusCode || 500;
+      sentryCaptureException(e, {
+        operation: 'ebay_policy_lists',
+        requestId,
+        workspace_id: workspaceId,
+        extras: { status, code: String(e?.code || ''), message: String(e?.message || '') },
+      });
       return res.status(status).json({
         error: e?.message || "Failed to fetch eBay policy lists",
         requestId,
         details: e?.details || null,
       });
+
     }
   } catch (err: any) {
     const statusCode = Number(err?.statusCode || 500);
+    sentryCaptureException(err, {
+      operation: 'ebay_policy_lists',
+      requestId,
+      extras: { status: statusCode, code: String(err?.code || ''), message: String(err?.message || '') },
+    });
 
     return res.status(statusCode).json({
       error: err?.message || "Internal server error",
@@ -255,4 +297,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       details: err?.details || null,
     });
   }
+
 }
