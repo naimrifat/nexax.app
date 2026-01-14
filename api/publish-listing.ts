@@ -616,6 +616,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
   } catch (err: any) {
+    if (err?.code === 'EBAY_INVALID_GRANT') {
+      sentryCaptureException(new Error('eBay reconnect required'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: {
+          code: 'EBAY_RECONNECT_REQUIRED',
+          message: 'eBay connection expired. Please reconnect eBay.',
+        },
+      });
+
+      return respond(res, 401, {
+        ok: false,
+        code: 'EBAY_RECONNECT_REQUIRED',
+        message: 'eBay connection expired. Please reconnect eBay.',
+        errors: [],
+        requestId,
+      });
+    }
+
     const msg = String(err?.message || '');
     const isEbay = msg.includes('eBay rejected');
 
