@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { getValidEbayToken } from "./_lib/ebay-token-manager.js";
 import { ensureMerchantLocation } from "./_lib/ebay-merchant-location.js";
+import { ebayFetch, EbayHttpError } from "./_lib/ebay-http.js";
 import { classifyEbayError } from "./_lib/ebay-error-classifier.js";
 import { sentryCaptureException } from "./_lib/sentry.js";
 
@@ -109,29 +110,29 @@ async function publishToEbayInventoryApi(opts: {
     },
   };
 
-  let r = await fetch(inventoryItemUrl, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      'Content-Language': 'en-US',
-      'Accept-Language': 'en-US',
+  const r1 = await ebayFetch(
+    inventoryItemUrl,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Content-Language': 'en-US',
+        'Accept-Language': 'en-US',
+      },
+      body: JSON.stringify(invPayload),
     },
-    body: JSON.stringify(invPayload),
-  });
+    { requestId, operation: 'publish' }
+  );
 
-  if (!r.ok) {
-    const text = await r.text().catch(() => '');
-    let j: any = {};
-    try {
-      j = text ? JSON.parse(text) : {};
-    } catch {
-      j = { raw: text };
-    }
+  if (!r1.ok) {
+    const text = r1.text || '';
+    const j: any = r1.json || {};
+
     const firstErr = j?.errors?.[0] || {};
     console.error('[ebay] inventory_item PUT failed', {
       requestId,
-      status: r.status,
+      status: r1.status,
       errorId: firstErr.errorId,
       domain: firstErr.domain,
       category: firstErr.category,
@@ -144,13 +145,15 @@ async function publishToEbayInventoryApi(opts: {
       firstErrString: JSON.stringify(firstErr, null, 2),
       bodyJsonString: JSON.stringify(j, null, 2),
     });
+
     const e: any = new Error(
       `eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${
         firstErr.message || firstErr.longMessage || j.message || 'eBay API error'
       }`
     );
-    e.statusCode = r.status;
+    e.statusCode = r1.status;
     e.ebayPayload = j;
+    if (r1.meta?.retryExhausted) e.hint = 'retry_exhausted';
     throw e;
   }
 
@@ -179,29 +182,29 @@ async function publishToEbayInventoryApi(opts: {
   offerPayload.merchantLocationKey = merchantLocationKey;
   offerPayload.location = { country, postalCode };
 
-  r = await fetch(offerUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      'Content-Language': 'en-US',
-      'Accept-Language': 'en-US',
+  const r2 = await ebayFetch(
+    offerUrl,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Content-Language': 'en-US',
+        'Accept-Language': 'en-US',
+      },
+      body: JSON.stringify(offerPayload),
     },
-    body: JSON.stringify(offerPayload),
-  });
+    { requestId, operation: 'publish' }
+  );
 
-  const offerText = await r.text().catch(() => '');
-  let offerJson: any = {};
-  try {
-    offerJson = offerText ? JSON.parse(offerText) : {};
-  } catch {
-    offerJson = { raw: offerText };
-  }
-  if (!r.ok) {
+  const offerText = r2.text || '';
+  const offerJson: any = r2.json || {};
+
+  if (!r2.ok) {
     const firstErr = offerJson?.errors?.[0] || {};
     console.error('[ebay] offer POST failed', {
       requestId,
-      status: r.status,
+      status: r2.status,
       errorId: firstErr.errorId,
       domain: firstErr.domain,
       category: firstErr.category,
@@ -210,13 +213,15 @@ async function publishToEbayInventoryApi(opts: {
       parameters: firstErr.parameters,
       body: offerJson,
     });
+
     const e: any = new Error(
       `eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${
         firstErr.message || firstErr.longMessage || offerJson.message || 'eBay API error'
       }`
     );
-    e.statusCode = r.status;
+    e.statusCode = r2.status;
     e.ebayPayload = offerJson;
+    if (r2.meta?.retryExhausted) e.hint = 'retry_exhausted';
     throw e;
   }
 
@@ -225,28 +230,28 @@ async function publishToEbayInventoryApi(opts: {
 
   // 3) Publish offer
   const publishUrl = `${base}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`;
-  r = await fetch(publishUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      'Content-Language': 'en-US',
-      'Accept-Language': 'en-US',
+  const r3 = await ebayFetch(
+    publishUrl,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Content-Language': 'en-US',
+        'Accept-Language': 'en-US',
+      },
     },
-  });
+    { requestId, operation: 'publish' }
+  );
 
-  const pubText = await r.text().catch(() => '');
-  let pubJson: any = {};
-  try {
-    pubJson = pubText ? JSON.parse(pubText) : {};
-  } catch {
-    pubJson = { raw: pubText };
-  }
-  if (!r.ok) {
+  const pubText = r3.text || '';
+  const pubJson: any = r3.json || {};
+
+  if (!r3.ok) {
     const firstErr = pubJson?.errors?.[0] || {};
     console.error('[ebay] publish POST failed', {
       requestId,
-      status: r.status,
+      status: r3.status,
       errorId: firstErr.errorId,
       domain: firstErr.domain,
       category: firstErr.category,
@@ -255,13 +260,15 @@ async function publishToEbayInventoryApi(opts: {
       parameters: firstErr.parameters,
       body: pubJson,
     });
+
     const e: any = new Error(
       `eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${
         firstErr.message || firstErr.longMessage || pubJson.message || 'eBay API error'
       }`
     );
-    e.statusCode = r.status;
+    e.statusCode = r3.status;
     e.ebayPayload = pubJson;
+    if (r3.meta?.retryExhausted) e.hint = 'retry_exhausted';
     throw e;
   }
 
@@ -659,6 +666,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (err instanceof EbayHttpError) {
+      err = Object.assign(new Error(String(err.message || 'eBay request failed')), {
+        statusCode: err.statusCode,
+        hint: err.hint,
+      });
+    }
+
     const msg = String(err?.message || '');
     const isEbay = msg.includes('eBay rejected') || !!err?.ebayPayload || typeof err?.statusCode === 'number';
 
@@ -679,6 +693,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           code: classified.code,
           httpStatus: classified.httpStatus,
           message: classified.message,
+          hint: err?.hint || undefined,
         },
       });
 
