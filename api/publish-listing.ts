@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { getValidEbayToken } from "./_lib/ebay-token-manager.js";
 import { ensureMerchantLocation } from "./_lib/ebay-merchant-location.js";
+import { classifyEbayError } from "./_lib/ebay-error-classifier.js";
 import { sentryCaptureException } from "./_lib/sentry.js";
 
 export const config = {
@@ -143,7 +144,14 @@ async function publishToEbayInventoryApi(opts: {
       firstErrString: JSON.stringify(firstErr, null, 2),
       bodyJsonString: JSON.stringify(j, null, 2),
     });
-    throw new Error(`eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${firstErr.message || firstErr.longMessage || j.message || 'eBay API error'}`);
+    const e: any = new Error(
+      `eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${
+        firstErr.message || firstErr.longMessage || j.message || 'eBay API error'
+      }`
+    );
+    e.statusCode = r.status;
+    e.ebayPayload = j;
+    throw e;
   }
 
   // 2) Create offer
@@ -202,7 +210,14 @@ async function publishToEbayInventoryApi(opts: {
       parameters: firstErr.parameters,
       body: offerJson,
     });
-    throw new Error(`eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${firstErr.message || firstErr.longMessage || offerJson.message || 'eBay API error'}`);
+    const e: any = new Error(
+      `eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${
+        firstErr.message || firstErr.longMessage || offerJson.message || 'eBay API error'
+      }`
+    );
+    e.statusCode = r.status;
+    e.ebayPayload = offerJson;
+    throw e;
   }
 
   const offerId = String(offerJson.offerId || '');
@@ -240,7 +255,14 @@ async function publishToEbayInventoryApi(opts: {
       parameters: firstErr.parameters,
       body: pubJson,
     });
-    throw new Error(`eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${firstErr.message || firstErr.longMessage || pubJson.message || 'eBay API error'}`);
+    const e: any = new Error(
+      `eBay rejected the request (errorId: ${String(firstErr.errorId || '') || 'unknown'}): ${
+        firstErr.message || firstErr.longMessage || pubJson.message || 'eBay API error'
+      }`
+    );
+    e.statusCode = r.status;
+    e.ebayPayload = pubJson;
+    throw e;
   }
 
   const ebayListingId = String(pubJson.listingId || pubJson.itemId || '');
@@ -638,21 +660,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const msg = String(err?.message || '');
-    const isEbay = msg.includes('eBay rejected');
+    const isEbay = msg.includes('eBay rejected') || !!err?.ebayPayload || typeof err?.statusCode === 'number';
 
     if (isEbay) {
-      sentryCaptureException(new Error(msg || 'eBay publish error'), {
+      const classified = classifyEbayError({
+        statusCode: typeof err?.statusCode === 'number' ? err.statusCode : undefined,
+        ebayPayload: err?.ebayPayload,
+        fallbackMessage: msg,
+        errorCode: err?.code,
+      });
+
+      sentryCaptureException(new Error('eBay publish error'), {
         operation: 'publish',
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
-        extras: { code: 'EBAY_ERROR', message: msg },
+        extras: {
+          code: classified.code,
+          httpStatus: classified.httpStatus,
+          message: classified.message,
+        },
       });
-      return respond(res, 502, {
+
+      return respond(res, classified.httpStatus, {
         ok: false,
         requestId,
-        code: 'EBAY_ERROR',
-        message: msg,
+        code: classified.code,
+        message: classified.message,
+        errors: classified.errors || [],
       });
     }
 
