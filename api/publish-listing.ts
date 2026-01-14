@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { getValidEbayToken } from "./_lib/ebay-token-manager.js";
 import { ensureMerchantLocation } from "./_lib/ebay-merchant-location.js";
+import { sentryCaptureException } from "./_lib/sentry.js";
 
 export const config = {
   api: { bodyParser: { sizeLimit: '2mb' } },
@@ -255,6 +256,8 @@ async function publishToEbayInventoryApi(opts: {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const requestId = makeRequestId();
+  let listingIdForSentry: string | null = null;
+  let workspaceIdForSentry: string | null = null;
 
   if (req.method !== 'POST') {
     return respond(res, 405, { ok: false, requestId, code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' });
@@ -281,13 +284,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const user = authData?.user;
 
     if (authErr || !user) {
+      sentryCaptureException(new Error('Unauthorized'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: { code: 'UNAUTHORIZED', message: 'Unauthorized' },
+      });
       return respond(res, 401, { ok: false, requestId, code: 'UNAUTHORIZED', message: 'Unauthorized' });
     }
 
     // 2) Input
     const body: any = req.body || {};
     const listingId = body.listing_id || body.listingId || body.id;
-    if (!listingId) return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors: ['Missing listing_id'] });
+    listingIdForSentry = listingId ? String(listingId) : null;
+    if (!listingId) {
+      sentryCaptureException(new Error('Validation failed'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: { code: 'VALIDATION_ERROR', message: 'Missing listing_id' },
+      });
+      return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors: ['Missing listing_id'] });
+    }
 
     // 3) Load listing
     const { data: listing, error: listingErr } = await userClient
@@ -322,13 +342,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq('id', listingId)
       .single();
 
-    if (listingErr || !listing) return respond(res, 404, { ok: false, requestId, code: 'NOT_FOUND', message: 'Listing not found' });
+    if (listingErr || !listing) {
+      sentryCaptureException(new Error('Listing not found'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: { code: 'NOT_FOUND', message: 'Listing not found' },
+      });
+      return respond(res, 404, { ok: false, requestId, code: 'NOT_FOUND', message: 'Listing not found' });
+    }
+
+    workspaceIdForSentry = (listing as any).workspace_id ? String((listing as any).workspace_id) : null;
 
     if ((listing as any).created_by !== user.id) {
+      sentryCaptureException(new Error('Forbidden'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: { code: 'FORBIDDEN', message: 'Forbidden' },
+      });
       return respond(res, 403, { ok: false, requestId, code: 'FORBIDDEN', message: 'Forbidden' });
     }
 
     if (((listing as any).marketplace || 'ebay').toLowerCase() !== 'ebay') {
+      sentryCaptureException(new Error('Validation failed'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: { code: 'VALIDATION_ERROR', message: 'Only eBay publishing is supported currently' },
+      });
       return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors: ['Only eBay publishing is supported currently'] });
     }
 
@@ -348,6 +393,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (status === 'publishing') {
+      sentryCaptureException(new Error('Publishing in progress'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: { code: 'PUBLISH_IN_PROGRESS', message: 'Publishing in progress. Please wait and refresh.' },
+      });
       return respond(res, 409, {
         ok: false,
         requestId,
@@ -416,6 +468,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.error('[publish] failed to persist validation error', { requestId, e });
       }
 
+      sentryCaptureException(new Error('Validation failed'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: { code: 'VALIDATION_ERROR', message: 'Validation failed', errors },
+      });
       return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors });
     }
 
@@ -561,6 +620,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const isEbay = msg.includes('eBay rejected');
 
     if (isEbay) {
+      sentryCaptureException(new Error(msg || 'eBay publish error'), {
+        operation: 'publish',
+        requestId,
+        listing_id: listingIdForSentry,
+        workspace_id: workspaceIdForSentry,
+        extras: { code: 'EBAY_ERROR', message: msg },
+      });
       return respond(res, 502, {
         ok: false,
         requestId,
@@ -569,6 +635,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    sentryCaptureException(new Error(msg || 'Unexpected server error'), {
+      operation: 'publish',
+      requestId,
+      listing_id: listingIdForSentry,
+      workspace_id: workspaceIdForSentry,
+      extras: { code: 'UNEXPECTED', message: msg || 'Unexpected server error.' },
+    });
     return respond(res, 500, {
       ok: false,
       requestId,
