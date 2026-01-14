@@ -401,6 +401,7 @@ export default function ResultsPage() {
   const [ebayReconnectRequired, setEbayReconnectRequired] = useState(false);
   const [ebayReconnectLoading, setEbayReconnectLoading] = useState(false);
   const [ebayReconnectError, setEbayReconnectError] = useState<string | null>(null);
+  const [showTitleInlineError, setShowTitleInlineError] = useState(false);
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -430,6 +431,8 @@ export default function ResultsPage() {
   const aiDetectedRef = useRef<AiDetected>({});
   const aiSpecificsRef = useRef<ItemSpecific[]>([]);
   const didInitialLoadRef = useRef(false);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const descriptionInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   // ----------------------------
   // Tenancy guard
@@ -1202,6 +1205,7 @@ export default function ResultsPage() {
   };
 
   const handlePublish = async () => {
+    setShowTitleInlineError(true);
     setLastPublishCode(null);
     setPublishErrors([]);
     setPublishSuccess(null);
@@ -1211,6 +1215,20 @@ export default function ResultsPage() {
     const clientErrors = validateBeforePublish();
     if (clientErrors.length) {
       setPublishErrors(clientErrors);
+
+      // Focus/scroll first invalid field (Title first)
+      if (!title.trim()) {
+        titleInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        titleInputRef.current?.focus();
+        return;
+      }
+
+      if (!description.trim()) {
+        descriptionInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        descriptionInputRef.current?.focus();
+        return;
+      }
+
       return;
     }
 
@@ -1440,12 +1458,18 @@ export default function ResultsPage() {
         <section style={{ marginTop: 24 }}>
           <h3>Title</h3>
           <input
+            ref={titleInputRef}
             placeholder="Enter title..."
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setTitle(e.target.value);
+            }}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
             maxLength={80}
           />
+          {showTitleInlineError && !title.trim() ? (
+            <div style={{ marginTop: 6, fontSize: 12, color: '#b91c1c' }}>Title is required.</div>
+          ) : null}
           <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
         </section>
 
@@ -1537,6 +1561,7 @@ export default function ResultsPage() {
         <section style={{ marginTop: 24 }}>
           <h3>Description</h3>
           <textarea
+            ref={descriptionInputRef}
             placeholder="Enter description..."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -1818,99 +1843,41 @@ export default function ResultsPage() {
             View All Drafts
           </button>
 
-          {(() => {
-            const ebayNotConnected = lastPreflightCode === 'NOT_CONNECTED' || lastPublishCode === 'EBAY_RECONNECT_REQUIRED';
-            const checksOk = preflightPassed === true;
-            const accountSetupOk = lastPublishCode !== 'EBAY_ACCOUNT_SETUP_REQUIRED';
+          <button
+            type="button"
+            onClick={runEbayPreflight}
+            disabled={preflightLoading || publishing || disableActions}
+            style={{
+              padding: '12px 24px',
+              background: preflightLoading || publishing || disableActions ? '#999' : '#0f766e',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: preflightLoading || publishing || disableActions ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {preflightLoading ? 'Running checks…' : 'Run eBay Checks'}
+          </button>
 
-            if (ebayNotConnected) {
-              return (
-                <button
-                  type="button"
-                  onClick={handleReconnectEbay}
-                  disabled={ebayReconnectLoading || publishing || preflightLoading || disableActions}
-                  style={{
-                    padding: '12px 32px',
-                    background: ebayReconnectLoading || publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: 4,
-                    cursor: ebayReconnectLoading || publishing || preflightLoading || disableActions ? 'default' : 'pointer',
-                    fontSize: 16,
-                    fontWeight: 600,
-                  }}
-                >
-                  {ebayReconnectLoading ? 'Redirecting…' : 'Reconnect eBay'}
-                </button>
-              );
-            }
-
-            if (!checksOk) {
-              return (
-                <button
-                  type="button"
-                  onClick={runEbayPreflight}
-                  disabled={preflightLoading || publishing || disableActions}
-                  style={{
-                    padding: '12px 32px',
-                    background: preflightLoading || publishing || disableActions ? '#999' : '#0f766e',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: 4,
-                    cursor: preflightLoading || publishing || disableActions ? 'default' : 'pointer',
-                    fontSize: 16,
-                    fontWeight: 600,
-                  }}
-                >
-                  {preflightLoading ? 'Running checks…' : 'Run eBay Checks'}
-                </button>
-              );
-            }
-
-            if (!accountSetupOk) {
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <button
-                    type="button"
-                    disabled
-                    style={{
-                      padding: '12px 32px',
-                      background: '#999',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: 4,
-                      cursor: 'default',
-                      fontSize: 16,
-                      fontWeight: 600,
-                    }}
-                  >
-                    Publish
-                  </button>
-                  <div style={{ fontSize: 12, color: '#6b7280' }}>Your eBay account requires setup before publishing.</div>
-                </div>
-              );
-            }
-
-            return (
-              <button
-                type="button"
-                onClick={handlePublish}
-                disabled={publishing || preflightLoading || disableActions}
-                style={{
-                  padding: '12px 32px',
-                  background: publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 4,
-                  cursor: publishing || preflightLoading || disableActions ? 'default' : 'pointer',
-                  fontSize: 16,
-                  fontWeight: 600,
-                }}
-              >
-                {publishing ? 'Publishing…' : 'Publish'}
-              </button>
-            );
-          })()}
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={publishing || preflightLoading || disableActions}
+            style={{
+              padding: '12px 32px',
+              background: publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: publishing || preflightLoading || disableActions ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {publishing ? 'Publishing…' : 'Publish'}
+          </button>
 
 
           <button
@@ -1981,7 +1948,24 @@ export default function ResultsPage() {
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: 6 }}>Your eBay connection expired. Reconnect to continue.</div>
-            {ebayReconnectError ? <div style={{ fontSize: 14 }}>{ebayReconnectError}</div> : null}
+            {ebayReconnectError ? <div style={{ fontSize: 14, marginBottom: 10 }}>{ebayReconnectError}</div> : null}
+            <button
+              type="button"
+              onClick={handleReconnectEbay}
+              disabled={ebayReconnectLoading}
+              style={{
+                padding: '12px 20px',
+                background: ebayReconnectLoading ? '#999' : '#0064d2',
+                color: 'white',
+                border: 'none',
+                borderRadius: 4,
+                cursor: ebayReconnectLoading ? 'default' : 'pointer',
+                fontSize: 16,
+                fontWeight: 600,
+              }}
+            >
+              {ebayReconnectLoading ? 'Redirecting…' : 'Reconnect eBay'}
+            </button>
           </div>
         ) : null}
 
