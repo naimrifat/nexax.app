@@ -1725,8 +1725,6 @@ export default function ResultsPage() {
             marginTop: 24,
             borderTop: '1px solid #eee',
             paddingTop: 16,
-            borderRadius: 6,
-            boxShadow: highlightMissing && missingRequirements.missingPolicies.length ? '0 0 0 2px #ef4444' : undefined,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -1767,7 +1765,12 @@ export default function ResultsPage() {
                   value={ebayFulfillmentPolicyId}
                   onChange={(e) => setEbayFulfillmentPolicyId(e.target.value)}
                   disabled={policyLoading}
-                  style={{ width: '100%', padding: 10 }}
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayFulfillmentPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
                 >
                   <option value="">Select…</option>
                   {fulfillmentPolicies.map((p) => (
@@ -1781,7 +1784,12 @@ export default function ResultsPage() {
                   value={ebayFulfillmentPolicyId}
                   onChange={(e) => setEbayFulfillmentPolicyId(e.target.value)}
                   placeholder="Enter shipping policy ID"
-                  style={{ width: '100%', padding: 10 }}
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayFulfillmentPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
                 />
               )}
             </div>
@@ -1896,7 +1904,12 @@ export default function ResultsPage() {
                   value={ebayReturnPolicyId}
                   onChange={(e) => setEbayReturnPolicyId(e.target.value)}
                   disabled={policyLoading}
-                  style={{ width: '100%', padding: 10 }}
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayReturnPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
                 >
                   <option value="">Select…</option>
                   {returnPolicies.map((p) => (
@@ -1910,7 +1923,12 @@ export default function ResultsPage() {
                   value={ebayReturnPolicyId}
                   onChange={(e) => setEbayReturnPolicyId(e.target.value)}
                   placeholder="Enter return policy ID"
-                  style={{ width: '100%', padding: 10 }}
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayReturnPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
                 />
               )}
             </div>
@@ -1922,7 +1940,12 @@ export default function ResultsPage() {
                   value={ebayPaymentPolicyId}
                   onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
                   disabled={policyLoading}
-                  style={{ width: '100%', padding: 10 }}
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayPaymentPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
                 >
                   <option value="">Select…</option>
                   {paymentPolicies.map((p) => (
@@ -1936,7 +1959,12 @@ export default function ResultsPage() {
                   value={ebayPaymentPolicyId}
                   onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
                   placeholder="Enter payment policy ID"
-                  style={{ width: '100%', padding: 10 }}
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayPaymentPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
                 />
               )}
             </div>
