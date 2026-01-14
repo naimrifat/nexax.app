@@ -2,6 +2,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
+import { sentryCaptureException } from "./_lib/sentry.js";
+
 
 function mustEnv(name: string) {
   const v = process.env[name];
@@ -32,7 +34,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed', requestId });
+    if (req.method !== 'POST') {
+      sentryCaptureException(new Error('Method not allowed'), { operation: 'ebay_oauth_start', requestId, extras: { status: 405 } });
+      return res.status(405).json({ error: 'Method not allowed', requestId });
+    }
+
 
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
@@ -80,8 +86,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     return res.status(200).json({ url: `${authBase}?${params.toString()}`, requestId });
-  } catch (err: any) {
-    console.error('[ebay-oauth-start] error', { requestId, err });
-    return res.status(500).json({ error: 'Internal server error', details: err?.message, requestId });
-  }
+   } catch (err: any) {
+     sentryCaptureException(err, {
+       operation: 'ebay_oauth_start',
+       requestId,
+       extras: { message: String(err?.message || ''), status: 500 },
+     });
+     console.error('[ebay-oauth-start] error', { requestId, err });
+     return res.status(500).json({ error: 'Internal server error', details: err?.message, requestId });
+   }
+
 }
