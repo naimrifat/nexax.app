@@ -1430,6 +1430,7 @@ export default function ResultsPage() {
           ebay_item_id: body?.ebay_item_id != null ? String(body.ebay_item_id) : null,
           ebay_listing_url: body?.ebay_listing_url != null ? String(body.ebay_listing_url) : null,
         });
+        setIsDirty(false);
         navigate('/dashboard');
         return;
       }
@@ -1531,6 +1532,7 @@ export default function ResultsPage() {
                     e.preventDefault();
                     if (dragIndex === null || dragIndex === idx) return;
 
+                    setIsDirty(true);
                     setImages((prevImages) => {
                       const next = [...prevImages];
                       const [moved] = next.splice(dragIndex, 1);
@@ -1606,10 +1608,7 @@ export default function ResultsPage() {
             <input
               placeholder="Enter SKU..."
               value={sku}
-              onChange={(e) => {
-                setIsDirty(true);
-                setSku(e.target.value);
-              }}
+              onChange={(e) => setSku(e.target.value)}
               style={{ width: '25%', minWidth: 160, padding: 12, fontSize: 14 }}
             />
           </div>
@@ -1730,10 +1729,7 @@ export default function ResultsPage() {
           <input
             placeholder="e.g., vintage, designer, rare"
             value={keywords}
-            onChange={(e) => {
-              setIsDirty(true);
-              setKeywords(e.target.value);
-            }}
+            onChange={(e) => setKeywords(e.target.value)}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
@@ -1805,7 +1801,10 @@ export default function ResultsPage() {
               {fulfillmentPolicies.length > 0 ? (
                 <select
                   value={ebayFulfillmentPolicyId}
-                  onChange={(e) => setEbayFulfillmentPolicyId(e.target.value)}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayFulfillmentPolicyId(e.target.value);
+                  }}
                   disabled={policyLoading}
                   style={{
                     width: '100%',
@@ -1824,7 +1823,10 @@ export default function ResultsPage() {
               ) : (
                 <input
                   value={ebayFulfillmentPolicyId}
-                  onChange={(e) => setEbayFulfillmentPolicyId(e.target.value)}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayFulfillmentPolicyId(e.target.value);
+                  }}
                   placeholder="Enter shipping policy ID"
                   style={{
                     width: '100%',
@@ -1842,7 +1844,10 @@ export default function ResultsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={packageWeightLb}
-                    onChange={(e) => setPackageWeightLb(e.target.value)}
+                    onChange={(e) => {
+                    setIsDirty(true);
+                    setPackageWeightLb(e.target.value);
+                  }}
                     inputMode="numeric"
                     placeholder="0"
                     style={{ width: '100%', padding: 10 }}
@@ -1852,7 +1857,10 @@ export default function ResultsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={packageWeightOz}
-                    onChange={(e) => setPackageWeightOz(e.target.value)}
+                    onChange={(e) => {
+                    setIsDirty(true);
+                    setPackageWeightOz(e.target.value);
+                  }}
                     inputMode="numeric"
                     placeholder="0–15"
                     style={{ width: '100%', padding: 10 }}
@@ -1868,7 +1876,10 @@ export default function ResultsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={packageLengthIn}
-                    onChange={(e) => setPackageLengthIn(e.target.value)}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPackageLengthIn(e.target.value);
+                    }}
                     inputMode="decimal"
                     placeholder="0"
                     style={{ width: '100%', padding: 10 }}
@@ -1878,7 +1889,10 @@ export default function ResultsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={packageWidthIn}
-                    onChange={(e) => setPackageWidthIn(e.target.value)}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPackageWidthIn(e.target.value);
+                    }}
                     inputMode="decimal"
                     placeholder="0"
                     style={{ width: '100%', padding: 10 }}
@@ -1888,7 +1902,10 @@ export default function ResultsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={packageHeightIn}
-                    onChange={(e) => setPackageHeightIn(e.target.value)}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPackageHeightIn(e.target.value);
+                    }}
                     inputMode="decimal"
                     placeholder="0"
                     style={{ width: '100%', padding: 10 }}
@@ -1903,7 +1920,10 @@ export default function ResultsPage() {
               <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden' }}>
                 <button
                   type="button"
-                  onClick={() => setIrregularPackage(true)}
+                  onClick={() => {
+                    setIsDirty(true);
+                    setIrregularPackage(true);
+                  }}
                   style={{
                     flex: 1,
                     padding: '10px 12px',
@@ -1919,7 +1939,10 @@ export default function ResultsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIrregularPackage(false)}
+                  onClick={() => {
+                    setIsDirty(true);
+                    setIrregularPackage(false);
+                  }}
                   style={{
                     flex: 1,
                     padding: '10px 12px',
@@ -1944,7 +1967,10 @@ export default function ResultsPage() {
               {returnPolicies.length > 0 ? (
                 <select
                   value={ebayReturnPolicyId}
-                  onChange={(e) => setEbayReturnPolicyId(e.target.value)}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayReturnPolicyId(e.target.value);
+                  }}
                   disabled={policyLoading}
                   style={{
                     width: '100%',
@@ -1963,7 +1989,10 @@ export default function ResultsPage() {
               ) : (
                 <input
                   value={ebayReturnPolicyId}
-                  onChange={(e) => setEbayReturnPolicyId(e.target.value)}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayReturnPolicyId(e.target.value);
+                  }}
                   placeholder="Enter return policy ID"
                   style={{
                     width: '100%',
@@ -1980,7 +2009,10 @@ export default function ResultsPage() {
               {paymentPolicies.length > 0 ? (
                 <select
                   value={ebayPaymentPolicyId}
-                  onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayPaymentPolicyId(e.target.value);
+                  }}
                   disabled={policyLoading}
                   style={{
                     width: '100%',
@@ -1999,7 +2031,10 @@ export default function ResultsPage() {
               ) : (
                 <input
                   value={ebayPaymentPolicyId}
-                  onChange={(e) => setEbayPaymentPolicyId(e.target.value)}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayPaymentPolicyId(e.target.value);
+                  }}
                   placeholder="Enter payment policy ID"
                   style={{
                     width: '100%',
