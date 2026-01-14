@@ -174,6 +174,7 @@ function TokenSelect({
   placeholder,
   multi = false,
   disabled = false,
+  hasError = false,
   onChange,
 }: {
   value: string | string[];
@@ -181,6 +182,7 @@ function TokenSelect({
   placeholder?: string;
   multi?: boolean;
   disabled?: boolean;
+  hasError?: boolean;
   onChange: (v: string | string[]) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -232,9 +234,9 @@ function TokenSelect({
   return (
     <div ref={containerRef} className="relative">
       <div
-        className={`min-h-[38px] w-full flex flex-wrap items-center gap-1 rounded-md border bg-white px-2 py-1 text-sm transition focus-within:ring-2 focus-within:ring-teal-500 ${
-          disabled ? 'opacity-60 cursor-not-allowed border-gray-200' : 'border-gray-300'
-        }`}
+        className={`min-h-[38px] w-full flex flex-wrap items-center gap-1 rounded-md border bg-white px-2 py-1 text-sm transition focus-within:ring-2 ${
+          hasError ? 'border-red-500 focus-within:ring-red-500' : 'focus-within:ring-teal-500'
+        } ${disabled ? 'opacity-60 cursor-not-allowed border-gray-200' : hasError ? 'border-red-500' : 'border-gray-300'}`}
         onClick={() => {
           if (disabled) return;
           setOpen(true);
@@ -318,7 +320,15 @@ function TokenSelect({
   );
 }
 
-function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange: (val: string | string[]) => void }) {
+function ItemSpecificControl({
+  spec,
+  onChange,
+  hasError,
+}: {
+  spec: ItemSpecific;
+  onChange: (val: string | string[]) => void;
+  hasError?: boolean;
+}) {
   const opts = Array.isArray(spec.options) ? spec.options : [];
   if (opts.length > 0 || spec.type === 'dropdown') {
     return (
@@ -327,6 +337,7 @@ function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange:
         value={spec.value ?? (spec.multi ? [] : '')}
         options={opts}
         disabled={spec.freeTextAllowed === false && opts.length === 0}
+        hasError={!!hasError}
         placeholder="Search & select..."
         onChange={(val) => onChange(val)}
       />
@@ -337,7 +348,9 @@ function ItemSpecificControl({ spec, onChange }: { spec: ItemSpecific; onChange:
   return (
     <input
       type="text"
-      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm"
+      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 text-sm ${
+        hasError ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-teal-500'
+      }`}
       placeholder={`Enter ${spec.name}`}
       value={valString}
       onChange={(e) => onChange(e.target.value)}
@@ -1648,7 +1661,16 @@ export default function ResultsPage() {
                   <span>{spec.name}</span>
                   {spec.required && <span className="ml-1 text-red-500">*</span>}
                 </label>
-                <ItemSpecificControl spec={spec} onChange={(val) => updateSpecific(i, val)} />
+                {(() => {
+                  const shouldHighlight = highlightMissing || showTitleInlineError;
+                  const value = (spec as any)?.value;
+                  const isMissing = Array.isArray(value)
+                    ? value.filter((v: any) => String(v ?? '').trim().length > 0).length === 0
+                    : String(value ?? '').trim().length === 0;
+                  const hasError = shouldHighlight && !!(spec as any)?.required && isMissing;
+
+                  return <ItemSpecificControl spec={spec} hasError={hasError} onChange={(val) => updateSpecific(i, val)} />;
+                })()}
               </div>
             ))}
           </div>
