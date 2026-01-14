@@ -56,6 +56,110 @@ function pickEbayApiBase(env: string) {
   return e === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
 }
 
+let cachedEbayAppToken: { access_token: string; expires_at: number } | null = null;
+
+async function getEbayAppToken(env: string, requestId: string): Promise<string> {
+  if (cachedEbayAppToken && cachedEbayAppToken.expires_at > Date.now()) {
+    return cachedEbayAppToken.access_token;
+  }
+
+  const clientId = process.env.EBAY_CLIENT_ID;
+  const clientSecret = process.env.EBAY_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error('eBay credentials not found (EBAY_CLIENT_ID / EBAY_CLIENT_SECRET)');
+  }
+
+  const base = pickEbayApiBase(env);
+  const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
+  const r = await ebayFetch(
+    `${base}/identity/v1/oauth2/token`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${encoded}`,
+      },
+      body: 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope',
+    },
+    { requestId, operation: 'publish' }
+  );
+
+  if (!r.ok) {
+    throw new Error(`eBay app token request failed (status ${r.status})`);
+  }
+
+  const data: any = r.json || {};
+  const accessToken = String(data.access_token || '');
+  const expiresIn = Number(data.expires_in ?? 7200);
+
+  if (!accessToken) {
+    throw new Error('eBay app token missing access_token');
+  }
+
+  cachedEbayAppToken = {
+    access_token: accessToken,
+    expires_at: Date.now() + Math.max(0, (expiresIn - 300) * 1000),
+  };
+
+  return accessToken;
+}
+
+async function getCategoryConditionsForPublish(params: {
+  env: string;
+  marketplaceId: string;
+  categoryId: string;
+  requestId: string;
+}): Promise<{ id: string; name: string }[] | null> {
+  const categoryId = String(params.categoryId || '').trim();
+  if (!categoryId) return [];
+
+  try {
+    const base = pickEbayApiBase(params.env);
+    const token = await getEbayAppToken(params.env, params.requestId);
+
+    const url = `${base}/sell/metadata/v1/marketplace/${encodeURIComponent(
+      params.marketplaceId
+    )}/get_item_condition_policies?category_id=${encodeURIComponent(categoryId)}`;
+
+    const r = await ebayFetch(
+      url,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+      },
+      { requestId: params.requestId, operation: 'publish' }
+    );
+
+    if (!r.ok) return null;
+
+    const data: any = r.json || {};
+
+    const policies = Array.isArray(data?.itemConditionPolicies) ? data.itemConditionPolicies : [];
+    const itemConditions =
+      Array.isArray(data?.itemConditions)
+        ? data.itemConditions
+        : policies.length && Array.isArray(policies[0]?.itemConditions)
+          ? policies[0].itemConditions
+          : [];
+
+    const conditions = (itemConditions || [])
+      .map((c: any) => ({
+        id: String(c?.conditionId ?? c?.id ?? ''),
+        name: String(c?.conditionDescription ?? c?.name ?? c?.conditionName ?? ''),
+      }))
+      .filter((c: any) => c.id && c.name);
+
+    return conditions;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * REAL eBay publish using Inventory API.
  * This is the minimum viable mapping; you can enrich later.
@@ -100,6 +204,10 @@ async function publishToEbayInventoryApi(opts: {
   // 1) Upsert inventory item
   const inventoryItemUrl = `${base}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`;
 
+  const rawConditionId = listing?.listing_json?.condition_id ?? listing?.listing_json?.conditionId ?? '';
+  const conditionIdStr = String(rawConditionId || '').trim();
+  const conditionIdNum = conditionIdStr ? Number.parseInt(conditionIdStr, 10) : NaN;
+
   const invPayload: any = {
     availability: { shipToLocationAvailability: { quantity: 1 } },
     product: {
@@ -107,6 +215,7 @@ async function publishToEbayInventoryApi(opts: {
       description,
       imageUrls,
       aspects: {}, // TODO: map later
+      ...(Number.isFinite(conditionIdNum) && conditionIdNum > 0 ? { conditionId: conditionIdNum } : {}),
     },
   };
 
@@ -159,6 +268,8 @@ async function publishToEbayInventoryApi(opts: {
 
   // 2) Create offer
   const offerUrl = `${base}/sell/inventory/v1/offer`;
+  const conditionDescription = String(listing?.listing_json?.condition_description || '').trim();
+
   const offerPayload: any = {
     sku,
     marketplaceId,
@@ -166,6 +277,8 @@ async function publishToEbayInventoryApi(opts: {
     listingDescription: description,
     availableQuantity: 1,
     categoryId,
+    ...(Number.isFinite(conditionIdNum) && conditionIdNum > 0 ? { conditionId: conditionIdNum } : {}),
+    ...(conditionDescription && conditionDescription.length <= 1000 ? { conditionDescription } : {}),
     listingPolicies: {
       paymentPolicyId,
       returnPolicyId,
@@ -482,6 +595,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!paymentPolicyId || paymentPolicyId.length < 5) errors.push('Payment policy ID is invalid (must be a real eBay policy ID).');
     if (!returnPolicyId || returnPolicyId.length < 5) errors.push('Return policy ID is invalid (must be a real eBay policy ID).');
     if (!fulfillmentPolicyId || fulfillmentPolicyId.length < 5) errors.push('Fulfillment (shipping) policy ID is invalid (must be a real eBay policy ID).');
+
+    // Condition: required only if eBay returns condition options for this category.
+    const marketplaceId = String(process.env.EBAY_MARKETPLACE_ID || 'EBAY_US');
+    const publishEnv = String(process.env.EBAY_ENV || 'production').toLowerCase();
+
+    const categoryConditions = await getCategoryConditionsForPublish({
+      env: publishEnv,
+      marketplaceId,
+      categoryId: String((listing as any).category_id || ''),
+      requestId,
+    });
+
+    if (Array.isArray(categoryConditions) && categoryConditions.length > 0) {
+      const rawConditionId =
+        listingJson.condition_id ??
+        listingJson.conditionId ??
+        listingJson.conditionID ??
+        listingJson.ebay_condition_id ??
+        '';
+
+      const conditionIdStr = String(rawConditionId || '').trim();
+      if (!conditionIdStr) {
+        errors.push('Condition is required.');
+      } else {
+        const conditionIdNum = Number.parseInt(conditionIdStr, 10);
+        if (!Number.isFinite(conditionIdNum) || conditionIdNum <= 0) {
+          errors.push('Condition is required.');
+        }
+      }
+    }
 
     if (errors.length) {
       try {
