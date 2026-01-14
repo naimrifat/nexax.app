@@ -386,6 +386,12 @@ export default function ResultsPage() {
   const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
   const [images, setImages] = useState<string[]>([]);
+
+  const [categoryConditions, setCategoryConditions] = useState<{ id: string; name: string }[]>([]);
+  const [conditionsLoading, setConditionsLoading] = useState(false);
+  const [conditionId, setConditionId] = useState<string>('');
+  const [conditionName, setConditionName] = useState<string>('');
+  const [conditionDescription, setConditionDescription] = useState<string>('');
   const [mainImageIndex, setMainImageIndex] = useState(0);
 
   const [title, setTitle] = useState('');
@@ -452,6 +458,7 @@ export default function ResultsPage() {
   const descriptionInputRef = useRef<HTMLTextAreaElement | null>(null);
   const photosSectionRef = useRef<HTMLElement | null>(null);
   const categorySectionRef = useRef<HTMLElement | null>(null);
+  const conditionSectionRef = useRef<HTMLElement | null>(null);
   const specificsSectionRef = useRef<HTMLElement | null>(null);
   const priceSectionRef = useRef<HTMLElement | null>(null);
   const policiesSectionRef = useRef<HTMLElement | null>(null);
@@ -653,6 +660,51 @@ export default function ResultsPage() {
     [smartFillSpecifics]
   );
 
+  const fetchCategoryConditions = useCallback(async (categoryId: string) => {
+      if (!categoryId) {
+      setCategoryConditions([]);
+      setConditionId('');
+      setConditionName('');
+      setConditionDescription('');
+      return;
+    }
+
+
+    setConditionsLoading(true);
+    try {
+      const response = await fetch('/api/ebay-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'getCategoryConditions', categoryId }),
+      });
+
+      if (!response.ok) {
+        setCategoryConditions([]);
+        return;
+      }
+
+      const data = await response.json().catch(() => ({}));
+      const next = Array.isArray(data?.conditions) ? data.conditions : [];
+      setCategoryConditions(next);
+
+      // If previously selected condition is no longer valid, clear it.
+      if (conditionId) {
+        const stillValid = next.some((c: any) => String(c?.id) === String(conditionId));
+        if (!stillValid) {
+          setConditionId('');
+          setConditionName('');
+          setConditionDescription('');
+        }
+      }
+    } finally {
+      setConditionsLoading(false);
+    }
+  }, [conditionId]);
+
+  useEffect(() => {
+    void fetchCategoryConditions(String(category?.id || ''));
+  }, [category?.id, fetchCategoryConditions]);
+
   const mainImageUrl = images[mainImageIndex] || '';
 
   const preflightInputKey = useMemo(
@@ -666,6 +718,9 @@ export default function ResultsPage() {
         ebayPaymentPolicyId,
         ebayReturnPolicyId,
         ebayFulfillmentPolicyId,
+        conditionId,
+        conditionName,
+        conditionDescription,
         specifics: (specifics || []).map((s) => ({ name: s?.name, value: s?.value })),
       }),
     [
@@ -677,6 +732,9 @@ export default function ResultsPage() {
       ebayPaymentPolicyId,
       ebayReturnPolicyId,
       ebayFulfillmentPolicyId,
+      conditionId,
+      conditionName,
+      conditionDescription,
       specifics,
     ]
   );
@@ -696,6 +754,10 @@ export default function ResultsPage() {
     if (!Number.isFinite(priceNum) || priceNum <= 0) missingBasics.push('Price');
 
     if (!images.length) missingBasics.push('Photos');
+
+    if (categoryConditions.length > 0 && !String(conditionId || '').trim()) {
+      missingBasics.push('Condition');
+    }
 
     if (!String(ebayPaymentPolicyId || '').trim()) missingPolicies.push('Payment policy');
     if (!String(ebayReturnPolicyId || '').trim()) missingPolicies.push('Return policy');
@@ -722,6 +784,8 @@ export default function ResultsPage() {
     category?.id,
     price,
     images,
+    categoryConditions,
+    conditionId,
     ebayPaymentPolicyId,
     ebayReturnPolicyId,
     ebayFulfillmentPolicyId,
@@ -772,17 +836,21 @@ export default function ResultsPage() {
       category: category ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs } : null,
       category_id: category?.id || null,
       category_path: categoryPath || null,
-      item_specifics: specifics.map((s) => ({
-        name: s.name,
-        value: s.value,
-        required: !!s.required,
-        multi: !!s.multi,
-        selectionOnly: !!s.selectionOnly,
-        freeTextAllowed: s.freeTextAllowed !== false,
-        options: s.options || [],
-        allOptions: s.allOptions || undefined,
-        type: s.type || undefined,
-      })),
+       condition_id: conditionId || null,
+       condition_name: conditionName || null,
+       condition_description: conditionDescription || null,
+       item_specifics: specifics.map((s) => ({
+         name: s.name,
+         value: s.value,
+         required: !!s.required,
+         multi: !!s.multi,
+         selectionOnly: !!s.selectionOnly,
+         freeTextAllowed: s.freeTextAllowed !== false,
+         options: s.options || [],
+         allOptions: s.allOptions || undefined,
+         type: s.type || undefined,
+       })),
+
       keywords: keywords
         .split(',')
         .map((k) => k.trim())
@@ -791,7 +859,7 @@ export default function ResultsPage() {
       images: orderedImages,
       mainImageIndex: 0,
     };
-  }, [category, images, mainImageIndex, price, specifics, keywords, title, sku, description]);
+  }, [category, images, mainImageIndex, price, specifics, keywords, title, sku, description, conditionId, conditionName, conditionDescription]);
 
   const assertHostedImagesOrThrow = (arr: string[]) => {
     const bad = (arr || []).filter((u) => !isHostedImageUrl(u));
@@ -895,9 +963,14 @@ export default function ResultsPage() {
           // Prefill Shipping & Policies from DB row
           setEbayPaymentPolicyId(String(row.ebay_payment_policy_id || ''));
           setEbayReturnPolicyId(String(row.ebay_return_policy_id || ''));
-          setEbayFulfillmentPolicyId(String(row.ebay_fulfillment_policy_id || ''));
+           setEbayFulfillmentPolicyId(String(row.ebay_fulfillment_policy_id || ''));
 
-          setPackageWeightLb(row.package_weight_lb != null ? String(row.package_weight_lb) : '');
+           setConditionId(String(lj?.condition_id ?? ''));
+           setConditionName(String(lj?.condition_name ?? ''));
+           setConditionDescription(String(lj?.condition_description ?? ''));
+ 
+           setPackageWeightLb(row.package_weight_lb != null ? String(row.package_weight_lb) : '');
+
           setPackageWeightOz(row.package_weight_oz != null ? String(row.package_weight_oz) : '');
 
           setPackageLengthIn(row.package_length_in != null ? String(row.package_length_in) : '');
@@ -1668,7 +1741,76 @@ export default function ResultsPage() {
           </div>
         </section>
 
+        {category?.id && categoryConditions.length > 0 ? (
+          <section ref={conditionSectionRef as any} style={{ marginTop: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+              <h3 style={{ margin: 0 }}>Condition</h3>
+              {conditionsLoading ? <span style={{ fontSize: 12, color: '#666' }}>Loading…</span> : null}
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                padding: 12,
+                borderRadius: 8,
+                border:
+                  (highlightMissing || showTitleInlineError) && !String(conditionId || '').trim()
+                    ? '1px solid #ef4444'
+                    : '1px solid #e5e7eb',
+                background: '#fff',
+              }}
+            >
+              {categoryConditions.map((c) => (
+                <label
+                  key={c.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '6px 0',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="ebay_condition"
+                    value={c.id}
+                    checked={String(conditionId) === String(c.id)}
+                    onChange={() => {
+                      setIsDirty(true);
+                      setConditionId(String(c.id));
+                      setConditionName(String(c.name));
+
+                      if (String(c.name || '').trim().toLowerCase() === 'new with tags') {
+                        setConditionDescription('');
+                      }
+                    }}
+                  />
+                  <span>{c.name}</span>
+                </label>
+              ))}
+
+              {conditionId && String(conditionName || '').trim().toLowerCase() !== 'new with tags' ? (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Condition description</div>
+                  <textarea
+                    value={conditionDescription}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setConditionDescription(e.target.value);
+                    }}
+                    rows={2}
+                    style={{ width: '100%', padding: 10, borderRadius: 6, border: '1px solid #d1d5db', fontSize: 14 }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
         <section ref={specificsSectionRef as any} style={{ marginTop: 24 }}>
+
           <h3>
             Item Specifics {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>}
           </h3>
@@ -2105,6 +2247,11 @@ export default function ResultsPage() {
 
                 if (missingBasics.includes('Category')) {
                   categorySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  return;
+                }
+
+                if (missingBasics.includes('Condition')) {
+                  conditionSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                   return;
                 }
 
