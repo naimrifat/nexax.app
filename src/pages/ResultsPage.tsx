@@ -402,6 +402,7 @@ export default function ResultsPage() {
   const [ebayReconnectLoading, setEbayReconnectLoading] = useState(false);
   const [ebayReconnectError, setEbayReconnectError] = useState<string | null>(null);
   const [showTitleInlineError, setShowTitleInlineError] = useState(false);
+  const [highlightMissing, setHighlightMissing] = useState(false);
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -433,6 +434,11 @@ export default function ResultsPage() {
   const didInitialLoadRef = useRef(false);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const descriptionInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const photosSectionRef = useRef<HTMLElement | null>(null);
+  const categorySectionRef = useRef<HTMLElement | null>(null);
+  const specificsSectionRef = useRef<HTMLElement | null>(null);
+  const priceSectionRef = useRef<HTMLElement | null>(null);
+  const policiesSectionRef = useRef<HTMLElement | null>(null);
 
   // ----------------------------
   // Tenancy guard
@@ -660,6 +666,57 @@ export default function ResultsPage() {
   );
 
   const lastPreflightInputKeyRef = useRef<string>('');
+
+  const missingRequirements = useMemo(() => {
+    const missingBasics: string[] = [];
+    const missingPolicies: string[] = [];
+    const missingAspects: string[] = [];
+
+    if (!title.trim()) missingBasics.push('Title');
+    if (!description.trim()) missingBasics.push('Description');
+    if (!category?.id) missingBasics.push('Category');
+
+    const priceNum = parseFloat(price || '0');
+    if (!Number.isFinite(priceNum) || priceNum <= 0) missingBasics.push('Price');
+
+    if (!images.length) missingBasics.push('Photos');
+
+    if (!String(ebayPaymentPolicyId || '').trim()) missingPolicies.push('Payment policy');
+    if (!String(ebayReturnPolicyId || '').trim()) missingPolicies.push('Return policy');
+    if (!String(ebayFulfillmentPolicyId || '').trim()) missingPolicies.push('Shipping policy');
+
+    const hasValue = (v: any) => {
+      if (Array.isArray(v)) return v.some((x) => String(x ?? '').trim().length > 0);
+      return String(v ?? '').trim().length > 0;
+    };
+
+    const requiredSpecifics = (specifics || []).filter((s) => !!s?.required);
+    if (category?.id && requiredSpecifics.length) {
+      for (const s of requiredSpecifics) {
+        if (!hasValue((s as any).value)) missingAspects.push(String((s as any).name || '').trim());
+      }
+    }
+
+    const totalMissingCount = missingBasics.length + missingPolicies.length + missingAspects.length;
+
+    return { missingBasics, missingPolicies, missingAspects, totalMissingCount };
+  }, [
+    title,
+    description,
+    category?.id,
+    price,
+    images,
+    ebayPaymentPolicyId,
+    ebayReturnPolicyId,
+    ebayFulfillmentPolicyId,
+    specifics,
+  ]);
+
+  useEffect(() => {
+    if (missingRequirements.totalMissingCount === 0) {
+      setHighlightMissing(false);
+    }
+  }, [missingRequirements.totalMissingCount]);
 
   useEffect(() => {
     if (preflightPassed !== true) return;
@@ -1206,6 +1263,7 @@ export default function ResultsPage() {
 
   const handlePublish = async () => {
     setShowTitleInlineError(true);
+    setHighlightMissing(false);
     setLastPublishCode(null);
     setPublishErrors([]);
     setPublishSuccess(null);
@@ -1377,7 +1435,14 @@ export default function ResultsPage() {
       <main>
         <h1>Create eBay Listing</h1>
 
-        <section style={{ marginTop: 16 }}>
+        <section
+          ref={photosSectionRef as any}
+          style={{
+            marginTop: 16,
+            borderRadius: 6,
+            boxShadow: highlightMissing && missingRequirements.missingBasics.includes('Photos') ? '0 0 0 2px #ef4444' : undefined,
+          }}
+        >
           <h3>Photos</h3>
           <div
             style={{
@@ -1455,7 +1520,13 @@ export default function ResultsPage() {
           )}
         </section>
 
-        <section style={{ marginTop: 24 }}>
+        <section
+          style={{
+            marginTop: 24,
+            borderRadius: 6,
+            boxShadow: highlightMissing && missingRequirements.missingBasics.includes('Title') ? '0 0 0 2px #ef4444' : undefined,
+          }}
+        >
           <h3>Title</h3>
           <input
             ref={titleInputRef}
@@ -1485,7 +1556,14 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        <section style={{ marginTop: 24 }}>
+        <section
+          ref={categorySectionRef as any}
+          style={{
+            marginTop: 24,
+            borderRadius: 6,
+            boxShadow: highlightMissing && missingRequirements.missingBasics.includes('Category') ? '0 0 0 2px #ef4444' : undefined,
+          }}
+        >
           <h3>Category</h3>
           <div
             style={{
@@ -1532,7 +1610,15 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        <section style={{ marginTop: 24 }}>
+        <section
+          ref={specificsSectionRef as any}
+          style={{
+            marginTop: 24,
+            borderRadius: 6,
+            boxShadow:
+              highlightMissing && missingRequirements.missingAspects.length ? '0 0 0 2px #ef4444' : undefined,
+          }}
+        >
           <h3>
             Item Specifics {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>}
           </h3>
@@ -1558,7 +1644,13 @@ export default function ResultsPage() {
           </button>
         </section>
 
-        <section style={{ marginTop: 24 }}>
+        <section
+          style={{
+            marginTop: 24,
+            borderRadius: 6,
+            boxShadow: highlightMissing && missingRequirements.missingBasics.includes('Description') ? '0 0 0 2px #ef4444' : undefined,
+          }}
+        >
           <h3>Description</h3>
           <textarea
             ref={descriptionInputRef}
@@ -1580,7 +1672,14 @@ export default function ResultsPage() {
           />
         </section>
 
-        <section style={{ marginTop: 24 }}>
+        <section
+          ref={priceSectionRef as any}
+          style={{
+            marginTop: 24,
+            borderRadius: 6,
+            boxShadow: highlightMissing && missingRequirements.missingBasics.includes('Price') ? '0 0 0 2px #ef4444' : undefined,
+          }}
+          >
           <h3>Price</h3>
           <input
             type="number"
@@ -1592,7 +1691,16 @@ export default function ResultsPage() {
         </section>
 
         {/* Shipping & Policies */}
-        <section style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
+        <section
+          ref={policiesSectionRef as any}
+          style={{
+            marginTop: 24,
+            borderTop: '1px solid #eee',
+            paddingTop: 16,
+            borderRadius: 6,
+            boxShadow: highlightMissing && missingRequirements.missingPolicies.length ? '0 0 0 2px #ef4444' : undefined,
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <h3 style={{ margin: 0 }}>Shipping & Policies</h3>
 
@@ -1806,6 +1914,103 @@ export default function ResultsPage() {
             </div>
           </div>
         </section>
+
+        {missingRequirements.totalMissingCount > 0 ? (
+          <div
+            style={{
+              marginTop: 28,
+              border: '1px solid #fecaca',
+              background: '#fef2f2',
+              color: '#991b1b',
+              borderRadius: 8,
+              padding: 12,
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                Just {missingRequirements.totalMissingCount} thing{missingRequirements.totalMissingCount === 1 ? '' : 's'} missing…
+              </div>
+
+              {missingRequirements.missingBasics.length ? (
+                <div style={{ fontSize: 13, marginTop: 4 }}>
+                  <span style={{ fontWeight: 600 }}>Item details:</span> {missingRequirements.missingBasics.join(', ')}
+                </div>
+              ) : null}
+
+              {missingRequirements.missingPolicies.length || missingRequirements.missingAspects.length ? (
+                <div style={{ fontSize: 13, marginTop: 4 }}>
+                  <span style={{ fontWeight: 600 }}>eBay:</span>{' '}
+                  {[...missingRequirements.missingPolicies, ...missingRequirements.missingAspects].filter(Boolean).join(', ')}
+                </div>
+              ) : null}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setHighlightMissing(true);
+
+                const missingBasics = missingRequirements.missingBasics;
+                const missingPolicies = missingRequirements.missingPolicies;
+                const missingAspects = missingRequirements.missingAspects;
+
+                if (missingBasics.includes('Title')) {
+                  titleInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  titleInputRef.current?.focus();
+                  return;
+                }
+
+                if (missingBasics.includes('Description')) {
+                  descriptionInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  descriptionInputRef.current?.focus();
+                  return;
+                }
+
+                if (missingBasics.includes('Category')) {
+                  categorySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  return;
+                }
+
+                if (missingBasics.includes('Price')) {
+                  priceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  return;
+                }
+
+                if (missingBasics.includes('Photos')) {
+                  photosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  return;
+                }
+
+                if (missingPolicies.length) {
+                  policiesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  return;
+                }
+
+                if (missingAspects.length) {
+                  specificsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  return;
+                }
+              }}
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                border: '1px solid #ef4444',
+                background: '#fff',
+                color: '#991b1b',
+                cursor: 'pointer',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                fontSize: 14,
+              }}
+            >
+              Highlight missing fields
+            </button>
+          </div>
+        ) : null}
 
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
