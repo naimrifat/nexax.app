@@ -1054,6 +1054,31 @@ export default function ResultsPage() {
       if (body?.ok === true) {
         setPreflightPassed(true);
         setPreflightMessage('Checks passed');
+
+        // Best-effort: persist preflight passed flag on the listing (no errors persisted).
+        try {
+          if (workspaceId) {
+            const nowIso = new Date().toISOString();
+            const { data: row } = await supabase
+              .from('listings')
+              .select('listing_json')
+              .eq('id', listingId)
+              .eq('workspace_id', workspaceId)
+              .maybeSingle();
+
+            const existing = (row as any)?.listing_json || {};
+            const next = {
+              ...(existing || {}),
+              preflight_passed: true,
+              preflight_passed_at: nowIso,
+            };
+
+            await supabase.from('listings').update({ listing_json: next }).eq('id', listingId).eq('workspace_id', workspaceId);
+          }
+        } catch {
+          // ignore persistence failure
+        }
+
         return true;
       }
 
