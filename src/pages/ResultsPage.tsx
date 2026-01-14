@@ -1520,13 +1520,7 @@ export default function ResultsPage() {
           )}
         </section>
 
-        <section
-          style={{
-            marginTop: 24,
-            borderRadius: 6,
-            boxShadow: highlightMissing && missingRequirements.missingBasics.includes('Title') ? '0 0 0 2px #ef4444' : undefined,
-          }}
-        >
+        <section style={{ marginTop: 24 }}>
           <h3>Title</h3>
           <input
             ref={titleInputRef}
@@ -1535,7 +1529,22 @@ export default function ResultsPage() {
             onChange={(e) => {
               setTitle(e.target.value);
             }}
-            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
+            style={{
+              width: '100%',
+              padding: '8px 12px',
+              marginTop: 8,
+              fontSize: 14,
+              borderRadius: 6,
+              border:
+                highlightMissing && missingRequirements.missingBasics.includes('Title')
+                  ? '1px solid #ef4444'
+                  : showTitleInlineError && !title.trim()
+                    ? '1px solid #ef4444'
+                    : '1px solid #d1d5db',
+              background:
+                highlightMissing && missingRequirements.missingBasics.includes('Title') ? '#fff7f7' : 'white',
+              outline: 'none',
+            }}
             maxLength={80}
           />
           {showTitleInlineError && !title.trim() ? (
