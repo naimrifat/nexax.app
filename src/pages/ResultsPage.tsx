@@ -417,6 +417,8 @@ export default function ResultsPage() {
   const [ebayReconnectError, setEbayReconnectError] = useState<string | null>(null);
   const [showTitleInlineError, setShowTitleInlineError] = useState(false);
   const [highlightMissing, setHighlightMissing] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -733,6 +735,20 @@ export default function ResultsPage() {
   }, [missingRequirements.totalMissingCount]);
 
   useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      if (publishing || preflightLoading || savingDraft) return;
+
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty, publishing, preflightLoading, savingDraft]);
+
+  useEffect(() => {
     if (preflightPassed !== true) return;
     if (!lastPreflightInputKeyRef.current) return;
     if (lastPreflightInputKeyRef.current === preflightInputKey) return;
@@ -961,12 +977,14 @@ export default function ResultsPage() {
   }, [authLoading, user?.id, workspaceId, internalUserId, ensureTenancy, fetchCategorySpecifics, smartFillSpecifics, navigate]);
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
+    setIsDirty(true);
     setCategory(newCategory);
     setShowCategoryModal(false);
     await fetchCategorySpecifics(newCategory.id, getCategoryPathString(newCategory));
   };
 
   const updateSpecific = (idx: number, value: string | string[]) => {
+    setIsDirty(true);
     setSpecifics((prev) => {
       let next = [...prev];
       next[idx] = { ...next[idx], value };
@@ -978,7 +996,10 @@ export default function ResultsPage() {
     });
   };
 
-  const addSpecific = () => setSpecifics((prev) => [...prev, { name: '', value: '' }]);
+  const addSpecific = () => {
+    setIsDirty(true);
+    setSpecifics((prev) => [...prev, { name: '', value: '' }]);
+  };
 
   const categoryBreadcrumb = useMemo(() => {
     if (!category) return 'No category selected';
@@ -1010,6 +1031,7 @@ export default function ResultsPage() {
     setSaveError(null);
     setDraftStatus('');
     setDraftSavedSuccessfully(false);
+    setSavingDraft(true);
 
     try {
       const t = await ensureTenancy();
@@ -1083,6 +1105,7 @@ export default function ResultsPage() {
       setListingId(savedId);
       setDraftStatus('Draft saved.');
       setDraftSavedSuccessfully(true);
+      setIsDirty(false);
 
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
@@ -1093,6 +1116,8 @@ export default function ResultsPage() {
       setDraftSavedSuccessfully(false);
       setSaveError(err?.message || 'Failed to save draft (tenancy not ready)');
       setDraftStatus('Draft save failed');
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -1489,7 +1514,10 @@ export default function ResultsPage() {
                 <div
                   key={idx}
                   draggable
-                  onClick={() => setMainImageIndex(idx)}
+                  onClick={() => {
+                    setIsDirty(true);
+                    setMainImageIndex(idx);
+                  }}
                   onDragStart={(e) => {
                     setDragIndex(idx);
                     e.dataTransfer.effectAllowed = 'move';
@@ -1545,6 +1573,7 @@ export default function ResultsPage() {
             placeholder="Enter title..."
             value={title}
             onChange={(e) => {
+              setIsDirty(true);
               setTitle(e.target.value);
             }}
             style={{
@@ -1577,7 +1606,10 @@ export default function ResultsPage() {
             <input
               placeholder="Enter SKU..."
               value={sku}
-              onChange={(e) => setSku(e.target.value)}
+              onChange={(e) => {
+                setIsDirty(true);
+                setSku(e.target.value);
+              }}
               style={{ width: '25%', minWidth: 160, padding: 12, fontSize: 14 }}
             />
           </div>
@@ -1684,7 +1716,10 @@ export default function ResultsPage() {
             ref={descriptionInputRef}
             placeholder="Enter description..."
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => {
+              setIsDirty(true);
+              setDescription(e.target.value);
+            }}
             rows={2}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
@@ -1695,7 +1730,10 @@ export default function ResultsPage() {
           <input
             placeholder="e.g., vintage, designer, rare"
             value={keywords}
-            onChange={(e) => setKeywords(e.target.value)}
+            onChange={(e) => {
+              setIsDirty(true);
+              setKeywords(e.target.value);
+            }}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
@@ -1712,8 +1750,12 @@ export default function ResultsPage() {
           <input
             type="number"
             step="0.01"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
+             value={price}
+             onChange={(e) => {
+               setIsDirty(true);
+               setPrice(e.target.value);
+             }}
+
             style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
