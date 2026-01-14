@@ -393,6 +393,9 @@ export default function ResultsPage() {
   const [draftStatus, setDraftStatus] = useState<string>('');
   const [publishErrors, setPublishErrors] = useState<string[]>([]);
   const [publishSuccess, setPublishSuccess] = useState<{ ebay_item_id?: string | null; ebay_listing_url?: string | null } | null>(null);
+  const [ebayReconnectRequired, setEbayReconnectRequired] = useState(false);
+  const [ebayReconnectLoading, setEbayReconnectLoading] = useState(false);
+  const [ebayReconnectError, setEbayReconnectError] = useState<string | null>(null);
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -1006,9 +1009,57 @@ export default function ResultsPage() {
     return errors;
   };
 
+  const handleReconnectEbay = async () => {
+    setEbayReconnectLoading(true);
+    setEbayReconnectError(null);
+
+    try {
+      const {
+        data: { session },
+        error: sessionErr,
+      } = await supabase.auth.getSession();
+
+      if (sessionErr || !session?.access_token) {
+        setEbayReconnectError('You are not logged in. Please sign in again and retry.');
+        return;
+      }
+
+      if (!workspaceId) {
+        setEbayReconnectError('Workspace not ready yet. Try again in a moment.');
+        return;
+      }
+
+      const res = await fetch('/api/ebay-oauth-start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          return_to: window.location.href,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      const oauthUrl = data?.oauthUrl || data?.url;
+
+      if (!res.ok || !oauthUrl) {
+        setEbayReconnectError(data?.error || 'Failed to start eBay OAuth.');
+        return;
+      }
+
+      window.location.href = String(oauthUrl);
+    } finally {
+      setEbayReconnectLoading(false);
+    }
+  };
+
   const handlePublish = async () => {
     setPublishErrors([]);
     setPublishSuccess(null);
+    setEbayReconnectRequired(false);
+    setEbayReconnectError(null);
 
     const clientErrors = validateBeforePublish();
     if (clientErrors.length) {
@@ -1048,6 +1099,22 @@ export default function ResultsPage() {
         body = await res.json();
       } catch {
         body = {};
+      }
+
+      if (body?.code === 'EBAY_RECONNECT_REQUIRED' && res.status === 401) {
+        setPublishing(false);
+        setEbayReconnectRequired(true);
+        setPublishErrors([]);
+        setPublishSuccess(null);
+        return;
+      }
+
+      if (body?.code === 'EBAY_RECONNECT_REQUIRED') {
+        setPublishing(false);
+        setEbayReconnectRequired(true);
+        setPublishErrors([]);
+        setPublishSuccess(null);
+        return;
       }
 
       if (res.ok && body?.ok === true) {
@@ -1617,6 +1684,39 @@ export default function ResultsPage() {
                 </a>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {ebayReconnectRequired ? (
+          <div
+            style={{
+              marginTop: 12,
+              border: '1px solid #fde68a',
+              background: '#fffbeb',
+              color: '#92400e',
+              borderRadius: 6,
+              padding: 12,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Your eBay connection expired. Reconnect to continue.</div>
+            {ebayReconnectError ? <div style={{ marginBottom: 10, fontSize: 14 }}>{ebayReconnectError}</div> : null}
+            <button
+              type="button"
+              onClick={handleReconnectEbay}
+              disabled={ebayReconnectLoading}
+              style={{
+                padding: '12px 20px',
+                background: ebayReconnectLoading ? '#999' : '#0064d2',
+                color: 'white',
+                border: 'none',
+                borderRadius: 4,
+                cursor: ebayReconnectLoading ? 'default' : 'pointer',
+                fontSize: 16,
+                fontWeight: 600,
+              }}
+            >
+              {ebayReconnectLoading ? 'Redirecting…' : 'Reconnect eBay'}
+            </button>
           </div>
         ) : null}
 
