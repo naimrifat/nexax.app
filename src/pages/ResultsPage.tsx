@@ -391,6 +391,7 @@ export default function ResultsPage() {
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
+  const [draftSavedSuccessfully, setDraftSavedSuccessfully] = useState(false);
   const [publishErrors, setPublishErrors] = useState<string[]>([]);
   const [publishSuccess, setPublishSuccess] = useState<{ ebay_item_id?: string | null; ebay_listing_url?: string | null } | null>(null);
   const [preflightLoading, setPreflightLoading] = useState(false);
@@ -995,6 +996,7 @@ export default function ResultsPage() {
   const handleSaveDraft = async () => {
     setSaveError(null);
     setDraftStatus('');
+    setDraftSavedSuccessfully(false);
 
     try {
       const t = await ensureTenancy();
@@ -1067,6 +1069,7 @@ export default function ResultsPage() {
 
       setListingId(savedId);
       setDraftStatus('Draft saved.');
+      setDraftSavedSuccessfully(true);
 
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
@@ -1074,6 +1077,7 @@ export default function ResultsPage() {
       window.history.replaceState({}, '', url.toString());
     } catch (err: any) {
       console.error('[Draft] save failed:', err);
+      setDraftSavedSuccessfully(false);
       setSaveError(err?.message || 'Failed to save draft (tenancy not ready)');
       setDraftStatus('Draft save failed');
     }
@@ -1388,6 +1392,7 @@ export default function ResultsPage() {
           ebay_item_id: body?.ebay_item_id != null ? String(body.ebay_item_id) : null,
           ebay_listing_url: body?.ebay_listing_url != null ? String(body.ebay_listing_url) : null,
         });
+        navigate('/dashboard');
         return;
       }
 
@@ -2041,41 +2046,6 @@ export default function ResultsPage() {
           </button>
 
           <button
-            onClick={() => navigate('/drafts')}
-            className="btn"
-            style={{
-              padding: '12px 24px',
-              background: '#3b82f6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            View All Drafts
-          </button>
-
-          <button
-            type="button"
-            onClick={runEbayPreflight}
-            disabled={preflightLoading || publishing || disableActions}
-            style={{
-              padding: '12px 24px',
-              background: preflightLoading || publishing || disableActions ? '#999' : '#0f766e',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: preflightLoading || publishing || disableActions ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {preflightLoading ? 'Running checks…' : 'Run eBay Checks'}
-          </button>
-
-          <button
             type="button"
             onClick={handlePublish}
             disabled={publishing || preflightLoading || disableActions}
@@ -2090,7 +2060,7 @@ export default function ResultsPage() {
               fontWeight: 600,
             }}
           >
-            {publishing ? 'Publishing…' : 'Publish'}
+            {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
           </button>
 
 
@@ -2110,6 +2080,27 @@ export default function ResultsPage() {
             Cancel
           </button>
         </div>
+
+        {draftSavedSuccessfully ? (
+          <div style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              style={{
+                padding: '10px 16px',
+                background: '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 14,
+                fontWeight: 700,
+              }}
+            >
+              Go to Dashboard
+            </button>
+          </div>
+        ) : null}
 
         {preflightPassed === true ? (
           <div
@@ -2203,7 +2194,22 @@ export default function ResultsPage() {
           </div>
         ) : null}
 
-        {saveError ? <div style={{ marginTop: 10, color: 'red', fontSize: 14 }}>{saveError}</div> : null}
+        {saveError ? (
+          <div
+            style={{
+              marginTop: 12,
+              border: '1px solid #fecaca',
+              background: '#fef2f2',
+              color: '#991b1b',
+              borderRadius: 6,
+              padding: 12,
+              fontSize: 14,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Save Draft failed:</div>
+            <div>{saveError}</div>
+          </div>
+        ) : null}
 
         {draftStatus ? (
           <div style={{ marginTop: 8, fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2f855a' }}>
