@@ -1637,15 +1637,7 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        <section
-          ref={specificsSectionRef as any}
-          style={{
-            marginTop: 24,
-            borderRadius: 6,
-            boxShadow:
-              highlightMissing && missingRequirements.missingAspects.length ? '0 0 0 2px #ef4444' : undefined,
-          }}
-        >
+        <section ref={specificsSectionRef as any} style={{ marginTop: 24 }}>
           <h3>
             Item Specifics {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>}
           </h3>
