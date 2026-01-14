@@ -396,6 +396,8 @@ export default function ResultsPage() {
   const [preflightLoading, setPreflightLoading] = useState(false);
   const [preflightPassed, setPreflightPassed] = useState<boolean | null>(null);
   const [preflightMessage, setPreflightMessage] = useState<string | null>(null);
+  const [lastPreflightCode, setLastPreflightCode] = useState<string | null>(null);
+  const [lastPublishCode, setLastPublishCode] = useState<string | null>(null);
   const [ebayReconnectRequired, setEbayReconnectRequired] = useState(false);
   const [ebayReconnectLoading, setEbayReconnectLoading] = useState(false);
   const [ebayReconnectError, setEbayReconnectError] = useState<string | null>(null);
@@ -1016,6 +1018,7 @@ export default function ResultsPage() {
     setPreflightLoading(true);
     setPreflightMessage(null);
     setPreflightPassed(null);
+    setLastPreflightCode(null);
     setPublishErrors([]);
     setPublishSuccess(null);
     setEbayReconnectRequired(false);
@@ -1052,6 +1055,7 @@ export default function ResultsPage() {
       const body: any = await res.json().catch(() => ({}));
 
       if (body?.ok === true) {
+        setLastPreflightCode(String(body?.code || 'OK'));
         setPreflightPassed(true);
         setPreflightMessage('Checks passed');
 
@@ -1083,6 +1087,7 @@ export default function ResultsPage() {
       }
 
       if (body?.code === 'NOT_CONNECTED') {
+        setLastPreflightCode('NOT_CONNECTED');
         setEbayReconnectRequired(true);
         setEbayReconnectError('eBay not connected/expired. Reconnect to continue.');
         setPreflightPassed(false);
@@ -1090,6 +1095,7 @@ export default function ResultsPage() {
       }
 
       if (body?.code === 'VALIDATION_ERROR' || body?.code === 'PREFLIGHT_FAILED') {
+        setLastPreflightCode(String(body?.code || 'PREFLIGHT_FAILED'));
         if (Array.isArray(body?.errors) && body.errors.length) {
           setPublishErrors(body.errors.map((e: any) => String(e)));
         } else if (body?.message) {
@@ -1101,6 +1107,7 @@ export default function ResultsPage() {
         return false;
       }
 
+      setLastPreflightCode(String(body?.code || 'UNEXPECTED'));
       setPublishErrors(['Checks failed due to a server error. Please try again.']);
       setPreflightPassed(false);
       return false;
@@ -1156,6 +1163,7 @@ export default function ResultsPage() {
   };
 
   const handlePublish = async () => {
+    setLastPublishCode(null);
     setPublishErrors([]);
     setPublishSuccess(null);
     setEbayReconnectRequired(false);
@@ -1205,6 +1213,7 @@ export default function ResultsPage() {
       }
 
       if (body?.code === 'EBAY_RECONNECT_REQUIRED' && res.status === 401) {
+        setLastPublishCode('EBAY_RECONNECT_REQUIRED');
         setPublishing(false);
         setEbayReconnectRequired(true);
         setPublishErrors([]);
@@ -1213,6 +1222,7 @@ export default function ResultsPage() {
       }
 
       if (body?.code === 'EBAY_RECONNECT_REQUIRED') {
+        setLastPublishCode('EBAY_RECONNECT_REQUIRED');
         setPublishing(false);
         setEbayReconnectRequired(true);
         setPublishErrors([]);
@@ -1221,6 +1231,7 @@ export default function ResultsPage() {
       }
 
       if (body?.code === 'EBAY_LISTING_FIX_REQUIRED') {
+        setLastPublishCode('EBAY_LISTING_FIX_REQUIRED');
         setPublishing(false);
         setEbayReconnectRequired(false);
         setPublishSuccess(null);
@@ -1235,6 +1246,7 @@ export default function ResultsPage() {
       }
 
       if (body?.code === 'EBAY_ACCOUNT_SETUP_REQUIRED') {
+        setLastPublishCode('EBAY_ACCOUNT_SETUP_REQUIRED');
         setPublishing(false);
         setEbayReconnectRequired(false);
         setPublishSuccess(null);
@@ -1246,6 +1258,7 @@ export default function ResultsPage() {
       }
 
       if (body?.code === 'EBAY_RETRYABLE_ERROR') {
+        setLastPublishCode('EBAY_RETRYABLE_ERROR');
         setPublishing(false);
         setEbayReconnectRequired(false);
         setPublishSuccess(null);
@@ -1254,6 +1267,7 @@ export default function ResultsPage() {
       }
 
       if (res.ok && body?.ok === true) {
+        setLastPublishCode(String(body?.code || 'OK'));
         setPublishErrors([]);
         setPublishSuccess({
           ebay_item_id: body?.ebay_item_id != null ? String(body.ebay_item_id) : null,
@@ -1919,31 +1933,121 @@ export default function ResultsPage() {
         ) : null}
       </main>
 
-      <aside>
-        <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, position: 'sticky', top: 24 }}>
-          <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
-          <div
-            style={{
-              height: 200,
-              background: '#f5f5f5',
-              display: 'grid',
-              placeItems: 'center',
-              marginBottom: 12,
-              borderRadius: 4,
-            }}
-          >
-            {mainImageUrl ? (
-              <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
-            ) : (
-              <div style={{ color: '#999' }}>No image</div>
-            )}
-          </div>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{title || 'Your Product Title'}</div>
-          <div style={{ color: '#c93', fontWeight: 700, fontSize: 20 }}>US ${price || '0.00'}</div>
-          <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Category: {category?.name || 'Not selected'}</div>
-          {listingId ? <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>Draft ID: {listingId}</div> : null}
-        </div>
-      </aside>
+       <aside>
+         <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, position: 'sticky', top: 24 }}>
+           {(() => {
+             const priceNum = parseFloat(price || '0');
+             const basicsOk =
+               !!title.trim() &&
+               !!description.trim() &&
+               !!category?.id &&
+               Number.isFinite(priceNum) &&
+               priceNum > 0 &&
+               images.length > 0 &&
+               (() => {
+                 try {
+                   const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
+                   assertHostedImagesOrThrow(orderedImages);
+                   return true;
+                 } catch {
+                   return false;
+                 }
+               })();
+
+             const policiesOk =
+               !!String(ebayPaymentPolicyId || '').trim() &&
+               !!String(ebayReturnPolicyId || '').trim() &&
+               !!String(ebayFulfillmentPolicyId || '').trim();
+
+             const ebayConnectedOk = !(lastPreflightCode === 'NOT_CONNECTED' || lastPublishCode === 'EBAY_RECONNECT_REQUIRED');
+             const checksOk = preflightPassed === true;
+             const accountOk = lastPublishCode !== 'EBAY_ACCOUNT_SETUP_REQUIRED';
+             const ready = basicsOk && policiesOk && ebayConnectedOk && checksOk && accountOk;
+
+             const Item = ({
+               ok,
+               title,
+               help,
+             }: {
+               ok: boolean;
+               title: string;
+               help: string;
+             }) => (
+               <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 10 }}>
+                 <div
+                   style={{
+                     width: 10,
+                     height: 10,
+                     borderRadius: 999,
+                     marginTop: 4,
+                     background: ok ? '#16a34a' : '#dc2626',
+                     flex: '0 0 auto',
+                   }}
+                 />
+                 <div>
+                   <div style={{ fontSize: 13, fontWeight: 600, color: ok ? '#166534' : '#991b1b' }}>{title}</div>
+                   {!ok ? <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{help}</div> : null}
+                 </div>
+               </div>
+             );
+
+             return (
+               <div style={{ marginBottom: 16, paddingBottom: 14, borderBottom: '1px solid #eee' }}>
+                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                   <h4 style={{ margin: 0 }}>Publish readiness</h4>
+                   <span
+                     style={{
+                       fontSize: 12,
+                       fontWeight: 700,
+                       padding: '4px 10px',
+                       borderRadius: 999,
+                       background: ready ? '#dcfce7' : '#fef2f2',
+                       color: ready ? '#166534' : '#991b1b',
+                       border: `1px solid ${ready ? '#bbf7d0' : '#fecaca'}`,
+                       whiteSpace: 'nowrap',
+                     }}
+                   >
+                     {ready ? 'Ready to publish' : 'Not ready'}
+                   </span>
+                 </div>
+
+                 <Item ok={basicsOk} title="Listing basics complete" help="Add title, description, category, price, and hosted images." />
+                 <Item ok={policiesOk} title="Business policies selected" help="Select payment, return, and shipping policies." />
+                 <Item ok={ebayConnectedOk} title="eBay connected" help="Reconnect eBay to continue." />
+                 <Item ok={checksOk} title="eBay checks passed" help="Run eBay Checks before publishing." />
+                 <Item
+                   ok={accountOk}
+                   title="Account eligible"
+                   help="Your eBay account needs setup (shipping/payments/policies)."
+                 />
+               </div>
+             );
+           })()}
+
+           <h4 style={{ marginTop: 0, marginBottom: 12 }}>Preview</h4>
+           <div
+             style={{
+               height: 200,
+               background: '#f5f5f5',
+               display: 'grid',
+               placeItems: 'center',
+               marginBottom: 12,
+               borderRadius: 4,
+             }}
+           >
+             {mainImageUrl ? (
+               <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
+             ) : (
+               <div style={{ color: '#999' }}>No image</div>
+             )}
+           </div>
+           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{title || 'Your Product Title'}</div>
+           <div style={{ color: '#c93', fontWeight: 700, fontSize: 20 }}>US ${price || '0.00'}</div>
+           <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Category: {category?.name || 'Not selected'}</div>
+           {listingId ? <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>Draft ID: {listingId}</div> : null}
+         </div>
+       </aside>
+
 
       {showCategoryModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
