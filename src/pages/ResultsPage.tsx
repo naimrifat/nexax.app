@@ -1220,6 +1220,39 @@ export default function ResultsPage() {
         return;
       }
 
+      if (body?.code === 'EBAY_LISTING_FIX_REQUIRED') {
+        setPublishing(false);
+        setEbayReconnectRequired(false);
+        setPublishSuccess(null);
+
+        const errs = Array.isArray(body?.errors) ? body.errors : [];
+        if (errs.length) {
+          setPublishErrors(['Fix the listing details below before publishing.', ...errs.map((e: any) => String(e))]);
+        } else {
+          setPublishErrors(['Fix the listing details below before publishing.']);
+        }
+        return;
+      }
+
+      if (body?.code === 'EBAY_ACCOUNT_SETUP_REQUIRED') {
+        setPublishing(false);
+        setEbayReconnectRequired(false);
+        setPublishSuccess(null);
+        setPublishErrors([
+          'Your eBay account requires additional setup before you can publish.',
+          'This usually means shipping, payments, or business policies are not fully configured.',
+        ]);
+        return;
+      }
+
+      if (body?.code === 'EBAY_RETRYABLE_ERROR') {
+        setPublishing(false);
+        setEbayReconnectRequired(false);
+        setPublishSuccess(null);
+        setPublishErrors(['Temporary eBay issue. Please try again in a few minutes.']);
+        return;
+      }
+
       if (res.ok && body?.ok === true) {
         setPublishErrors([]);
         setPublishSuccess({
