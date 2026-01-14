@@ -630,6 +630,44 @@ export default function ResultsPage() {
 
   const mainImageUrl = images[mainImageIndex] || '';
 
+  const preflightInputKey = useMemo(
+    () =>
+      JSON.stringify({
+        title: title.trim(),
+        description: description.trim(),
+        categoryId: category?.id || null,
+        price,
+        images,
+        ebayPaymentPolicyId,
+        ebayReturnPolicyId,
+        ebayFulfillmentPolicyId,
+        specifics: (specifics || []).map((s) => ({ name: s?.name, value: s?.value })),
+      }),
+    [
+      title,
+      description,
+      category?.id,
+      price,
+      images,
+      ebayPaymentPolicyId,
+      ebayReturnPolicyId,
+      ebayFulfillmentPolicyId,
+      specifics,
+    ]
+  );
+
+  const lastPreflightInputKeyRef = useRef<string>('');
+
+  useEffect(() => {
+    if (preflightPassed !== true) return;
+    if (!lastPreflightInputKeyRef.current) return;
+    if (lastPreflightInputKeyRef.current === preflightInputKey) return;
+
+    setPreflightPassed(false);
+    setPreflightMessage(null);
+    setLastPreflightCode(null);
+  }, [preflightInputKey, preflightPassed]);
+
   const buildListingJson = useCallback(() => {
     const categoryPath = getCategoryPathString(category);
     const orderedImages = images.length
@@ -1056,6 +1094,7 @@ export default function ResultsPage() {
 
       if (body?.ok === true) {
         setLastPreflightCode(String(body?.code || 'OK'));
+        lastPreflightInputKeyRef.current = preflightInputKey;
         setPreflightPassed(true);
         setPreflightMessage('Checks passed');
 
@@ -1743,7 +1782,7 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             onClick={handleSaveDraft}
             disabled={disableActions}
@@ -1779,41 +1818,100 @@ export default function ResultsPage() {
             View All Drafts
           </button>
 
-          <button
-            type="button"
-            onClick={runEbayPreflight}
-            disabled={preflightLoading || publishing || disableActions}
-            style={{
-              padding: '12px 32px',
-              background: preflightLoading || publishing || disableActions ? '#999' : '#0f766e',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: preflightLoading || publishing || disableActions ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {preflightLoading ? 'Running checks…' : 'Run eBay Checks'}
-          </button>
+          {(() => {
+            const ebayNotConnected = lastPreflightCode === 'NOT_CONNECTED' || lastPublishCode === 'EBAY_RECONNECT_REQUIRED';
+            const checksOk = preflightPassed === true;
+            const accountSetupOk = lastPublishCode !== 'EBAY_ACCOUNT_SETUP_REQUIRED';
 
-          <button
-            type="button"
-            onClick={handlePublish}
-            disabled={publishing || preflightLoading || disableActions}
-            style={{
-              padding: '12px 32px',
-              background: publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: publishing || preflightLoading || disableActions ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {publishing ? 'Publishing…' : 'Publish to eBay'}
-          </button>
+            if (ebayNotConnected) {
+              return (
+                <button
+                  type="button"
+                  onClick={handleReconnectEbay}
+                  disabled={ebayReconnectLoading || publishing || preflightLoading || disableActions}
+                  style={{
+                    padding: '12px 32px',
+                    background: ebayReconnectLoading || publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: 4,
+                    cursor: ebayReconnectLoading || publishing || preflightLoading || disableActions ? 'default' : 'pointer',
+                    fontSize: 16,
+                    fontWeight: 600,
+                  }}
+                >
+                  {ebayReconnectLoading ? 'Redirecting…' : 'Reconnect eBay'}
+                </button>
+              );
+            }
+
+            if (!checksOk) {
+              return (
+                <button
+                  type="button"
+                  onClick={runEbayPreflight}
+                  disabled={preflightLoading || publishing || disableActions}
+                  style={{
+                    padding: '12px 32px',
+                    background: preflightLoading || publishing || disableActions ? '#999' : '#0f766e',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: 4,
+                    cursor: preflightLoading || publishing || disableActions ? 'default' : 'pointer',
+                    fontSize: 16,
+                    fontWeight: 600,
+                  }}
+                >
+                  {preflightLoading ? 'Running checks…' : 'Run eBay Checks'}
+                </button>
+              );
+            }
+
+            if (!accountSetupOk) {
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <button
+                    type="button"
+                    disabled
+                    style={{
+                      padding: '12px 32px',
+                      background: '#999',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: 4,
+                      cursor: 'default',
+                      fontSize: 16,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Publish
+                  </button>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Your eBay account requires setup before publishing.</div>
+                </div>
+              );
+            }
+
+            return (
+              <button
+                type="button"
+                onClick={handlePublish}
+                disabled={publishing || preflightLoading || disableActions}
+                style={{
+                  padding: '12px 32px',
+                  background: publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: publishing || preflightLoading || disableActions ? 'default' : 'pointer',
+                  fontSize: 16,
+                  fontWeight: 600,
+                }}
+              >
+                {publishing ? 'Publishing…' : 'Publish'}
+              </button>
+            );
+          })()}
+
 
           <button
             type="button"
@@ -1883,24 +1981,7 @@ export default function ResultsPage() {
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: 6 }}>Your eBay connection expired. Reconnect to continue.</div>
-            {ebayReconnectError ? <div style={{ marginBottom: 10, fontSize: 14 }}>{ebayReconnectError}</div> : null}
-            <button
-              type="button"
-              onClick={handleReconnectEbay}
-              disabled={ebayReconnectLoading}
-              style={{
-                padding: '12px 20px',
-                background: ebayReconnectLoading ? '#999' : '#0064d2',
-                color: 'white',
-                border: 'none',
-                borderRadius: 4,
-                cursor: ebayReconnectLoading ? 'default' : 'pointer',
-                fontSize: 16,
-                fontWeight: 600,
-              }}
-            >
-              {ebayReconnectLoading ? 'Redirecting…' : 'Reconnect eBay'}
-            </button>
+            {ebayReconnectError ? <div style={{ fontSize: 14 }}>{ebayReconnectError}</div> : null}
           </div>
         ) : null}
 
