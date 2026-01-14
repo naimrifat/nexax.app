@@ -15,7 +15,10 @@ type Draft = {
   price: string;
   savedAt: string;
   marketplace: string;
+  preflightPassed: boolean;
+  preflightPassedAt: string | null;
 };
+
 
 type ListingRow = {
   id: string;
@@ -67,6 +70,9 @@ function normalizeDraftFromRow(row: ListingRow): Draft {
       lj?.category?.breadcrumbs?.join?.(' > ') ??
       '') as string;
 
+  const preflightPassed = lj?.preflight_passed === true;
+  const preflightPassedAt = lj?.preflight_passed_at ? String(lj.preflight_passed_at) : null;
+
   return {
     id: row.id,
     title: (row.title ?? lj?.title ?? 'Untitled Draft') as string,
@@ -77,6 +83,8 @@ function normalizeDraftFromRow(row: ListingRow): Draft {
     price: toMoneyString(row.price ?? lj?.price ?? lj?.price_suggestion?.optimal ?? '0.00', '0.00'),
     savedAt,
     marketplace: (row.marketplace ?? lj?.marketplace ?? 'ebay') as string,
+    preflightPassed,
+    preflightPassedAt,
   };
 }
 
@@ -336,10 +344,24 @@ export default function DraftsPage() {
                       {draft.title?.trim() ? draft.title : 'Untitled Draft'}
                     </h3>
 
-                    <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
-                      <Clock className="w-4 h-4" />
-                      <span>{formatDate(draft.savedAt)}</span>
+                    <div className="flex items-center justify-between gap-2 text-sm text-gray-500 mb-3">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4" />
+                        <span>{formatDate(draft.savedAt)}</span>
+                      </div>
+
+                      <span
+                        className={`text-xs px-2 py-1 rounded-full border ${
+                          draft.preflightPassed
+                            ? 'bg-green-50 text-green-700 border-green-200'
+                            : 'bg-gray-50 text-gray-600 border-gray-200'
+                        }`}
+                        title={draft.preflightPassedAt ? `Checked: ${formatDate(draft.preflightPassedAt)}` : undefined}
+                      >
+                        {draft.preflightPassed ? 'Checks passed' : 'Checks not run'}
+                      </span>
                     </div>
+
 
                     {draft.categoryPath && (
                       <div className="text-xs text-gray-500 mb-3 truncate">📁 {draft.categoryPath}</div>
