@@ -393,6 +393,9 @@ export default function ResultsPage() {
   const [draftStatus, setDraftStatus] = useState<string>('');
   const [publishErrors, setPublishErrors] = useState<string[]>([]);
   const [publishSuccess, setPublishSuccess] = useState<{ ebay_item_id?: string | null; ebay_listing_url?: string | null } | null>(null);
+  const [preflightLoading, setPreflightLoading] = useState(false);
+  const [preflightPassed, setPreflightPassed] = useState<boolean | null>(null);
+  const [preflightMessage, setPreflightMessage] = useState<string | null>(null);
   const [ebayReconnectRequired, setEbayReconnectRequired] = useState(false);
   const [ebayReconnectLoading, setEbayReconnectLoading] = useState(false);
   const [ebayReconnectError, setEbayReconnectError] = useState<string | null>(null);
@@ -1009,6 +1012,78 @@ export default function ResultsPage() {
     return errors;
   };
 
+  const runEbayPreflight = async (): Promise<boolean> => {
+    setPreflightLoading(true);
+    setPreflightMessage(null);
+    setPreflightPassed(null);
+    setPublishErrors([]);
+    setPublishSuccess(null);
+    setEbayReconnectRequired(false);
+    setEbayReconnectError(null);
+
+    if (!listingId) {
+      setPublishErrors(['Please click "Save Draft" first (we need a saved Draft ID before running checks).']);
+      setPreflightLoading(false);
+      setPreflightPassed(false);
+      return false;
+    }
+
+    try {
+      const {
+        data: { session },
+        error: sessionErr,
+      } = await supabase.auth.getSession();
+
+      if (sessionErr || !session?.access_token) {
+        setPublishErrors(['You are not logged in. Please sign in again and retry.']);
+        setPreflightPassed(false);
+        return false;
+      }
+
+      const res = await fetch('/api/ebay-preflight', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ listing_id: listingId }),
+      });
+
+      const body: any = await res.json().catch(() => ({}));
+
+      if (body?.ok === true) {
+        setPreflightPassed(true);
+        setPreflightMessage('Checks passed');
+        return true;
+      }
+
+      if (body?.code === 'NOT_CONNECTED') {
+        setEbayReconnectRequired(true);
+        setEbayReconnectError('eBay not connected/expired. Reconnect to continue.');
+        setPreflightPassed(false);
+        return false;
+      }
+
+      if (body?.code === 'VALIDATION_ERROR' || body?.code === 'PREFLIGHT_FAILED') {
+        if (Array.isArray(body?.errors) && body.errors.length) {
+          setPublishErrors(body.errors.map((e: any) => String(e)));
+        } else if (body?.message) {
+          setPublishErrors([String(body.message)]);
+        } else {
+          setPublishErrors(['Checks failed. Please review and try again.']);
+        }
+        setPreflightPassed(false);
+        return false;
+      }
+
+      setPublishErrors(['Checks failed due to a server error. Please try again.']);
+      setPreflightPassed(false);
+      return false;
+    } finally {
+      setPreflightLoading(false);
+    }
+  };
+
   const handleReconnectEbay = async () => {
     setEbayReconnectLoading(true);
     setEbayReconnectError(null);
@@ -1071,6 +1146,9 @@ export default function ResultsPage() {
       setPublishErrors(['Please click "Save Draft" first (we need a saved Draft ID before publishing).']);
       return;
     }
+
+    const preflightOk = await runEbayPreflight();
+    if (!preflightOk) return;
 
     setPublishing(true);
 
@@ -1631,15 +1709,33 @@ export default function ResultsPage() {
 
           <button
             type="button"
-            onClick={handlePublish}
-            disabled={publishing || disableActions}
+            onClick={runEbayPreflight}
+            disabled={preflightLoading || publishing || disableActions}
             style={{
               padding: '12px 32px',
-              background: publishing || disableActions ? '#999' : '#0064d2',
+              background: preflightLoading || publishing || disableActions ? '#999' : '#0f766e',
               color: 'white',
               border: 'none',
               borderRadius: 4,
-              cursor: publishing || disableActions ? 'default' : 'pointer',
+              cursor: preflightLoading || publishing || disableActions ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
+            {preflightLoading ? 'Running checks…' : 'Run eBay Checks'}
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={publishing || preflightLoading || disableActions}
+            style={{
+              padding: '12px 32px',
+              background: publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: publishing || preflightLoading || disableActions ? 'default' : 'pointer',
               fontSize: 16,
               fontWeight: 600,
             }}
@@ -1663,6 +1759,22 @@ export default function ResultsPage() {
             Cancel
           </button>
         </div>
+
+        {preflightPassed === true ? (
+          <div
+            style={{
+              marginTop: 12,
+              border: '1px solid #bbf7d0',
+              background: '#f0fdf4',
+              color: '#166534',
+              borderRadius: 6,
+              padding: 10,
+              fontSize: 14,
+            }}
+          >
+            {preflightMessage || 'Checks passed'}
+          </div>
+        ) : null}
 
         {publishSuccess ? (
           <div
