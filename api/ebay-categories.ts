@@ -78,6 +78,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const specifics = await getCategorySpecificsFromAPI(categoryId);
         return res.status(200).json(specifics);
       }
+      case 'getCategoryConditions': {
+        const conditions = await getCategoryConditionsFromAPI(categoryId);
+        return res.status(200).json(conditions);
+      }
       default:
         return res.status(400).json({ error: 'Invalid action' });
     }
@@ -252,6 +256,49 @@ async function getCategorySpecificsFromAPI(categoryId: string) {
 
   return { categoryId, aspects };
 }
+
+/* =========================
+   Category conditions (sell/metadata)
+   ========================= */
+async function getCategoryConditionsFromAPI(categoryId: string) {
+  if (!categoryId) return { categoryId, conditions: [] };
+
+  const token = await getOAuthToken();
+  const marketplaceId = String(process.env.EBAY_MARKETPLACE_ID || 'EBAY_US');
+
+  const resp = await fetch(
+    `https://api.ebay.com/sell/metadata/v1/marketplace/${encodeURIComponent(
+      marketplaceId
+    )}/get_item_condition_policies?category_id=${encodeURIComponent(categoryId)}`,
+    { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+  );
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    console.error('Condition policies fetch failed:', resp.status, text);
+    return { categoryId, conditions: [] };
+  }
+
+  const data: any = await resp.json().catch(() => ({}));
+
+  const policies = Array.isArray(data?.itemConditionPolicies) ? data.itemConditionPolicies : [];
+  const itemConditions =
+    Array.isArray(data?.itemConditions)
+      ? data.itemConditions
+      : policies.length && Array.isArray(policies[0]?.itemConditions)
+        ? policies[0].itemConditions
+        : [];
+
+  const conditions = (itemConditions || [])
+    .map((c: any) => ({
+      id: String(c?.conditionId ?? c?.id ?? ''),
+      name: String(c?.conditionDescription ?? c?.name ?? c?.conditionName ?? ''),
+    }))
+    .filter((c: any) => c.id && c.name);
+
+  return { categoryId, conditions };
+}
+
 
 /* =========================
    Fallback
