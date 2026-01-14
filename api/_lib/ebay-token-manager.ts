@@ -45,6 +45,7 @@ function computeExpiresAt(expiresIn: number) {
 async function refreshToken(params: {
   env: EbayEnv;
   refreshToken: string;
+  connectionId?: string;
 }) {
   const body = new URLSearchParams();
   body.set('grant_type', 'refresh_token');
@@ -71,10 +72,25 @@ async function refreshToken(params: {
     const desc = json?.error_description || 'Unknown refresh error';
 
     if (err === 'invalid_grant') {
-      throw Object.assign(
-        new Error('eBay authorization expired. Please reconnect eBay.'),
-        { code: 'EBAY_INVALID_GRANT', statusCode: 401 }
-      );
+      if (params.connectionId) {
+        try {
+          const admin = adminClient();
+          await admin
+            .from('marketplace_connections')
+            .update({ access_token: null, refresh_token: null, expires_at: null })
+            .eq('id', params.connectionId);
+        } catch (e: any) {
+          console.error('[ebay-token-manager] failed to mark connection disconnected', {
+            connectionId: params.connectionId,
+            message: String(e?.message || ''),
+          });
+        }
+      }
+
+      throw Object.assign(new Error('Please reconnect eBay'), {
+        code: 'EBAY_INVALID_GRANT',
+        statusCode: 401,
+      });
     }
 
     throw Object.assign(
@@ -174,7 +190,7 @@ export async function getValidEbayToken(
       });
     }
 
-    const refreshed = await refreshToken({ env, refreshToken: refreshTok });
+    const refreshed = await refreshToken({ env, refreshToken: refreshTok, connectionId: data.id });
 
     const update: any = {
       access_token: refreshed.access_token,
