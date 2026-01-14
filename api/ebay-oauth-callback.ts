@@ -2,6 +2,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
+import { sentryCaptureException } from "./_lib/sentry.js";
+
 
 function mustEnv(name: string) {
   const v = process.env[name];
@@ -151,8 +153,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(302).setHeader('Location', payload.r || '/settings?ebay=connected');
     return res.end();
   } catch (err: any) {
+    sentryCaptureException(err, {
+      operation: 'ebay_oauth_callback',
+      workspace_id: String((req.query as any)?.w || '' || ''),
+      extras: { message: String(err?.message || ''), status: 302 },
+    });
     const msg = encodeURIComponent(err?.message || 'OAuth failed');
     res.status(302).setHeader('Location', `/settings?ebay=error&message=${msg}`);
     return res.end();
   }
+
 }
