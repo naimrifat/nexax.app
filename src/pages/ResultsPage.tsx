@@ -862,14 +862,8 @@ export default function ResultsPage() {
     const requiresCondition = !!category?.id && conditionRequired;
 
     const conditionIdNum = Number.parseInt(String(conditionId || '').trim() || '0', 10);
-    const needsConditionDescription = Number.isFinite(conditionIdNum) && conditionIdNum > 1499;
-
     if (requiresCondition && !String(conditionId || '').trim()) {
       missingBasics.push('Condition');
-    }
-
-    if (requiresCondition && needsConditionDescription && !String(conditionDescription || '').trim()) {
-      missingBasics.push('Condition description');
     }
 
     if (!String(ebayPaymentPolicyId || '').trim()) missingPolicies.push('Payment policy');
@@ -1517,15 +1511,10 @@ export default function ResultsPage() {
 
     const requiresCondition = !!category?.id && conditionRequired;
     const conditionIdNum = Number.parseInt(String(conditionId || '').trim() || '0', 10);
-    const needsConditionDescription = Number.isFinite(conditionIdNum) && conditionIdNum > 1499;
-
     if (requiresCondition && !String(conditionId || '').trim()) {
       errors.push('Condition is required.');
     }
 
-    if (requiresCondition && needsConditionDescription && !String(conditionDescription || '').trim()) {
-      errors.push('Condition description is required.');
-    }
 
     try {
       const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
@@ -2155,7 +2144,6 @@ export default function ResultsPage() {
               const selectedId = String(conditionId || '').trim();
               const conditionIdNum = Number.parseInt(selectedId || '0', 10);
               const needsDescription = Number.isFinite(conditionIdNum) && conditionIdNum > 1499;
-              const isDescriptionMissing = needsDescription && !String(conditionDescription || '').trim();
 
               return (
                 <div style={{ marginTop: 10 }}>
@@ -2211,7 +2199,7 @@ export default function ResultsPage() {
                           maxWidth: 520,
                           padding: 10,
                           borderRadius: 6,
-                          border: shouldHighlight && isDescriptionMissing ? '1px solid #ef4444' : '1px solid #d1d5db',
+                          border: '1px solid #d1d5db',
                           fontSize: 14,
                         }}
                       />
@@ -2672,18 +2660,7 @@ export default function ResultsPage() {
                   return;
                 }
 
-                if (missingBasics.includes('Condition description')) {
-                  conditionDescriptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  conditionDescriptionRef.current?.focus();
-                  return;
-                }
 
-
-                if (missingBasics.includes('Condition description')) {
-                  conditionDescriptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  conditionDescriptionRef.current?.focus();
-                  return;
-                }
 
                 if (missingBasics.includes('Price')) {
                   priceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
