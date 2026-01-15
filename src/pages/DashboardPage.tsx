@@ -539,7 +539,7 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
 
   const canRetryPublish = (() => {
     const s = String(listing.status || '').toLowerCase();
-    return s === 'draft' || s === 'publish_failed';
+    return s === 'publish_failed';
   })();
 
   const handleRetryPublish = async () => {
