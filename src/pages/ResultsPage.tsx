@@ -707,10 +707,10 @@ export default function ResultsPage() {
           return;
         }
 
-        const nextRequired = data?.required !== false;
         const next = Array.isArray(data?.conditions) ? data.conditions : [];
 
-        setConditionRequired(nextRequired);
+        // Backend returns { conditions, rawCategoryId, marketplaceId }
+        setConditionRequired(true);
         setConditionOptions(next);
 
         if (conditionId) {
