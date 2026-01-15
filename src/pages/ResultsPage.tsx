@@ -471,6 +471,7 @@ export default function ResultsPage() {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [autosaveErrorMessage, setAutosaveErrorMessage] = useState<string | null>(null);
   const autosaveTimerRef = useRef<any>(null);
+  const lastAutosaveResultKeyRef = useRef<string>('');
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -1336,6 +1337,7 @@ export default function ResultsPage() {
       setAutosaveStatus('saved');
       setLastSavedAt(Date.now());
       setAutosaveErrorMessage(null);
+      lastAutosaveResultKeyRef.current = autosaveKey;
 
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
@@ -1374,6 +1376,7 @@ export default function ResultsPage() {
             ? 'Failed to reach server. Check connection and try again.'
             : String(err?.message || '').trim() || 'Failed to save draft. Please try again.'
         );
+        lastAutosaveResultKeyRef.current = autosaveKey;
       }
 
       const msg = isNetworkLikeError(err)
@@ -1396,6 +1399,13 @@ export default function ResultsPage() {
     if (publishing || preflightLoading || savingDraft) return;
     if (disableActions) return;
 
+    // New meaningful change: clear previous autosave result.
+    if (lastAutosaveResultKeyRef.current && lastAutosaveResultKeyRef.current !== autosaveKey) {
+      if (autosaveStatus === 'saved' || autosaveStatus === 'error') {
+        setAutosaveStatus('idle');
+      }
+    }
+
     autosaveTimerRef.current = setTimeout(async () => {
       if (!isDirty) return;
       if (publishing || preflightLoading || savingDraft) return;
@@ -1403,6 +1413,7 @@ export default function ResultsPage() {
 
       setAutosaveStatus('saving');
 
+      const keyAtRun = autosaveKey;
       const res = await handleSaveDraft({ silent: true });
       if (res.ok) {
         setAutosaveStatus('saved');
@@ -1412,6 +1423,8 @@ export default function ResultsPage() {
         setAutosaveStatus('error');
         setAutosaveErrorMessage(res.errorMessage || 'Autosave failed');
       }
+
+      lastAutosaveResultKeyRef.current = keyAtRun;
     }, 3000);
 
     return () => {
@@ -1420,7 +1433,7 @@ export default function ResultsPage() {
         autosaveTimerRef.current = null;
       }
     };
-  }, [autosaveKey, isDirty, publishing, preflightLoading, savingDraft, disableActions]);
+  }, [autosaveKey, isDirty, publishing, preflightLoading, savingDraft, disableActions, autosaveStatus]);
  
   // ----------------------------
   // Publish
@@ -2724,25 +2737,27 @@ export default function ResultsPage() {
              Cancel
            </button>
 
-           {autosaveStatus !== 'idle' ? (
-             <div
-               style={{
-                 fontSize: 12,
-                 color: autosaveStatus === 'error' ? '#991b1b' : '#6b7280',
-                 marginLeft: 4,
-               }}
-             >
-               {autosaveStatus === 'saving'
-                 ? 'Saving...'
-                 : autosaveStatus === 'saved'
-                   ? (() => {
-                       if (!lastSavedAt) return 'Saved';
-                       const t = new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                       return `Saved ${t}`;
-                     })()
-                   : 'Autosave failed. Click Save Draft to retry.'}
-             </div>
-           ) : null}
+         </div>
+
+         <div
+           style={{
+             marginTop: 6,
+             minHeight: 16,
+             fontSize: 12,
+             color: autosaveStatus === 'error' ? '#991b1b' : '#6b7280',
+           }}
+         >
+           {autosaveStatus === 'saving'
+             ? 'Saving…'
+             : autosaveStatus === 'saved'
+               ? (() => {
+                   if (!lastSavedAt) return 'Saved';
+                   const t = new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                   return `Saved ${t}`;
+                 })()
+               : autosaveStatus === 'error'
+                 ? 'Autosave failed. Click Save Draft to retry.'
+                 : ''}
          </div>
 
 
