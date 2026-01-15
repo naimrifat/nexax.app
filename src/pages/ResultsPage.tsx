@@ -1205,7 +1205,10 @@ export default function ResultsPage() {
   // ----------------------------
   // Save Draft (NO created_by sent; DB default auth.uid())
   // ----------------------------
-  const handleSaveDraft = async () => {
+  const handleSaveDraft = async (): Promise<
+    | { ok: true; listingId: string }
+    | { ok: false; errorMessage: string }
+  > => {
     setSaveError(null);
     setDraftStatus('');
     setDraftSavedSuccessfully(false);
@@ -1291,6 +1294,8 @@ export default function ResultsPage() {
       url.searchParams.set('mode', 'edit');
       url.searchParams.set('listingId', savedId);
       window.history.replaceState({}, '', url.toString());
+
+      return { ok: true, listingId: String(savedId) };
     } catch (err: any) {
       console.error('[Draft] save failed:', err);
       setDraftSavedSuccessfully(false);
@@ -1311,6 +1316,12 @@ export default function ResultsPage() {
       }
 
       setDraftStatus('');
+
+      const msg = isNetworkLikeError(err)
+        ? 'Failed to reach server. Check connection and try again.'
+        : String(err?.message || '').trim() || 'Failed to save draft. Please try again.';
+
+      return { ok: false, errorMessage: msg };
     } finally {
       setSavingDraft(false);
     }
@@ -1361,7 +1372,7 @@ export default function ResultsPage() {
     return errors;
   };
 
-  const runEbayPreflight = async (): Promise<boolean> => {
+  const runEbayPreflight = async (listingIdOverride?: string): Promise<boolean> => {
     setPreflightLoading(true);
     setPreflightMessage(null);
     setPreflightPassed(null);
@@ -1371,7 +1382,9 @@ export default function ResultsPage() {
     setEbayReconnectRequired(false);
     setEbayReconnectError(null);
 
-    if (!listingId) {
+    const listingIdForCall = String(listingIdOverride || listingId || '').trim();
+
+    if (!listingIdForCall) {
       setPublishErrors(['Please click "Save Draft" first (we need a saved Draft ID before running checks).']);
       setPreflightLoading(false);
       setPreflightPassed(false);
@@ -1396,7 +1409,7 @@ export default function ResultsPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ listing_id: listingId }),
+        body: JSON.stringify({ listing_id: listingIdForCall }),
       });
 
       const body: any = await res.json().catch(() => ({}));
@@ -1567,14 +1580,31 @@ export default function ResultsPage() {
       return;
     }
 
-    if (!listingId) {
-      setPublishErrors(['Please click "Save Draft" first (we need a saved Draft ID before publishing).']);
+    const saveRes = await handleSaveDraft();
+    if (!saveRes.ok) {
+      setUiError({
+        title: 'Save failed',
+        message: saveRes.errorMessage || 'Failed to save draft. Please try again.',
+      });
       return;
     }
 
-    const preflightOk = await runEbayPreflight();
-    if (!preflightOk) return;
+    const savedListingId = String(saveRes.listingId || '').trim();
+    if (!savedListingId) {
+      setUiError({
+        title: 'Save failed',
+        message: 'Draft saved but no id was returned. Please try again.',
+      });
+      return;
+    }
 
+    if (savedListingId !== listingId) {
+      setListingId(savedListingId);
+    }
+
+    const preflightOk = await runEbayPreflight(savedListingId);
+    if (!preflightOk) return;
+ 
     setPublishing(true);
 
     try {
@@ -1594,7 +1624,7 @@ export default function ResultsPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ listing_id: listingId }),
+        body: JSON.stringify({ listing_id: savedListingId }),
       });
 
       let body: any = {};
@@ -2530,7 +2560,7 @@ export default function ResultsPage() {
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             onClick={handleSaveDraft}
-            disabled={disableActions || publishing || preflightLoading}
+            disabled={disableActions || publishing || preflightLoading || savingDraft}
             className="btn"
             style={{
               padding: '12px 24px',
@@ -2549,7 +2579,7 @@ export default function ResultsPage() {
           <button
             type="button"
             onClick={handlePublish}
-            disabled={publishing || preflightLoading || disableActions}
+            disabled={publishing || preflightLoading || savingDraft || disableActions}
             style={{
               padding: '12px 32px',
               background: publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
