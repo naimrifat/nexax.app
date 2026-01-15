@@ -1840,6 +1840,7 @@ export default function ResultsPage() {
                     }}
                     style={{
                       width: '100%',
+                      maxWidth: 520,
                       padding: '10px 12px',
                       borderRadius: 6,
                       border: shouldHighlight && isConditionMissing ? '1px solid #ef4444' : '1px solid #d1d5db',
@@ -1869,6 +1870,7 @@ export default function ResultsPage() {
                         rows={2}
                         style={{
                           width: '100%',
+                          maxWidth: 520,
                           padding: 10,
                           borderRadius: 6,
                           border: shouldHighlight && isDescriptionMissing ? '1px solid #ef4444' : '1px solid #d1d5db',
