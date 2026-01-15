@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { getValidEbayToken } from "./_lib/ebay-token-manager.js";
-import { sentryCaptureException } from "./_lib/sentry.js";
+import { getValidEbayToken } from "../lib/ebay/ebay-token-manager.js";
+import { sentryCaptureException } from "../lib/sentry.js";
 
 
 
