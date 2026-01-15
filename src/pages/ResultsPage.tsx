@@ -467,6 +467,11 @@ export default function ResultsPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
 
+  const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [autosaveErrorMessage, setAutosaveErrorMessage] = useState<string | null>(null);
+  const autosaveTimerRef = useRef<any>(null);
+
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
 
@@ -807,6 +812,34 @@ export default function ResultsPage() {
   );
 
   const lastPreflightInputKeyRef = useRef<string>('');
+
+  const autosaveKey = useMemo(
+    () =>
+      JSON.stringify({
+        preflightInputKey,
+        sku: sku.trim(),
+        keywords,
+        mainImageIndex,
+        packageWeightLb,
+        packageWeightOz,
+        packageLengthIn,
+        packageWidthIn,
+        packageHeightIn,
+        irregularPackage,
+      }),
+    [
+      preflightInputKey,
+      sku,
+      keywords,
+      mainImageIndex,
+      packageWeightLb,
+      packageWeightOz,
+      packageLengthIn,
+      packageWidthIn,
+      packageHeightIn,
+      irregularPackage,
+    ]
+  );
 
   const missingRequirements = useMemo(() => {
     const missingBasics: string[] = [];
@@ -1205,17 +1238,24 @@ export default function ResultsPage() {
   // ----------------------------
   // Save Draft (NO created_by sent; DB default auth.uid())
   // ----------------------------
-  const handleSaveDraft = async (): Promise<
+  const handleSaveDraft = async (
+    opts?: { silent?: boolean }
+  ): Promise<
     | { ok: true; listingId: string }
     | { ok: false; errorMessage: string }
   > => {
-    setSaveError(null);
-    setDraftStatus('');
-    setDraftSavedSuccessfully(false);
-    setSavingDraft(true);
+    const silent = !!(opts as any)?.silent;
 
-    try {
+    if (!silent) {
+      setSaveError(null);
+      setDraftStatus('');
+      setDraftSavedSuccessfully(false);
       setUiError(null);
+    }
+
+    setSavingDraft(true);
+ 
+    try {
       const t = await ensureTenancy();
       const listingData = buildListingJson();
 
@@ -1285,10 +1325,17 @@ export default function ResultsPage() {
       if (!savedId) throw new Error('Draft saved but no id was returned');
 
       setListingId(savedId);
-      setDraftStatus('Draft saved.');
-      setDraftSavedSuccessfully(true);
+
+      if (!silent) {
+        setDraftStatus('Draft saved.');
+        setDraftSavedSuccessfully(true);
+        setUiError(null);
+      }
+
       setIsDirty(false);
-      setUiError(null);
+      setAutosaveStatus('saved');
+      setLastSavedAt(Date.now());
+      setAutosaveErrorMessage(null);
 
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
@@ -1298,24 +1345,36 @@ export default function ResultsPage() {
       return { ok: true, listingId: String(savedId) };
     } catch (err: any) {
       console.error('[Draft] save failed:', err);
-      setDraftSavedSuccessfully(false);
-      setSaveError(null);
 
-      if (isNetworkLikeError(err)) {
-        setUiError({
-          title: 'Network error',
-          message: 'Failed to reach server. Check connection and try again.',
-        });
-      } else {
-        const msg = String(err?.message || '').trim();
-        setUiError({
-          title: 'Save failed',
-          message: msg || 'Failed to save draft. Please try again.',
-          status: typeof err?.status === 'number' ? err.status : undefined,
-        });
+      if (!silent) {
+        setDraftSavedSuccessfully(false);
+        setSaveError(null);
+
+        if (isNetworkLikeError(err)) {
+          setUiError({
+            title: 'Network error',
+            message: 'Failed to reach server. Check connection and try again.',
+          });
+        } else {
+          const msg = String(err?.message || '').trim();
+          setUiError({
+            title: 'Save failed',
+            message: msg || 'Failed to save draft. Please try again.',
+            status: typeof err?.status === 'number' ? err.status : undefined,
+          });
+        }
+
+        setDraftStatus('');
       }
 
-      setDraftStatus('');
+      if (silent) {
+        setAutosaveStatus('error');
+        setAutosaveErrorMessage(
+          isNetworkLikeError(err)
+            ? 'Failed to reach server. Check connection and try again.'
+            : String(err?.message || '').trim() || 'Failed to save draft. Please try again.'
+        );
+      }
 
       const msg = isNetworkLikeError(err)
         ? 'Failed to reach server. Check connection and try again.'
@@ -1327,6 +1386,42 @@ export default function ResultsPage() {
     }
   };
 
+  useEffect(() => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+
+    if (!isDirty) return;
+    if (publishing || preflightLoading || savingDraft) return;
+    if (disableActions) return;
+
+    autosaveTimerRef.current = setTimeout(async () => {
+      if (!isDirty) return;
+      if (publishing || preflightLoading || savingDraft) return;
+      if (disableActions) return;
+
+      setAutosaveStatus('saving');
+
+      const res = await handleSaveDraft({ silent: true });
+      if (res.ok) {
+        setAutosaveStatus('saved');
+        setLastSavedAt(Date.now());
+        setAutosaveErrorMessage(null);
+      } else {
+        setAutosaveStatus('error');
+        setAutosaveErrorMessage(res.errorMessage || 'Autosave failed');
+      }
+    }, 3000);
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [autosaveKey, isDirty, publishing, preflightLoading, savingDraft, disableActions]);
+ 
   // ----------------------------
   // Publish
   // ----------------------------
@@ -2558,39 +2653,39 @@ export default function ResultsPage() {
         ) : null}
 
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleSaveDraft}
-            disabled={disableActions || publishing || preflightLoading || savingDraft}
-            className="btn"
-            style={{
-              padding: '12px 24px',
-              background: disableActions ? '#999' : '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: disableActions ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
+           <button
+             onClick={handleSaveDraft}
+             disabled={disableActions || publishing || preflightLoading || savingDraft}
+             className="btn"
+             style={{
+               padding: '12px 24px',
+               background: disableActions || publishing || preflightLoading || savingDraft ? '#999' : '#10b981',
+               color: 'white',
+               border: 'none',
+               borderRadius: '4px',
+               cursor: disableActions || publishing || preflightLoading || savingDraft ? 'default' : 'pointer',
+               fontSize: 16,
+               fontWeight: 600,
+             }}
+           >
             Save Draft
           </button>
 
-          <button
-            type="button"
-            onClick={handlePublish}
-            disabled={publishing || preflightLoading || savingDraft || disableActions}
-            style={{
-              padding: '12px 32px',
-              background: publishing || preflightLoading || disableActions ? '#999' : '#0064d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: publishing || preflightLoading || disableActions ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
+           <button
+             type="button"
+             onClick={handlePublish}
+             disabled={publishing || preflightLoading || savingDraft || disableActions}
+             style={{
+               padding: '12px 32px',
+               background: publishing || preflightLoading || savingDraft || disableActions ? '#999' : '#0064d2',
+               color: 'white',
+               border: 'none',
+               borderRadius: 4,
+               cursor: publishing || preflightLoading || savingDraft || disableActions ? 'default' : 'pointer',
+               fontSize: 16,
+               fontWeight: 600,
+             }}
+           >
             {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
           </button>
 
@@ -2613,22 +2708,43 @@ export default function ResultsPage() {
             </button>
           ) : null}
 
-          <button
-            type="button"
-            onClick={() => navigate('/create-listing')}
-            style={{
-              padding: '12px 32px',
-              background: '#f0f0f0',
-              color: '#333',
-              border: '1px solid #ddd',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 16,
-            }}
-          >
-            Cancel
-          </button>
-        </div>
+           <button
+             type="button"
+             onClick={() => navigate('/create-listing')}
+             style={{
+               padding: '12px 32px',
+               background: '#f0f0f0',
+               color: '#333',
+               border: '1px solid #ddd',
+               borderRadius: 4,
+               cursor: 'pointer',
+               fontSize: 16,
+             }}
+           >
+             Cancel
+           </button>
+
+           {autosaveStatus !== 'idle' ? (
+             <div
+               style={{
+                 fontSize: 12,
+                 color: autosaveStatus === 'error' ? '#991b1b' : '#6b7280',
+                 marginLeft: 4,
+               }}
+             >
+               {autosaveStatus === 'saving'
+                 ? 'Saving...'
+                 : autosaveStatus === 'saved'
+                   ? (() => {
+                       if (!lastSavedAt) return 'Saved';
+                       const t = new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                       return `Saved ${t}`;
+                     })()
+                   : 'Autosave failed. Click Save Draft to retry.'}
+             </div>
+           ) : null}
+         </div>
+
 
         {uiError ? (
           <div
