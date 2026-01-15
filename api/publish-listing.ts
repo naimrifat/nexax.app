@@ -1,17 +1,17 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { getValidEbayToken } from "./_lib/ebay-token-manager.js";
-import { ensureMerchantLocation } from "./_lib/ebay-merchant-location.js";
-import { ebayFetch, EbayHttpError } from "./_lib/ebay-http.js";
-import { classifyEbayError } from "./_lib/ebay-error-classifier.js";
-import { sentryCaptureException } from "./_lib/sentry.js";
+import { getValidEbayToken } from "../lib/ebay/ebay-token-manager.js";
+import { ensureMerchantLocation } from "../lib/ebay/ebay-merchant-location.js";
+import { ebayFetch, EbayHttpError } from "../lib/ebay/ebay-http.js";
+import { classifyEbayError } from "../lib/ebay/ebay-error-classifier.js";
+import { sentryCaptureException } from "../lib/sentry.js";
 
 export const config = {
   api: { bodyParser: { sizeLimit: '2mb' } },
   maxDuration: 60,
 };
 
-function respond(res, status, payload) {
+function respond(res: VercelResponse, status: number, payload: unknown) {
   return res.status(status).json(payload);
 }
 
@@ -310,7 +310,6 @@ async function publishToEbayInventoryApi(opts: {
     { requestId, operation: 'publish' }
   );
 
-  const offerText = r2.text || '';
   const offerJson: any = r2.json || {};
 
   if (!r2.ok) {
@@ -357,7 +356,6 @@ async function publishToEbayInventoryApi(opts: {
     { requestId, operation: 'publish' }
   );
 
-  const pubText = r3.text || '';
   const pubJson: any = r3.json || {};
 
   if (!r3.ok) {
