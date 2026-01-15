@@ -125,36 +125,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const rootPolicies = Array.isArray(json?.itemConditionPolicies)
-      ? json.itemConditionPolicies
-      : json?.itemConditionPolicies && typeof json.itemConditionPolicies === 'object'
-        ? [json.itemConditionPolicies]
-        : [];
+    const policies = Array.isArray(json?.itemConditionPolicies) ? json.itemConditionPolicies : [];
 
-    const firstPolicy = rootPolicies[0] || null;
+    if (!policies.length) {
+      return res.status(200).json({
+        conditions: [],
+        rawCategoryId: categoryId,
+        resolvedCategoryId: null,
+        marketplaceId,
+        itemConditionRequired: false,
+        debugStatus: ebayRes.status,
+        debugKeys: Object.keys(json || {}),
+        debugSnippet: JSON.stringify(json).slice(0, 1500),
+      });
+    }
 
-    const policyConditionPoliciesA = Array.isArray(firstPolicy?.conditionPolicies) ? firstPolicy.conditionPolicies : [];
-    const policyConditionPoliciesB = Array.isArray(firstPolicy?.itemConditionPolicies)
-      ? firstPolicy.itemConditionPolicies
-      : Array.isArray(firstPolicy?.itemConditionPolicies?.[0]?.conditionPolicies)
-        ? firstPolicy.itemConditionPolicies[0].conditionPolicies
-        : [];
+    const policy =
+      policies.find((p: any) => String(p?.categoryId || '') === String(categoryId)) ||
+      policies[0] ||
+      null;
 
-    const conditionPolicies = policyConditionPoliciesA.length ? policyConditionPoliciesA : policyConditionPoliciesB;
-
-    const mapped = conditionPolicies
-      .map((p: any) => {
-        const c = p?.condition ?? p;
-        return {
-          conditionId: Number(c?.conditionId ?? c?.id ?? NaN),
-          conditionName: String(c?.conditionName ?? c?.conditionDescription ?? c?.name ?? '').trim(),
-        };
-      })
-      .filter((c: any) => Number.isFinite(c.conditionId) && c.conditionId > 0 && c.conditionName);
+    const items = Array.isArray(policy?.itemConditions) ? policy.itemConditions : [];
 
     const uniqMap = new Map<number, string>();
-    for (const c of mapped) {
-      if (!uniqMap.has(c.conditionId)) uniqMap.set(c.conditionId, c.conditionName);
+    for (const x of items) {
+      const id = Number(String((x as any)?.conditionId ?? '').trim());
+      const name = String((x as any)?.conditionDescription || '').trim();
+      if (!Number.isFinite(id) || id <= 0) continue;
+      if (!name) continue;
+      if (!uniqMap.has(id)) uniqMap.set(id, name);
     }
 
     const conditions = Array.from(uniqMap.entries()).map(([conditionId, conditionName]) => ({ conditionId, conditionName }));
@@ -163,6 +162,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.error('[ebay-item-conditions] empty conditions', {
         requestId,
         categoryId,
+        resolvedCategoryId: policy?.categoryId ?? null,
         status: ebayRes.status,
         keys: Object.keys(json || {}),
       });
@@ -170,7 +170,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({
         conditions: [],
         rawCategoryId: categoryId,
+        resolvedCategoryId: policy?.categoryId || null,
         marketplaceId,
+        itemConditionRequired: Boolean(policy?.itemConditionRequired),
         debugStatus: ebayRes.status,
         debugKeys: Object.keys(json || {}),
         debugSnippet: JSON.stringify(json).slice(0, 1500),
@@ -180,7 +182,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       conditions,
       rawCategoryId: categoryId,
+      resolvedCategoryId: policy?.categoryId || null,
       marketplaceId,
+      itemConditionRequired: Boolean(policy?.itemConditionRequired),
     });
   } catch (err: any) {
     sentryCaptureException(err, {
