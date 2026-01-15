@@ -26,7 +26,7 @@ function pickEbayApiBase(env: string) {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const requestId = makeRequestId();
 
-  if (req.method !== 'POST') {
+  if (req.method !== 'POST' && req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed', requestId });
   }
 
@@ -57,11 +57,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const body: any = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body ?? {});
-    const categoryId = String(body.category_id || body.categoryId || '').trim();
+    const rawCategoryId =
+      String(body.category_id || body.categoryId || '').trim() || String((req.query as any)?.category_id || '').trim();
 
-    if (!categoryId) {
+    if (!rawCategoryId) {
       return res.status(400).json({ error: 'category_id is required', requestId });
     }
+
+    if (!/^\d+$/.test(rawCategoryId)) {
+      return res.status(400).json({ error: 'category_id must be digits', requestId });
+    }
+
+    const categoryId = rawCategoryId;
 
     // Resolve workspace_id using conservative lookup (same pattern used in other endpoints).
     const u = await admin
@@ -87,7 +94,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const base = pickEbayApiBase(env);
     const url = `${base}/sell/metadata/v1/marketplace/${encodeURIComponent(
       marketplaceId
-    )}/get_item_condition_policies?category_id=${encodeURIComponent(categoryId)}`;
+    )}/get_item_condition_policies?category_ids=${encodeURIComponent(categoryId)}`;
 
     const ebayRes = await fetch(url, {
       method: 'GET',
@@ -97,11 +104,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     });
 
-    const data: any = await ebayRes.json().catch(() => ({}));
+    const text = await ebayRes.text().catch(() => '');
+    const data: any = text ? JSON.parse(text) : {};
 
     if (!ebayRes.ok) {
       const firstErr = Array.isArray(data?.errors) ? data.errors[0] : null;
       const errorId = firstErr?.errorId != null ? String(firstErr.errorId) : undefined;
+
+      console.error('[ebay-item-conditions] eBay error', {
+        requestId,
+        categoryId,
+        status: ebayRes.status,
+        errorId,
+        body: String(text || '').slice(0, 300),
+      });
 
       sentryCaptureException(new Error('eBay condition policies failed'), {
         operation: 'ebay_item_conditions',
@@ -120,22 +136,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const policies = Array.isArray(data?.itemConditionPolicies) ? data.itemConditionPolicies : [];
-    const itemConditions =
-      Array.isArray(data?.itemConditions)
-        ? data.itemConditions
-        : policies.length && Array.isArray(policies[0]?.itemConditions)
-          ? policies[0].itemConditions
-          : [];
+    const firstPolicy = policies[0] || null;
+    const conditionPolicies = Array.isArray(firstPolicy?.conditionPolicies) ? firstPolicy.conditionPolicies : [];
 
-    const conditions = (itemConditions || [])
-      .map((c: any) => ({
-        conditionId: Number(c?.conditionId ?? c?.id ?? NaN),
-        conditionName: String(c?.conditionDescription ?? c?.name ?? c?.conditionName ?? '').trim(),
+    const conditions = conditionPolicies
+      .map((p: any) => ({
+        conditionId: Number(p?.condition?.conditionId ?? NaN),
+        conditionName: String(p?.condition?.conditionName ?? '').trim(),
       }))
       .filter((c: any) => Number.isFinite(c.conditionId) && c.conditionId > 0 && c.conditionName);
 
-    // If eBay returns no data, still treat as required; UI will block publish.
-    return res.status(200).json({ required: true, conditions });
+    if (!conditions.length && String(text || '').trim()) {
+      console.error('[ebay-item-conditions] unexpected response shape', {
+        requestId,
+        categoryId,
+        status: ebayRes.status,
+        body: String(text || '').slice(0, 300),
+      });
+    }
+
+    return res.status(200).json({
+      conditions,
+      rawCategoryId: categoryId,
+      marketplaceId,
+    });
   } catch (err: any) {
     sentryCaptureException(err, {
       operation: 'ebay_item_conditions',
