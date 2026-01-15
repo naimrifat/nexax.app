@@ -89,8 +89,8 @@ const ListingStyleSettingsPage: React.FC = () => {
                 Use my custom listing style
               </h2>
               <p className="text-sm text-gray-600 mt-1">
-                When this is ON, SnapLine will follow your instructions for titles and
-                descriptions. When it&apos;s OFF, SnapLine will use the default style.
+                When this is ON, Nexax.app will follow your instructions for titles and
+                descriptions. When it&apos;s OFF, Nexax.app will use the default style.
               </p>
             </div>
 
