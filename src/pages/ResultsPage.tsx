@@ -1568,6 +1568,20 @@ export default function ResultsPage() {
 
       const body: any = await res.json().catch(() => ({}));
 
+      if (!res.ok) {
+        setLastPreflightCode(String(body?.code || 'ERROR'));
+        setPublishErrors([]);
+        setPreflightPassed(false);
+        setUiError({
+          title: 'eBay checks failed',
+          message: extractApiMessage(body) || 'eBay checks failed. Please try again.',
+          status: res.status,
+          requestId: extractRequestId(body),
+          ebayErrorId: extractEbayErrorId(body),
+        });
+        return false;
+      }
+
       if (body?.ok === true) {
         setLastPreflightCode(String(body?.code || 'OK'));
         lastPreflightInputKeyRef.current = preflightInputKey;
@@ -1581,7 +1595,7 @@ export default function ResultsPage() {
             const { data: row } = await supabase
               .from('listings')
               .select('listing_json')
-              .eq('id', listingId)
+              .eq('id', listingIdForCall)
               .eq('workspace_id', workspaceId)
               .maybeSingle();
 
@@ -1592,7 +1606,11 @@ export default function ResultsPage() {
               preflight_passed_at: nowIso,
             };
 
-            await supabase.from('listings').update({ listing_json: next }).eq('id', listingId).eq('workspace_id', workspaceId);
+            await supabase
+              .from('listings')
+              .update({ listing_json: next })
+              .eq('id', listingIdForCall)
+              .eq('workspace_id', workspaceId);
           }
         } catch {
           // ignore persistence failure
@@ -1611,27 +1629,26 @@ export default function ResultsPage() {
 
       if (body?.code === 'VALIDATION_ERROR' || body?.code === 'PREFLIGHT_FAILED') {
         setLastPreflightCode(String(body?.code || 'PREFLIGHT_FAILED'));
-        if (Array.isArray(body?.errors) && body.errors.length) {
-          setPublishErrors(body.errors.map((e: any) => String(e)));
-        } else if (body?.message) {
-          setPublishErrors([String(body.message)]);
-        } else {
-          setPublishErrors(['Checks failed. Please review and try again.']);
-        }
+        setPublishErrors([]);
         setPreflightPassed(false);
+        setUiError({
+          title: 'eBay checks failed',
+          message: extractApiMessage(body) || 'eBay checks failed. Please review and try again.',
+          requestId: extractRequestId(body),
+          ebayErrorId: extractEbayErrorId(body),
+        });
         return false;
       }
 
       setLastPreflightCode(String(body?.code || 'UNEXPECTED'));
       setPublishErrors([]);
+      setPreflightPassed(false);
       setUiError({
-        title: 'Publish failed',
-        message: extractApiMessage(body) || 'Failed to run eBay checks. Please try again.',
-        status: typeof res?.status === 'number' ? res.status : undefined,
+        title: 'eBay checks failed',
+        message: extractApiMessage(body) || 'eBay checks failed. Please try again.',
         requestId: extractRequestId(body),
         ebayErrorId: extractEbayErrorId(body),
       });
-      setPreflightPassed(false);
       return false;
     } catch (err: any) {
       setPublishErrors([]);
@@ -1645,7 +1662,7 @@ export default function ResultsPage() {
       } else {
         const msg = String(err?.message || '').trim();
         setUiError({
-          title: 'Publish failed',
+          title: 'eBay checks failed',
           message: msg || 'Failed to run eBay checks. Please try again.',
         });
       }
