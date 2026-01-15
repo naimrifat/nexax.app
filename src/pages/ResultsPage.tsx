@@ -59,24 +59,6 @@ type AiData = {
 
 type PolicyOption = { id: string; name: string };
 
-type ConditionOption = { id: number; label: string; requiresDescription: boolean };
-
-const clothingConditionOptions: ConditionOption[] = [
-  { id: 1000, label: 'New with tags', requiresDescription: false },
-  { id: 1500, label: 'New without tags', requiresDescription: false },
-  { id: 1750, label: 'New with defects / imperfections', requiresDescription: true },
-  { id: 3000, label: 'Pre-owned – Excellent', requiresDescription: false },
-  { id: 4000, label: 'Pre-owned – Good', requiresDescription: false },
-  { id: 5000, label: 'Pre-owned – Fair', requiresDescription: false },
-];
-
-function isClothingFromPath(path?: string): boolean {
-  const p = String(path || '').toLowerCase();
-  if (!p) return false;
-  const keywords = ['clothing', 'shoes', 'accessories', 'men', 'women', 'kids'];
-  return keywords.some((k) => p.includes(k));
-}
-
 /* ---------- Timeout helper ---------- */
 async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): Promise<T> {
   let timeoutId: any;
@@ -405,7 +387,8 @@ export default function ResultsPage() {
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
   const [images, setImages] = useState<string[]>([]);
 
-  const [categoryConditions, setCategoryConditions] = useState<{ id: string; name: string }[]>([]);
+  const [conditionOptions, setConditionOptions] = useState<{ conditionId: number; conditionName: string }[]>([]);
+  const [conditionRequired, setConditionRequired] = useState(false);
   const [conditionsLoading, setConditionsLoading] = useState(false);
   const [conditionId, setConditionId] = useState<string>('');
   const [conditionName, setConditionName] = useState<string>('');
@@ -680,20 +663,12 @@ export default function ResultsPage() {
     [smartFillSpecifics]
   );
 
-  const categoryPathForCondition = useMemo(() => {
-    return (
-      String((category as any)?.path || '') ||
-      String((category as any)?.breadcrumbs?.join(' > ') || '') ||
-      getCategoryPathString(category)
-    );
-  }, [category]);
-
-  const isClothingCategory = useMemo(() => isClothingFromPath(categoryPathForCondition), [categoryPathForCondition]);
-
-  const fetchCategoryConditions = useCallback(
+  const fetchItemConditions = useCallback(
     async (categoryId: string) => {
-      if (!categoryId) {
-        setCategoryConditions([]);
+      const cid = String(categoryId || '').trim();
+      if (!cid) {
+        setConditionOptions([]);
+        setConditionRequired(false);
         setConditionId('');
         setConditionName('');
         setConditionDescription('');
@@ -701,25 +676,45 @@ export default function ResultsPage() {
       }
 
       setConditionsLoading(true);
-      try {
-        const response = await fetch('/api/ebay-categories', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'getCategoryConditions', categoryId }),
-        });
+      setConditionRequired(true);
 
-        if (!response.ok) {
-          setCategoryConditions([]);
+      try {
+        const {
+          data: { session },
+          error: sessionErr,
+        } = await supabase.auth.getSession();
+
+        if (sessionErr || !session?.access_token) {
+          setConditionOptions([]);
+          setConditionRequired(true);
           return;
         }
 
-        const data = await response.json().catch(() => ({}));
-        const next = Array.isArray(data?.conditions) ? data.conditions : [];
-        setCategoryConditions(next);
+        const response = await fetch('/api/ebay-item-conditions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ category_id: cid }),
+        });
 
-        // If previously selected condition is no longer valid, clear it.
+        const data: any = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          setConditionOptions([]);
+          setConditionRequired(true);
+          return;
+        }
+
+        const nextRequired = data?.required !== false;
+        const next = Array.isArray(data?.conditions) ? data.conditions : [];
+
+        setConditionRequired(nextRequired);
+        setConditionOptions(next);
+
         if (conditionId) {
-          const stillValid = next.some((c: any) => String(c?.id) === String(conditionId));
+          const stillValid = next.some((c: any) => String(c?.conditionId) === String(conditionId));
           if (!stillValid) {
             setConditionId('');
             setConditionName('');
@@ -734,28 +729,8 @@ export default function ResultsPage() {
   );
 
   useEffect(() => {
-    const categoryId = String(category?.id || '').trim();
-    if (!categoryId) {
-      setCategoryConditions([]);
-      return;
-    }
-
-    if (isClothingCategory) {
-      // Clothing uses curated options; skip taxonomy-based list.
-      setCategoryConditions([]);
-
-      // If current selection isn't a valid clothing condition, clear it.
-      if (conditionId && !clothingConditionOptions.some((c) => String(c.id) === String(conditionId))) {
-        setConditionId('');
-        setConditionName('');
-        setConditionDescription('');
-      }
-
-      return;
-    }
-
-    void fetchCategoryConditions(categoryId);
-  }, [category?.id, isClothingCategory, conditionId, fetchCategoryConditions]);
+    void fetchItemConditions(String(category?.id || ''));
+  }, [category?.id, fetchItemConditions]);
 
   const mainImageUrl = images[mainImageIndex] || '';
 
@@ -807,13 +782,16 @@ export default function ResultsPage() {
 
     if (!images.length) missingBasics.push('Photos');
 
-    const requiresCondition = !!category?.id && (isClothingCategory || categoryConditions.length > 0);
+    const requiresCondition = !!category?.id && conditionRequired;
+
+    const conditionIdNum = Number.parseInt(String(conditionId || '').trim() || '0', 10);
+    const needsConditionDescription = Number.isFinite(conditionIdNum) && conditionIdNum > 1499;
 
     if (requiresCondition && !String(conditionId || '').trim()) {
       missingBasics.push('Condition');
     }
 
-    if (requiresCondition && String(conditionId || '').trim() === '1750' && !String(conditionDescription || '').trim()) {
+    if (requiresCondition && needsConditionDescription && !String(conditionDescription || '').trim()) {
       missingBasics.push('Condition description');
     }
 
@@ -842,8 +820,7 @@ export default function ResultsPage() {
     category?.id,
     price,
     images,
-    categoryConditions,
-    isClothingCategory,
+    conditionRequired,
     conditionId,
     conditionDescription,
     ebayPaymentPolicyId,
@@ -898,7 +875,12 @@ export default function ResultsPage() {
       category_path: categoryPath || null,
        condition_id: toIntOrNull(conditionId),
        condition_name: conditionName || null,
-       condition_description: String(conditionId || '').trim() === '1750' ? (conditionDescription || null) : null,
+       condition_description: (() => {
+         const idNum = Number.parseInt(String(conditionId || '').trim() || '0', 10);
+         if (!Number.isFinite(idNum) || idNum <= 1499) return null;
+         const s = String(conditionDescription || '').trim();
+         return s ? s : null;
+       })(),
        item_specifics: specifics.map((s) => ({
          name: s.name,
          value: s.value,
@@ -1280,12 +1262,15 @@ export default function ResultsPage() {
     if (!returnPolicyId) errors.push('Return policy ID is required.');
     if (!fulfillmentPolicyId) errors.push('Fulfillment (shipping) policy ID is required.');
 
-    const requiresCondition = !!category?.id && (isClothingCategory || categoryConditions.length > 0);
+    const requiresCondition = !!category?.id && conditionRequired;
+    const conditionIdNum = Number.parseInt(String(conditionId || '').trim() || '0', 10);
+    const needsConditionDescription = Number.isFinite(conditionIdNum) && conditionIdNum > 1499;
+
     if (requiresCondition && !String(conditionId || '').trim()) {
       errors.push('Condition is required.');
     }
 
-    if (requiresCondition && String(conditionId || '').trim() === '1750' && !String(conditionDescription || '').trim()) {
+    if (requiresCondition && needsConditionDescription && !String(conditionDescription || '').trim()) {
       errors.push('Condition description is required.');
     }
 
@@ -1813,25 +1798,25 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        {category?.id && (isClothingCategory || categoryConditions.length > 0) ? (
+        {category?.id && conditionRequired ? (
           <section ref={conditionSectionRef as any} style={{ marginTop: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <h3 style={{ margin: 0 }}>Condition</h3>
-              {!isClothingCategory && conditionsLoading ? <span style={{ fontSize: 12, color: '#666' }}>Loading…</span> : null}
+              {conditionsLoading ? <span style={{ fontSize: 12, color: '#666' }}>Loading…</span> : null}
             </div>
 
             {(() => {
               const shouldHighlight = highlightMissing || showTitleInlineError;
-              const requiresCondition = !!category?.id && (isClothingCategory || categoryConditions.length > 0);
-              const isConditionMissing = requiresCondition && !String(conditionId || '').trim();
+              const isConditionMissing = !String(conditionId || '').trim();
 
-              const options: { id: string; label: string }[] = isClothingCategory
-                ? clothingConditionOptions.map((c) => ({ id: String(c.id), label: c.label }))
-                : categoryConditions.map((c) => ({ id: String(c.id), label: String(c.name) }));
+              const options: { id: string; label: string }[] = (conditionOptions || []).map((c) => ({
+                id: String(c.conditionId),
+                label: String(c.conditionName),
+              }));
 
               const selectedId = String(conditionId || '').trim();
-
-              const needsDescription = selectedId === '1750';
+              const conditionIdNum = Number.parseInt(selectedId || '0', 10);
+              const needsDescription = Number.isFinite(conditionIdNum) && conditionIdNum > 1499;
               const isDescriptionMissing = needsDescription && !String(conditionDescription || '').trim();
 
               return (
@@ -1843,12 +1828,13 @@ export default function ResultsPage() {
                     onChange={(e) => {
                       const nextId = String(e.target.value || '').trim();
                       const opt = options.find((o) => o.id === nextId) || null;
+                      const nextNum = Number.parseInt(nextId || '0', 10);
 
                       setIsDirty(true);
                       setConditionId(nextId);
                       setConditionName(opt?.label || '');
 
-                      if (nextId !== '1750') {
+                      if (!(Number.isFinite(nextNum) && nextNum > 1499)) {
                         setConditionDescription('');
                       }
                     }}
@@ -1891,7 +1877,6 @@ export default function ResultsPage() {
                       />
                     </div>
                   ) : null}
-
                 </div>
               );
             })()}
