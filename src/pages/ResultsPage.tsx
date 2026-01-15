@@ -474,8 +474,7 @@ export default function ResultsPage() {
   const lastAutosaveResultKeyRef = useRef<string>('');
 
   const [toast, setToast] = useState<null | { message: string; kind: 'success' | 'error' }>(null);
-  const toastTimerRef = useRef<any>(null);
-  const lastAutosaveOutcomeRef = useRef<'success' | 'error' | null>(null);
+  const toastTimeoutRef = useRef<number | null>(null);
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -1008,25 +1007,25 @@ export default function ResultsPage() {
 
   const disableActions = authLoading || !user?.id || !workspaceId || !internalUserId;
 
-  const showToast = useCallback((next: { message: string; kind: 'success' | 'error' }, ms: number) => {
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-      toastTimerRef.current = null;
+  const showToast = useCallback((message: string, kind: 'success' | 'error', durationMs: number) => {
+    if (toastTimeoutRef.current != null) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
     }
 
-    setToast(next);
+    setToast({ message, kind });
 
-    toastTimerRef.current = setTimeout(() => {
+    toastTimeoutRef.current = window.setTimeout(() => {
       setToast(null);
-      toastTimerRef.current = null;
-    }, ms);
+      toastTimeoutRef.current = null;
+    }, durationMs);
   }, []);
 
   useEffect(() => {
     return () => {
-      if (toastTimerRef.current) {
-        clearTimeout(toastTimerRef.current);
-        toastTimerRef.current = null;
+      if (toastTimeoutRef.current != null) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
       }
     };
   }, []);
@@ -1358,7 +1357,7 @@ export default function ResultsPage() {
         setDraftStatus('Draft saved.');
         setDraftSavedSuccessfully(true);
         setUiError(null);
-        showToast({ message: 'Draft saved', kind: 'success' }, 1800);
+        showToast('Draft saved', 'success', 1800);
       }
 
       setIsDirty(false);
@@ -1447,17 +1446,11 @@ export default function ResultsPage() {
         setAutosaveStatus('saved');
         setLastSavedAt(Date.now());
         setAutosaveErrorMessage(null);
-        lastAutosaveOutcomeRef.current = 'success';
-        showToast({ message: 'Draft saved', kind: 'success' }, 1800);
+        showToast('Draft saved', 'success', 1800);
       } else {
         setAutosaveStatus('error');
         setAutosaveErrorMessage(res.errorMessage || 'Autosave failed');
-
-        if (lastAutosaveOutcomeRef.current !== 'error') {
-          showToast({ message: 'Autosave failed', kind: 'error' }, 2500);
-        }
-
-        lastAutosaveOutcomeRef.current = 'error';
+        showToast('Autosave failed', 'error', 2500);
       }
 
       lastAutosaveResultKeyRef.current = keyAtRun;
