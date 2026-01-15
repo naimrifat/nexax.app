@@ -131,6 +131,38 @@ function toNumOrNull(v: string): number | null {
   return n;
 }
 
+function isNetworkLikeError(err: any): boolean {
+  const msg = String(err?.message || '');
+  return err?.name === 'TypeError' || /failed to fetch/i.test(msg) || /network/i.test(msg);
+}
+
+function extractRequestId(json: any): string | undefined {
+  const v =
+    json?.requestId ??
+    json?.request_id ??
+    json?.requestID ??
+    json?.meta?.requestId ??
+    json?.meta?.request_id;
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+function extractEbayErrorId(json: any): string | undefined {
+  const v = json?.ebayErrorId ?? json?.ebay_error_id ?? json?.errorId ?? json?.error_id;
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+function extractApiMessage(json: any): string {
+  const direct = json?.message ?? json?.error ?? json?.detail ?? json?.details;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+  if (Array.isArray(json?.errors) && json.errors.length) {
+    const first = json.errors[0];
+    if (typeof first === 'string' && first.trim()) return first.trim();
+  }
+
+  return '';
+}
+
 /* ---------- Size helpers ---------- */
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
   const st = specs.find((s) => /size type/i.test(s.name || ''));
@@ -412,6 +444,14 @@ export default function ResultsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>('');
   const [draftSavedSuccessfully, setDraftSavedSuccessfully] = useState(false);
+
+  const [uiError, setUiError] = useState<null | {
+    title: string;
+    message: string;
+    requestId?: string;
+    ebayErrorId?: string;
+    status?: number;
+  }>(null);
   const [publishErrors, setPublishErrors] = useState<string[]>([]);
   const [publishSuccess, setPublishSuccess] = useState<{ ebay_item_id?: string | null; ebay_listing_url?: string | null } | null>(null);
   const [preflightLoading, setPreflightLoading] = useState(false);
@@ -1152,6 +1192,7 @@ export default function ResultsPage() {
     setSavingDraft(true);
 
     try {
+      setUiError(null);
       const t = await ensureTenancy();
       const listingData = buildListingJson();
 
@@ -1224,6 +1265,7 @@ export default function ResultsPage() {
       setDraftStatus('Draft saved.');
       setDraftSavedSuccessfully(true);
       setIsDirty(false);
+      setUiError(null);
 
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
@@ -1232,8 +1274,23 @@ export default function ResultsPage() {
     } catch (err: any) {
       console.error('[Draft] save failed:', err);
       setDraftSavedSuccessfully(false);
-      setSaveError(err?.message || 'Failed to save draft (tenancy not ready)');
-      setDraftStatus('Draft save failed');
+      setSaveError(null);
+
+      if (isNetworkLikeError(err)) {
+        setUiError({
+          title: 'Network error',
+          message: 'Failed to reach server. Check connection and try again.',
+        });
+      } else {
+        const msg = String(err?.message || '').trim();
+        setUiError({
+          title: 'Save failed',
+          message: msg || 'Failed to save draft. Please try again.',
+          status: typeof err?.status === 'number' ? err.status : undefined,
+        });
+      }
+
+      setDraftStatus('');
     } finally {
       setSavingDraft(false);
     }
@@ -1379,8 +1436,33 @@ export default function ResultsPage() {
       }
 
       setLastPreflightCode(String(body?.code || 'UNEXPECTED'));
-      setPublishErrors(['Checks failed due to a server error. Please try again.']);
+      setPublishErrors([]);
+      setUiError({
+        title: 'Publish failed',
+        message: extractApiMessage(body) || 'Failed to run eBay checks. Please try again.',
+        status: typeof res?.status === 'number' ? res.status : undefined,
+        requestId: extractRequestId(body),
+        ebayErrorId: extractEbayErrorId(body),
+      });
       setPreflightPassed(false);
+      return false;
+    } catch (err: any) {
+      setPublishErrors([]);
+      setPreflightPassed(false);
+
+      if (isNetworkLikeError(err)) {
+        setUiError({
+          title: 'Network error',
+          message: 'Failed to reach server. Check connection and try again.',
+        });
+      } else {
+        const msg = String(err?.message || '').trim();
+        setUiError({
+          title: 'Publish failed',
+          message: msg || 'Failed to run eBay checks. Please try again.',
+        });
+      }
+
       return false;
     } finally {
       setPreflightLoading(false);
@@ -1441,10 +1523,13 @@ export default function ResultsPage() {
     setPublishSuccess(null);
     setEbayReconnectRequired(false);
     setEbayReconnectError(null);
-
+    setUiError(null);
+ 
     const clientErrors = validateBeforePublish();
     if (clientErrors.length) {
+      setUiError(null);
       setPublishErrors(clientErrors);
+
 
       // Focus/scroll first invalid field (Title first)
       if (!title.trim()) {
@@ -1561,24 +1646,59 @@ export default function ResultsPage() {
           ebay_listing_url: body?.ebay_listing_url != null ? String(body.ebay_listing_url) : null,
         });
         setIsDirty(false);
+        setUiError(null);
         navigate('/dashboard');
         return;
       }
 
       if (res.status === 409 || body?.code === 'PUBLISH_IN_PROGRESS') {
-        setPublishErrors(['Publishing in progress. Please wait and refresh.']);
+        setPublishErrors([]);
+        setUiError({
+          title: 'Publish failed',
+          message: 'Publishing in progress. Please wait and try again.',
+          status: res.status,
+          requestId: extractRequestId(body),
+          ebayErrorId: extractEbayErrorId(body),
+        });
         return;
       }
+
+      const apiMsg = extractApiMessage(body);
 
       if (Array.isArray(body?.errors) && body.errors.length) {
-        setPublishErrors(body.errors.map((e: any) => String(e)));
+        setPublishErrors([]);
+        setUiError({
+          title: 'Publish failed',
+          message: apiMsg || String(body.errors[0] || '').trim() || 'Publishing failed. Please try again.',
+          status: res.status,
+          requestId: extractRequestId(body),
+          ebayErrorId: extractEbayErrorId(body),
+        });
         return;
       }
 
-      const msg = body?.message ? String(body.message) : '';
-      setPublishErrors([msg || 'Publishing failed. Please try again.']);
+      setPublishErrors([]);
+      setUiError({
+        title: 'Publish failed',
+        message: apiMsg || 'Publishing failed. Please try again.',
+        status: res.status,
+        requestId: extractRequestId(body),
+        ebayErrorId: extractEbayErrorId(body),
+      });
     } catch (err: any) {
-      setPublishErrors(['Publishing failed. Please try again.']);
+      setPublishErrors([]);
+
+      if (isNetworkLikeError(err)) {
+        setUiError({
+          title: 'Network error',
+          message: 'Failed to reach server. Check connection and try again.',
+        });
+      } else {
+        setUiError({
+          title: 'Publish failed',
+          message: 'Publishing failed. Please try again.',
+        });
+      }
     } finally {
       setPublishing(false);
     }
@@ -2455,8 +2575,54 @@ export default function ResultsPage() {
           </button>
         </div>
 
+        {uiError ? (
+          <div
+            style={{
+              marginTop: 12,
+              border: '1px solid #fecaca',
+              background: '#fef2f2',
+              color: '#991b1b',
+              borderRadius: 8,
+              padding: 12,
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>{uiError.title}</div>
+              <div style={{ fontSize: 14 }}>{uiError.message}</div>
+              {uiError.requestId || uiError.ebayErrorId ? (
+                <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
+                  {uiError.requestId ? <div>Request ID: {uiError.requestId}</div> : null}
+                  {uiError.ebayErrorId ? <div>eBay Error ID: {uiError.ebayErrorId}</div> : null}
+                </div>
+              ) : null}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setUiError(null)}
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                border: '1px solid #ef4444',
+                background: '#fff',
+                color: '#991b1b',
+                cursor: 'pointer',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                fontSize: 14,
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
 
         {preflightPassed === true ? (
+
           <div
             style={{
               marginTop: 12,
