@@ -51,6 +51,23 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function extractEbayErrorId(payload: any): string | null {
+  const v =
+    payload?.errors?.[0]?.errorId ??
+    payload?.errors?.[0]?.error_id ??
+    payload?.errorId ??
+    payload?.error_id;
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return null;
+}
+
+function extractEbayRequestId(payload: any): string | null {
+  const v = payload?.requestId ?? payload?.request_id ?? payload?.meta?.requestId ?? payload?.meta?.request_id;
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return null;
+}
+
 function pickEbayApiBase(env: string) {
   const e = String(env || 'production').toLowerCase();
   return e === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
@@ -399,6 +416,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let listingIdForSentry: string | null = null;
   let workspaceIdForSentry: string | null = null;
 
+  let serviceClient: any | null = null;
+  let listingRowForFailure: any | null = null;
+
+  const persistPublishFailed = async (params: {
+    message: string;
+    errorId?: string | null;
+    stage?: string;
+  }) => {
+    try {
+      if (!serviceClient || !listingRowForFailure) return;
+      const ts = nowIso();
+      await serviceClient
+        .from('listings')
+        .update({
+          status: 'publish_failed',
+          last_publish_attempt_at: ts,
+          last_publish_error: params.message,
+          last_publish_error_id: params.errorId ?? null,
+          last_publish_error_at: ts,
+          last_publish_error_details: params.stage ? { stage: params.stage, error: params.message } : undefined,
+        })
+        .eq('id', listingRowForFailure.id)
+        .eq('workspace_id', listingRowForFailure.workspace_id);
+    } catch (e) {
+      console.error('[publish] failed to persist publish_failed', { requestId, e });
+    }
+  };
+
   if (req.method !== 'POST') {
     return respond(res, 405, { ok: false, requestId, code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' });
   }
@@ -415,7 +460,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       auth: { persistSession: false },
     });
 
-    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
 
@@ -431,7 +476,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         workspace_id: workspaceIdForSentry,
         extras: { code: 'UNAUTHORIZED', message: 'Unauthorized' },
       });
-      return respond(res, 401, { ok: false, requestId, code: 'UNAUTHORIZED', message: 'Unauthorized' });
+      return respond(res, 401, { ok: false, requestId, code: 'UNAUTHORIZED', message: 'Unauthorized', error: 'Unauthorized' });
     }
 
     // 2) Input
@@ -446,7 +491,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         workspace_id: workspaceIdForSentry,
         extras: { code: 'VALIDATION_ERROR', message: 'Missing listing_id' },
       });
-      return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors: ['Missing listing_id'] });
+      return respond(res, 400, {
+        ok: false,
+        requestId,
+        code: 'VALIDATION_ERROR',
+        message: 'Missing listing_id',
+        error: 'Missing listing_id',
+        errors: ['Missing listing_id'],
+      });
     }
 
     // 3) Load listing
@@ -490,8 +542,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         workspace_id: workspaceIdForSentry,
         extras: { code: 'NOT_FOUND', message: 'Listing not found' },
       });
-      return respond(res, 404, { ok: false, requestId, code: 'NOT_FOUND', message: 'Listing not found' });
+      return respond(res, 404, { ok: false, requestId, code: 'NOT_FOUND', message: 'Listing not found', error: 'Listing not found' });
     }
+
+    listingRowForFailure = listing as any;
 
     workspaceIdForSentry = (listing as any).workspace_id ? String((listing as any).workspace_id) : null;
 
@@ -503,7 +557,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         workspace_id: workspaceIdForSentry,
         extras: { code: 'FORBIDDEN', message: 'Forbidden' },
       });
-      return respond(res, 403, { ok: false, requestId, code: 'FORBIDDEN', message: 'Forbidden' });
+      return respond(res, 403, { ok: false, requestId, code: 'FORBIDDEN', message: 'Forbidden', error: 'Forbidden' });
     }
 
     if (((listing as any).marketplace || 'ebay').toLowerCase() !== 'ebay') {
@@ -514,7 +568,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         workspace_id: workspaceIdForSentry,
         extras: { code: 'VALIDATION_ERROR', message: 'Only eBay publishing is supported currently' },
       });
-      return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors: ['Only eBay publishing is supported currently'] });
+      return respond(res, 400, {
+        ok: false,
+        requestId,
+        code: 'VALIDATION_ERROR',
+        message: 'Only eBay publishing is supported currently',
+        error: 'Only eBay publishing is supported currently',
+        errors: ['Only eBay publishing is supported currently'],
+      });
     }
 
     const status = String((listing as any).status || 'draft').toLowerCase();
@@ -626,14 +687,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (errors.length) {
       try {
+        const ts = nowIso();
         await serviceClient
           .from('listings')
           .update({
-            last_publish_attempt_at: nowIso(),
+            status: 'publish_failed',
+            last_publish_attempt_at: ts,
             last_publish_error: 'Validation failed',
+            last_publish_error_id: null,
+            last_publish_error_at: ts,
             last_publish_error_details: { stage: 'validation', errors },
           })
-          .eq('id', (listing as any).id);
+          .eq('id', (listing as any).id)
+          .eq('workspace_id', (listing as any).workspace_id);
       } catch (e) {
         console.error('[publish] failed to persist validation error', { requestId, e });
       }
@@ -645,7 +711,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         workspace_id: workspaceIdForSentry,
         extras: { code: 'VALIDATION_ERROR', message: 'Validation failed', errors },
       });
-      return respond(res, 400, { ok: false, requestId, code: 'VALIDATION_ERROR', errors });
+      return respond(res, 400, {
+        ok: false,
+        requestId,
+        code: 'VALIDATION_ERROR',
+        message: 'Validation failed',
+        error: 'Validation failed',
+        errors,
+      });
     }
 
     // PRIORITY 2: Atomic publish lock (prevents double publish)
@@ -751,6 +824,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ebay_listing_url: publishResult.ebayListingUrl,
           last_publish_attempt_at: finishedAt,
           last_publish_error: null,
+          last_publish_error_id: null,
+          last_publish_error_at: null,
           last_publish_error_details: null,
         })
         .eq('id', (listing as any).id)
@@ -768,14 +843,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (err: any) {
       const msg = String(err?.message || 'Publish failed');
 
-      // Reset from publishing so user can retry
+      const ebayErrorId = extractEbayErrorId(err?.ebayPayload);
+      const ebayReqId = extractEbayRequestId(err?.ebayPayload);
+      const idForDb = ebayErrorId || ebayReqId || requestId;
+      const ts = nowIso();
+
+      // Mark publish_failed so user can retry
       await serviceClient
         .from('listings')
         .update({
-          status: 'draft',
-          listing_json: { ...(listingJson || {}), publish_error: msg },
-          last_publish_attempt_at: nowIso(),
+          status: 'publish_failed',
+          last_publish_attempt_at: ts,
           last_publish_error: msg,
+          last_publish_error_id: idForDb,
+          last_publish_error_at: ts,
           last_publish_error_details: { stage: 'publish', error: msg },
         })
         .eq('id', (listing as any).id)
@@ -798,10 +879,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       });
 
+      await persistPublishFailed({
+        message: 'eBay connection expired. Please reconnect eBay.',
+        errorId: requestId,
+        stage: 'publish',
+      });
+
       return respond(res, 401, {
         ok: false,
         code: 'EBAY_RECONNECT_REQUIRED',
         message: 'eBay connection expired. Please reconnect eBay.',
+        error: 'eBay connection expired. Please reconnect eBay.',
         errors: [],
         requestId,
       });
@@ -838,11 +926,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       });
 
+      const ebayErrorId = extractEbayErrorId(err?.ebayPayload);
+      const ebayReqId = extractEbayRequestId(err?.ebayPayload);
+      const idForDb = ebayErrorId || ebayReqId || requestId;
+
+      await persistPublishFailed({ message: classified.message, errorId: idForDb, stage: 'publish' });
+
       return respond(res, classified.httpStatus, {
         ok: false,
         requestId,
         code: classified.code,
         message: classified.message,
+        error: classified.message,
+        ebayErrorId: ebayErrorId || undefined,
         errors: classified.errors || [],
       });
     }
@@ -854,11 +950,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       workspace_id: workspaceIdForSentry,
       extras: { code: 'UNEXPECTED', message: msg || 'Unexpected server error.' },
     });
+    await persistPublishFailed({ message: msg || 'Unexpected server error.', errorId: requestId, stage: 'publish' });
+
     return respond(res, 500, {
       ok: false,
       requestId,
       code: 'UNEXPECTED',
       message: 'Unexpected server error.',
+      error: 'Unexpected server error.',
     });
   }
 }
