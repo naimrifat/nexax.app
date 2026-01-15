@@ -2,7 +2,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
-import { sentryCaptureException } from "./_lib/sentry.js";
+import { sentryCaptureException } from "../lib/sentry.js";
 
 
 function mustEnv(name: string) {
