@@ -4,6 +4,8 @@ import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
 import { filterSizesForFamilyAndSizeType, detectSizeTypeForFamily } from '../utils/sizeMaps';
 import { compressForUpload } from '../utils/compressImage';
+import { supabase } from '../../lib/supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
 /* -------------------------------------------------------
    Listing style settings (optional)
@@ -314,6 +316,8 @@ export default function HomePage() {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const navigate = useNavigate();
 
+  const { user, workspaceId, internalUserId, isLoading: authLoading, refreshTenancy } = useAuth();
+
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
 
@@ -604,6 +608,27 @@ export default function HomePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (authLoading) {
+      setStatus('Loading your account...');
+      return;
+    }
+
+    if (!user?.id) {
+      setStatus('Please log in to create a listing.');
+      navigate('/login');
+      return;
+    }
+
+    if (!workspaceId || !internalUserId) {
+      setStatus('Loading your workspace...');
+      try {
+        await refreshTenancy();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
     if (photos.length === 0) {
       setStatus('Please upload at least one image.');
       return;
@@ -736,7 +761,7 @@ export default function HomePage() {
         }
       }
 
-      // Save everything the Results page needs
+      // Persist immediately to Supabase listings (single source of truth)
       const aiListingPayload = {
         ...aiData,
         title: normalized.title,
@@ -747,8 +772,61 @@ export default function HomePage() {
         image_urls: uploadedUrls,
       };
 
-      sessionStorage.setItem('aiListingData', JSON.stringify(aiListingPayload));
-      navigate('/results');
+      let wsId = workspaceId;
+      let iuId = internalUserId;
+
+      if (!wsId || !iuId) {
+        try {
+          await refreshTenancy();
+        } catch {
+          // ignore
+        }
+        wsId = workspaceId;
+        iuId = internalUserId;
+      }
+
+      if (!wsId || !iuId) {
+        throw new Error('Workspace not ready. Please try again.');
+      }
+
+      const cat = finalListingData?.category || null;
+      const categoryPath =
+        cat?.breadcrumbs && Array.isArray(cat.breadcrumbs) && cat.breadcrumbs.length
+          ? cat.breadcrumbs.join(' > ')
+          : cat?.path
+            ? String(cat.path)
+                .split('>')
+                .map((p: string) => p.trim())
+                .filter(Boolean)
+                .join(' > ')
+            : String(cat?.name || '').trim();
+
+      const priceNum = Number.parseFloat(String(normalized?.price_suggestion?.optimal ?? '0'));
+
+      const insertPayload: any = {
+        workspace_id: wsId,
+        status: 'draft',
+        marketplace: 'ebay',
+        title: String(normalized?.title || 'Untitled Listing'),
+        description: String(normalized?.description || ''),
+        category_id: cat?.id ? String(cat.id) : null,
+        category_path: categoryPath || null,
+        price: Number.isFinite(priceNum) ? priceNum : 0,
+        currency: 'USD',
+        images: uploadedUrls,
+        listing_json: {
+          ...aiListingPayload,
+          internal_user_id: iuId,
+        },
+      };
+
+      const ins = await supabase.from('listings').insert(insertPayload).select('id').single();
+      if (ins.error) throw ins.error;
+
+      const newId = String((ins.data as any)?.id || '').trim();
+      if (!newId) throw new Error('Listing created but no id was returned');
+
+      navigate(`/results?mode=edit&listingId=${encodeURIComponent(newId)}`);
     } catch (error: any) {
       console.error('Error:', error);
       const msg = error?.message ?? 'Unknown error';
