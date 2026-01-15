@@ -473,8 +473,8 @@ export default function ResultsPage() {
   const autosaveTimerRef = useRef<any>(null);
   const lastAutosaveResultKeyRef = useRef<string>('');
 
-  const [toast, setToast] = useState<null | { message: string; kind: 'success' | 'error' }>(null);
-  const toastTimeoutRef = useRef<number | null>(null);
+  const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const saveIndicatorTimeoutRef = useRef<number | null>(null);
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -1007,29 +1007,47 @@ export default function ResultsPage() {
 
   const disableActions = authLoading || !user?.id || !workspaceId || !internalUserId;
 
-  const showToast = useCallback((message: string, kind: 'success' | 'error', durationMs: number) => {
-    if (toastTimeoutRef.current != null) {
-      clearTimeout(toastTimeoutRef.current);
-      toastTimeoutRef.current = null;
-    }
-
-    setToast({ message, kind });
-
-    toastTimeoutRef.current = window.setTimeout(() => {
-      setToast(null);
-      toastTimeoutRef.current = null;
-    }, durationMs);
-  }, []);
-
   useEffect(() => {
     return () => {
-      if (toastTimeoutRef.current != null) {
-        clearTimeout(toastTimeoutRef.current);
-        toastTimeoutRef.current = null;
+      if (saveIndicatorTimeoutRef.current != null) {
+        clearTimeout(saveIndicatorTimeoutRef.current);
+        saveIndicatorTimeoutRef.current = null;
       }
     };
   }, []);
 
+  useEffect(() => {
+    if (!isDirty) return;
+
+    if (saveIndicatorTimeoutRef.current != null) {
+      clearTimeout(saveIndicatorTimeoutRef.current);
+      saveIndicatorTimeoutRef.current = null;
+    }
+
+    if (saveIndicator !== 'idle') {
+      setSaveIndicator('idle');
+    }
+  }, [isDirty, saveIndicator]);
+
+  const handleManualSaveDraft = async () => {
+    if (saveIndicatorTimeoutRef.current != null) {
+      clearTimeout(saveIndicatorTimeoutRef.current);
+      saveIndicatorTimeoutRef.current = null;
+    }
+
+    setSaveIndicator('saving');
+    const res = await handleSaveDraft();
+
+    if (res.ok) {
+      setSaveIndicator('saved');
+      saveIndicatorTimeoutRef.current = window.setTimeout(() => {
+        setSaveIndicator('idle');
+        saveIndicatorTimeoutRef.current = null;
+      }, 2000);
+    } else {
+      setSaveIndicator('idle');
+    }
+  };
   // ----------------------------
   // Initial load (run once; gated by auth + tenancy)
   // ----------------------------
@@ -1357,7 +1375,6 @@ export default function ResultsPage() {
         setDraftStatus('Draft saved.');
         setDraftSavedSuccessfully(true);
         setUiError(null);
-        showToast('Draft saved', 'success', 1800);
       }
 
       setIsDirty(false);
@@ -1440,17 +1457,28 @@ export default function ResultsPage() {
 
       setAutosaveStatus('saving');
 
+      if (saveIndicatorTimeoutRef.current != null) {
+        clearTimeout(saveIndicatorTimeoutRef.current);
+        saveIndicatorTimeoutRef.current = null;
+      }
+      setSaveIndicator('saving');
+
       const keyAtRun = autosaveKey;
       const res = await handleSaveDraft({ silent: true });
       if (res.ok) {
         setAutosaveStatus('saved');
         setLastSavedAt(Date.now());
         setAutosaveErrorMessage(null);
-        showToast('Draft saved', 'success', 1800);
+
+        setSaveIndicator('saved');
+        saveIndicatorTimeoutRef.current = window.setTimeout(() => {
+          setSaveIndicator('idle');
+          saveIndicatorTimeoutRef.current = null;
+        }, 2000);
       } else {
         setAutosaveStatus('error');
         setAutosaveErrorMessage(res.errorMessage || 'Autosave failed');
-        showToast('Autosave failed', 'error', 2500);
+        setSaveIndicator('idle');
       }
 
       lastAutosaveResultKeyRef.current = keyAtRun;
@@ -1916,28 +1944,7 @@ export default function ResultsPage() {
 
    return (
      <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
-       {toast ? (
-         <div
-           style={{
-             position: 'fixed',
-             right: 16,
-             bottom: 16,
-             zIndex: 9999,
-             padding: '10px 12px',
-             borderRadius: 10,
-             fontSize: 13,
-             boxShadow: '0 10px 25px rgba(0,0,0,0.12)',
-             border: toast.kind === 'error' ? '1px solid #fecaca' : '1px solid #bbf7d0',
-             background: toast.kind === 'error' ? '#fef2f2' : '#f0fdf4',
-             color: toast.kind === 'error' ? '#991b1b' : '#166534',
-             maxWidth: 260,
-           }}
-         >
-           {toast.message}
-         </div>
-       ) : null}
-
-       <main>
+        <main>
         <h1>Create eBay Listing</h1>
 
         <section
@@ -2715,11 +2722,11 @@ export default function ResultsPage() {
           </div>
         ) : null}
 
-        <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-           <button
-             onClick={handleSaveDraft}
-             disabled={disableActions || publishing || preflightLoading || savingDraft}
-             className="btn"
+          <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={handleManualSaveDraft}
+              disabled={disableActions || publishing || preflightLoading || savingDraft}
+              className="btn"
              style={{
                padding: '12px 24px',
                background: disableActions || publishing || preflightLoading || savingDraft ? '#999' : '#10b981',
@@ -2734,23 +2741,36 @@ export default function ResultsPage() {
             Save Draft
           </button>
 
-           <button
-             type="button"
-             onClick={handlePublish}
-             disabled={publishing || preflightLoading || savingDraft || disableActions}
-             style={{
-               padding: '12px 32px',
-               background: publishing || preflightLoading || savingDraft || disableActions ? '#999' : '#0064d2',
-               color: 'white',
-               border: 'none',
-               borderRadius: 4,
-               cursor: publishing || preflightLoading || savingDraft || disableActions ? 'default' : 'pointer',
-               fontSize: 16,
-               fontWeight: 600,
-             }}
-           >
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={publishing || preflightLoading || savingDraft || disableActions}
+            style={{
+              padding: '12px 32px',
+              background: publishing || preflightLoading || savingDraft || disableActions ? '#999' : '#0064d2',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: publishing || preflightLoading || savingDraft || disableActions ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 600,
+            }}
+          >
             {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
           </button>
+
+          <span
+            style={{
+              minWidth: 80,
+              fontSize: 13,
+              color: saveIndicator === 'saved' ? '#166534' : '#6b7280',
+              fontWeight: saveIndicator === 'saved' ? 600 : 400,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {saveIndicator === 'saving' ? 'Saving…' : saveIndicator === 'saved' ? '✓ Saved' : ''}
+          </span>
+
 
           {draftSavedSuccessfully ? (
             <button
