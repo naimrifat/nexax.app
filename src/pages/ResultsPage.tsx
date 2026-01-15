@@ -59,6 +59,24 @@ type AiData = {
 
 type PolicyOption = { id: string; name: string };
 
+type ConditionOption = { id: number; label: string; requiresDescription: boolean };
+
+const clothingConditionOptions: ConditionOption[] = [
+  { id: 1000, label: 'New with tags', requiresDescription: false },
+  { id: 1500, label: 'New without tags', requiresDescription: false },
+  { id: 1750, label: 'New with defects / imperfections', requiresDescription: true },
+  { id: 3000, label: 'Pre-owned – Excellent', requiresDescription: false },
+  { id: 4000, label: 'Pre-owned – Good', requiresDescription: false },
+  { id: 5000, label: 'Pre-owned – Fair', requiresDescription: false },
+];
+
+function isClothingFromPath(path?: string): boolean {
+  const p = String(path || '').toLowerCase();
+  if (!p) return false;
+  const keywords = ['clothing', 'shoes', 'accessories', 'men', 'women', 'kids'];
+  return keywords.some((k) => p.includes(k));
+}
+
 /* ---------- Timeout helper ---------- */
 async function withTimeout<T>(p: Promise<T>, ms = 15000, label = 'operation'): Promise<T> {
   let timeoutId: any;
@@ -459,6 +477,8 @@ export default function ResultsPage() {
   const photosSectionRef = useRef<HTMLElement | null>(null);
   const categorySectionRef = useRef<HTMLElement | null>(null);
   const conditionSectionRef = useRef<HTMLElement | null>(null);
+  const conditionSelectRef = useRef<HTMLSelectElement | null>(null);
+  const conditionDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const specificsSectionRef = useRef<HTMLElement | null>(null);
   const priceSectionRef = useRef<HTMLElement | null>(null);
   const policiesSectionRef = useRef<HTMLElement | null>(null);
@@ -660,50 +680,82 @@ export default function ResultsPage() {
     [smartFillSpecifics]
   );
 
-  const fetchCategoryConditions = useCallback(async (categoryId: string) => {
+  const categoryPathForCondition = useMemo(() => {
+    return (
+      String((category as any)?.path || '') ||
+      String((category as any)?.breadcrumbs?.join(' > ') || '') ||
+      getCategoryPathString(category)
+    );
+  }, [category]);
+
+  const isClothingCategory = useMemo(() => isClothingFromPath(categoryPathForCondition), [categoryPathForCondition]);
+
+  const fetchCategoryConditions = useCallback(
+    async (categoryId: string) => {
       if (!categoryId) {
-      setCategoryConditions([]);
-      setConditionId('');
-      setConditionName('');
-      setConditionDescription('');
-      return;
-    }
-
-
-    setConditionsLoading(true);
-    try {
-      const response = await fetch('/api/ebay-categories', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'getCategoryConditions', categoryId }),
-      });
-
-      if (!response.ok) {
         setCategoryConditions([]);
+        setConditionId('');
+        setConditionName('');
+        setConditionDescription('');
         return;
       }
 
-      const data = await response.json().catch(() => ({}));
-      const next = Array.isArray(data?.conditions) ? data.conditions : [];
-      setCategoryConditions(next);
+      setConditionsLoading(true);
+      try {
+        const response = await fetch('/api/ebay-categories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'getCategoryConditions', categoryId }),
+        });
 
-      // If previously selected condition is no longer valid, clear it.
-      if (conditionId) {
-        const stillValid = next.some((c: any) => String(c?.id) === String(conditionId));
-        if (!stillValid) {
-          setConditionId('');
-          setConditionName('');
-          setConditionDescription('');
+        if (!response.ok) {
+          setCategoryConditions([]);
+          return;
         }
+
+        const data = await response.json().catch(() => ({}));
+        const next = Array.isArray(data?.conditions) ? data.conditions : [];
+        setCategoryConditions(next);
+
+        // If previously selected condition is no longer valid, clear it.
+        if (conditionId) {
+          const stillValid = next.some((c: any) => String(c?.id) === String(conditionId));
+          if (!stillValid) {
+            setConditionId('');
+            setConditionName('');
+            setConditionDescription('');
+          }
+        }
+      } finally {
+        setConditionsLoading(false);
       }
-    } finally {
-      setConditionsLoading(false);
-    }
-  }, [conditionId]);
+    },
+    [conditionId]
+  );
 
   useEffect(() => {
-    void fetchCategoryConditions(String(category?.id || ''));
-  }, [category?.id, fetchCategoryConditions]);
+    const categoryId = String(category?.id || '').trim();
+    if (!categoryId) {
+      setCategoryConditions([]);
+      return;
+    }
+
+    if (isClothingCategory) {
+      // Clothing uses curated options; skip taxonomy-based list.
+      setCategoryConditions([]);
+
+      // If current selection isn't a valid clothing condition, clear it.
+      if (conditionId && !clothingConditionOptions.some((c) => String(c.id) === String(conditionId))) {
+        setConditionId('');
+        setConditionName('');
+        setConditionDescription('');
+      }
+
+      return;
+    }
+
+    void fetchCategoryConditions(categoryId);
+  }, [category?.id, isClothingCategory, conditionId, fetchCategoryConditions]);
 
   const mainImageUrl = images[mainImageIndex] || '';
 
@@ -755,8 +807,14 @@ export default function ResultsPage() {
 
     if (!images.length) missingBasics.push('Photos');
 
-    if (categoryConditions.length > 0 && !String(conditionId || '').trim()) {
+    const requiresCondition = !!category?.id && (isClothingCategory || categoryConditions.length > 0);
+
+    if (requiresCondition && !String(conditionId || '').trim()) {
       missingBasics.push('Condition');
+    }
+
+    if (requiresCondition && String(conditionId || '').trim() === '1750' && !String(conditionDescription || '').trim()) {
+      missingBasics.push('Condition description');
     }
 
     if (!String(ebayPaymentPolicyId || '').trim()) missingPolicies.push('Payment policy');
@@ -785,7 +843,9 @@ export default function ResultsPage() {
     price,
     images,
     categoryConditions,
+    isClothingCategory,
     conditionId,
+    conditionDescription,
     ebayPaymentPolicyId,
     ebayReturnPolicyId,
     ebayFulfillmentPolicyId,
@@ -836,9 +896,9 @@ export default function ResultsPage() {
       category: category ? { id: category.id, name: category.name, path: categoryPath, breadcrumbs: category.breadcrumbs } : null,
       category_id: category?.id || null,
       category_path: categoryPath || null,
-       condition_id: conditionId || null,
+       condition_id: toIntOrNull(conditionId),
        condition_name: conditionName || null,
-       condition_description: conditionDescription || null,
+       condition_description: String(conditionId || '').trim() === '1750' ? (conditionDescription || null) : null,
        item_specifics: specifics.map((s) => ({
          name: s.name,
          value: s.value,
@@ -1052,6 +1112,9 @@ export default function ResultsPage() {
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setIsDirty(true);
     setCategory(newCategory);
+    setConditionId('');
+    setConditionName('');
+    setConditionDescription('');
     setShowCategoryModal(false);
     await fetchCategorySpecifics(newCategory.id, getCategoryPathString(newCategory));
   };
@@ -1216,6 +1279,15 @@ export default function ResultsPage() {
     if (!paymentPolicyId) errors.push('Payment policy ID is required.');
     if (!returnPolicyId) errors.push('Return policy ID is required.');
     if (!fulfillmentPolicyId) errors.push('Fulfillment (shipping) policy ID is required.');
+
+    const requiresCondition = !!category?.id && (isClothingCategory || categoryConditions.length > 0);
+    if (requiresCondition && !String(conditionId || '').trim()) {
+      errors.push('Condition is required.');
+    }
+
+    if (requiresCondition && String(conditionId || '').trim() === '1750' && !String(conditionDescription || '').trim()) {
+      errors.push('Condition description is required.');
+    }
 
     try {
       const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
@@ -1741,71 +1813,88 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        {category?.id && categoryConditions.length > 0 ? (
+        {category?.id && (isClothingCategory || categoryConditions.length > 0) ? (
           <section ref={conditionSectionRef as any} style={{ marginTop: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <h3 style={{ margin: 0 }}>Condition</h3>
-              {conditionsLoading ? <span style={{ fontSize: 12, color: '#666' }}>Loading…</span> : null}
+              {!isClothingCategory && conditionsLoading ? <span style={{ fontSize: 12, color: '#666' }}>Loading…</span> : null}
             </div>
 
-            <div
-              style={{
-                marginTop: 10,
-                padding: 12,
-                borderRadius: 8,
-                border:
-                  (highlightMissing || showTitleInlineError) && !String(conditionId || '').trim()
-                    ? '1px solid #ef4444'
-                    : '1px solid #e5e7eb',
-                background: '#fff',
-              }}
-            >
-              {categoryConditions.map((c) => (
-                <label
-                  key={c.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: '6px 0',
-                    cursor: 'pointer',
-                    fontSize: 14,
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name="ebay_condition"
-                    value={c.id}
-                    checked={String(conditionId) === String(c.id)}
-                    onChange={() => {
-                      setIsDirty(true);
-                      setConditionId(String(c.id));
-                      setConditionName(String(c.name));
+            {(() => {
+              const shouldHighlight = highlightMissing || showTitleInlineError;
+              const requiresCondition = !!category?.id && (isClothingCategory || categoryConditions.length > 0);
+              const isConditionMissing = requiresCondition && !String(conditionId || '').trim();
 
-                      if (String(c.name || '').trim().toLowerCase() === 'new with tags') {
+              const options: { id: string; label: string }[] = isClothingCategory
+                ? clothingConditionOptions.map((c) => ({ id: String(c.id), label: c.label }))
+                : categoryConditions.map((c) => ({ id: String(c.id), label: String(c.name) }));
+
+              const selectedId = String(conditionId || '').trim();
+
+              const needsDescription = selectedId === '1750';
+              const isDescriptionMissing = needsDescription && !String(conditionDescription || '').trim();
+
+              return (
+                <div style={{ marginTop: 10 }}>
+                  <select
+                    ref={conditionSelectRef}
+                    id="condition_id"
+                    value={selectedId}
+                    onChange={(e) => {
+                      const nextId = String(e.target.value || '').trim();
+                      const opt = options.find((o) => o.id === nextId) || null;
+
+                      setIsDirty(true);
+                      setConditionId(nextId);
+                      setConditionName(opt?.label || '');
+
+                      if (nextId !== '1750') {
                         setConditionDescription('');
                       }
                     }}
-                  />
-                  <span>{c.name}</span>
-                </label>
-              ))}
-
-              {conditionId && String(conditionName || '').trim().toLowerCase() !== 'new with tags' ? (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Condition description</div>
-                  <textarea
-                    value={conditionDescription}
-                    onChange={(e) => {
-                      setIsDirty(true);
-                      setConditionDescription(e.target.value);
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: 6,
+                      border: shouldHighlight && isConditionMissing ? '1px solid #ef4444' : '1px solid #d1d5db',
+                      background: 'white',
+                      fontSize: 14,
                     }}
-                    rows={2}
-                    style={{ width: '100%', padding: 10, borderRadius: 6, border: '1px solid #d1d5db', fontSize: 14 }}
-                  />
+                  >
+                    <option value="">Select…</option>
+                    {options.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {needsDescription ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Condition description</div>
+                      <textarea
+                        ref={conditionDescriptionRef}
+                        id="condition_description"
+                        value={conditionDescription}
+                        onChange={(e) => {
+                          setIsDirty(true);
+                          setConditionDescription(e.target.value);
+                        }}
+                        rows={2}
+                        style={{
+                          width: '100%',
+                          padding: 10,
+                          borderRadius: 6,
+                          border: shouldHighlight && isDescriptionMissing ? '1px solid #ef4444' : '1px solid #d1d5db',
+                          fontSize: 14,
+                        }}
+                      />
+                    </div>
+                  ) : null}
+
                 </div>
-              ) : null}
-            </div>
+              );
+            })()}
           </section>
         ) : null}
 
@@ -2251,7 +2340,21 @@ export default function ResultsPage() {
                 }
 
                 if (missingBasics.includes('Condition')) {
-                  conditionSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  conditionSelectRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  conditionSelectRef.current?.focus();
+                  return;
+                }
+
+                if (missingBasics.includes('Condition description')) {
+                  conditionDescriptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  conditionDescriptionRef.current?.focus();
+                  return;
+                }
+
+
+                if (missingBasics.includes('Condition description')) {
+                  conditionDescriptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  conditionDescriptionRef.current?.focus();
                   return;
                 }
 
