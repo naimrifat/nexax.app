@@ -473,6 +473,10 @@ export default function ResultsPage() {
   const autosaveTimerRef = useRef<any>(null);
   const lastAutosaveResultKeyRef = useRef<string>('');
 
+  const [toast, setToast] = useState<null | { message: string; kind: 'success' | 'error' }>(null);
+  const toastTimerRef = useRef<any>(null);
+  const lastAutosaveOutcomeRef = useRef<'success' | 'error' | null>(null);
+
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
 
@@ -1004,6 +1008,29 @@ export default function ResultsPage() {
 
   const disableActions = authLoading || !user?.id || !workspaceId || !internalUserId;
 
+  const showToast = useCallback((next: { message: string; kind: 'success' | 'error' }, ms: number) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+
+    setToast(next);
+
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, ms);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // ----------------------------
   // Initial load (run once; gated by auth + tenancy)
   // ----------------------------
@@ -1331,6 +1358,7 @@ export default function ResultsPage() {
         setDraftStatus('Draft saved.');
         setDraftSavedSuccessfully(true);
         setUiError(null);
+        showToast({ message: 'Draft saved', kind: 'success' }, 1800);
       }
 
       setIsDirty(false);
@@ -1419,9 +1447,17 @@ export default function ResultsPage() {
         setAutosaveStatus('saved');
         setLastSavedAt(Date.now());
         setAutosaveErrorMessage(null);
+        lastAutosaveOutcomeRef.current = 'success';
+        showToast({ message: 'Draft saved', kind: 'success' }, 1800);
       } else {
         setAutosaveStatus('error');
         setAutosaveErrorMessage(res.errorMessage || 'Autosave failed');
+
+        if (lastAutosaveOutcomeRef.current !== 'error') {
+          showToast({ message: 'Autosave failed', kind: 'error' }, 2500);
+        }
+
+        lastAutosaveOutcomeRef.current = 'error';
       }
 
       lastAutosaveResultKeyRef.current = keyAtRun;
@@ -1688,7 +1724,7 @@ export default function ResultsPage() {
       return;
     }
 
-    const saveRes = await handleSaveDraft();
+    const saveRes = await handleSaveDraft({ silent: true });
     if (!saveRes.ok) {
       setUiError({
         title: 'Save failed',
@@ -1885,9 +1921,30 @@ export default function ResultsPage() {
     );
   }
 
-  return (
-    <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
-      <main>
+   return (
+     <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
+       {toast ? (
+         <div
+           style={{
+             position: 'fixed',
+             right: 16,
+             bottom: 16,
+             zIndex: 9999,
+             padding: '10px 12px',
+             borderRadius: 10,
+             fontSize: 13,
+             boxShadow: '0 10px 25px rgba(0,0,0,0.12)',
+             border: toast.kind === 'error' ? '1px solid #fecaca' : '1px solid #bbf7d0',
+             background: toast.kind === 'error' ? '#fef2f2' : '#f0fdf4',
+             color: toast.kind === 'error' ? '#991b1b' : '#166534',
+             maxWidth: 260,
+           }}
+         >
+           {toast.message}
+         </div>
+       ) : null}
+
+       <main>
         <h1>Create eBay Listing</h1>
 
         <section
@@ -2739,26 +2796,6 @@ export default function ResultsPage() {
 
          </div>
 
-         <div
-           style={{
-             marginTop: 6,
-             minHeight: 16,
-             fontSize: 12,
-             color: autosaveStatus === 'error' ? '#991b1b' : '#6b7280',
-           }}
-         >
-           {autosaveStatus === 'saving'
-             ? 'Saving…'
-             : autosaveStatus === 'saved'
-               ? (() => {
-                   if (!lastSavedAt) return 'Saved';
-                   const t = new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                   return `Saved ${t}`;
-                 })()
-               : autosaveStatus === 'error'
-                 ? 'Autosave failed. Click Save Draft to retry.'
-                 : ''}
-         </div>
 
 
         {uiError ? (
