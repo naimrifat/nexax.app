@@ -21,7 +21,7 @@ import TestDbPanel from "../components/TestDbPanel";
 import { supabase } from "../../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 
-type ListingStatus = "draft" | "active" | "sold" | "ended" | "archived" | string;
+type ListingStatus = "draft" | "publish_failed" | "publishing" | "published" | "active" | "sold" | "ended" | "archived" | string;
 
 type ListingRow = {
   id: string;
@@ -37,6 +37,8 @@ type ListingRow = {
   ebay_listing_url: string | null;
   listing_json: any; // jsonb
   images: string[] | null; // text[]
+  last_publish_error?: string | null;
+  last_publish_error_id?: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -53,6 +55,8 @@ type DashboardListing = {
   views: number;
   likes: number;
   ebay_listing_url?: string | null;
+  last_publish_error?: string | null;
+  last_publish_error_id?: string | null;
 };
 
 function safeArray(v: unknown): string[] {
@@ -130,6 +134,8 @@ function normalizeListing(row: ListingRow): DashboardListing {
     views,
     likes,
     ebay_listing_url: row.ebay_listing_url ?? lj?.ebay_listing_url ?? null,
+    last_publish_error: (row as any).last_publish_error ?? lj?.last_publish_error ?? null,
+    last_publish_error_id: (row as any).last_publish_error_id ?? lj?.last_publish_error_id ?? null,
   };
 }
 
@@ -179,7 +185,7 @@ const DashboardPage: React.FC = () => {
       const queryPromise = supabase
         .from("listings")
         .select(
-          "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at"
+          "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,last_publish_error,last_publish_error_id,created_at,updated_at"
         )
         .eq("workspace_id", workspaceId)
         .order("updated_at", { ascending: false, nullsFirst: false });
@@ -467,8 +473,10 @@ interface ListingCardProps {
 
 const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
   const navigate = useNavigate();
-  const { workspaceId } = useAuth();
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+   const { workspaceId } = useAuth();
+   const [isMenuOpen, setIsMenuOpen] = useState(false);
+   const [retryPublishing, setRetryPublishing] = useState(false);
+
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -482,9 +490,14 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "active":
-        return <span className="badge badge-success">Active</span>;
+      case "published":
+        return <span className="badge badge-success">Published</span>;
+      case "publishing":
+        return <span className="badge bg-blue-100 text-blue-800">Publishing</span>;
       case "draft":
         return <span className="badge bg-gray-100 text-gray-800">Draft</span>;
+      case "publish_failed":
+        return <span className="badge bg-red-100 text-red-800">Publish failed</span>;
       case "sold":
         return <span className="badge bg-purple-100 text-purple-800">Sold</span>;
       default:
@@ -524,8 +537,53 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
     navigate(listingHref);
   };
 
+  const canRetryPublish = (() => {
+    const s = String(listing.status || '').toLowerCase();
+    return s === 'draft' || s === 'publish_failed';
+  })();
+
+  const handleRetryPublish = async () => {
+    setIsMenuOpen(false);
+    setRetryPublishing(true);
+
+    try {
+      const {
+        data: { session },
+        error: sessionErr,
+      } = await supabase.auth.getSession();
+
+      if (sessionErr || !session?.access_token) {
+        throw new Error('Not logged in. Please sign in again and retry.');
+      }
+
+      const res = await fetch('/api/publish-listing', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ listing_id: listing.id }),
+      });
+
+      const body: any = await res.json().catch(() => ({}));
+
+      if (!res.ok || body?.ok !== true) {
+        const msg = String(body?.error || body?.message || 'Publish failed');
+        throw new Error(msg);
+      }
+
+      await onRefresh();
+    } catch (e: any) {
+      console.error('[DashboardPage] retry publish failed:', e);
+      window.alert(e?.message || 'Publish failed.');
+    } finally {
+      setRetryPublishing(false);
+    }
+  };
+
   const handleDuplicate = async () => {
     setIsMenuOpen(false);
+
 
     try {
       if (!workspaceId) throw new Error("Missing workspace. Please sign in again.");
@@ -533,7 +591,7 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
       const { data, error } = await supabase
         .from("listings")
         .select(
-          "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,created_at,updated_at"
+          "id,workspace_id,status,marketplace,title,description,category_path,price,currency,ebay_item_id,ebay_listing_url,listing_json,images,last_publish_error,last_publish_error_id,created_at,updated_at"
         )
         .eq("id", listing.id)
         .eq("workspace_id", workspaceId)
@@ -681,10 +739,18 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
             </div>
 
 
-            {getStatusBadge(String(listing.status))}
-            {listing.sku ? (
-              <div className="mt-3 text-sm text-gray-700">SKU: {listing.sku}</div>
-            ) : null}
+             {getStatusBadge(String(listing.status))}
+
+             {String(listing.status || '').toLowerCase() === 'publish_failed' && listing.last_publish_error ? (
+               <div className="mt-2 text-xs text-red-700">
+                 <div>Last publish failed: {listing.last_publish_error}</div>
+                 {listing.last_publish_error_id ? <div>ID: {listing.last_publish_error_id}</div> : null}
+               </div>
+             ) : null}
+
+             {listing.sku ? (
+               <div className="mt-3 text-sm text-gray-700">SKU: {listing.sku}</div>
+             ) : null}
           </div>
 
           <div className="flex sm:flex-col justify-between sm:justify-center sm:items-end sm:ml-6 mt-4 sm:mt-0 pt-4 sm:pt-0 border-t sm:border-t-0 border-gray-100">
@@ -702,6 +768,17 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
             )}
 
             <div className="flex sm:flex-col gap-2">
+              {canRetryPublish ? (
+                <button
+                  onClick={handleRetryPublish}
+                  disabled={retryPublishing}
+                  className="btn btn-outline py-1.5 text-sm px-3 flex items-center justify-center"
+                  type="button"
+                >
+                  <ArrowUp className="w-4 h-4 mr-1.5" />
+                  {retryPublishing ? 'Retrying…' : 'Retry Publish'}
+                </button>
+              ) : null}
 
               <button onClick={handleEdit} className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center" type="button">
                 <Edit className="w-4 h-4 mr-1.5" />
