@@ -116,7 +116,7 @@ const Header: React.FC = () => {
                 <TrendingUp className="w-4 h-4 text-white absolute translate-x-1 translate-y-0.5" />
               </div>
             </div>
-            <span className="text-xl font-bold text-gray-900">SnapLine</span>
+            <span className="text-xl font-bold text-gray-900">Nexax.app</span>
           </Link>
 
           {/* Desktop Navigation */}
