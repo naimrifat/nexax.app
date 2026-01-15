@@ -2736,20 +2736,8 @@ export default function ResultsPage() {
             {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
           </button>
 
-          <span
-            style={{
-              minWidth: 80,
-              fontSize: 13,
-              color: saveIndicator === 'saved' ? '#166534' : '#6b7280',
-              fontWeight: saveIndicator === 'saved' ? 600 : 400,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {saveIndicator === 'saving' ? 'Saving…' : saveIndicator === 'saved' ? '✓ Saved' : ''}
-          </span>
-
-
           {draftSavedSuccessfully ? (
+
             <button
               type="button"
               onClick={() => navigate('/dashboard')}
@@ -2784,6 +2772,18 @@ export default function ResultsPage() {
              Cancel
            </button>
 
+           <span
+             style={{
+               minWidth: 80,
+               fontSize: 13,
+               color: saveIndicator === 'saved' ? '#166534' : '#6b7280',
+               fontWeight: saveIndicator === 'saved' ? 600 : 400,
+               whiteSpace: 'nowrap',
+             }}
+           >
+             {saveIndicator === 'saving' ? 'Saving…' : saveIndicator === 'saved' ? '✓ Saved' : ''}
+           </span>
+ 
          </div>
 
 
