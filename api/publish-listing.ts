@@ -67,6 +67,259 @@ function extractEbayRequestId(payload: any): string | null {
   return null;
 }
 
+function sanitizeListingForEbay(listingJson: any): {
+  cleaned: any;
+  removed: { path: string; reason: string }[];
+} {
+  const removed: { path: string; reason: string }[] = [];
+
+  const addRemoved = (path: string, reason: string) => {
+    removed.push({ path, reason });
+  };
+
+  const isPlainObject = (v: any) => {
+    if (!v || typeof v !== 'object') return false;
+    const proto = Object.getPrototypeOf(v);
+    return proto === Object.prototype || proto === null;
+  };
+
+  const cleanStringField = (obj: any, key: string, path: string) => {
+    const v = obj?.[key];
+    if (v == null) return;
+    if (typeof v !== 'string') {
+      addRemoved(path, 'non-string');
+      delete obj[key];
+      return;
+    }
+    const t = v.trim();
+    if (!t) {
+      addRemoved(path, 'empty');
+      delete obj[key];
+      return;
+    }
+    obj[key] = t;
+  };
+
+  const cleanPolicyId = (obj: any, key: string, path: string) => {
+    const v = obj?.[key];
+    if (v == null) return;
+    if (typeof v !== 'string') {
+      addRemoved(path, 'non-string');
+      delete obj[key];
+      return;
+    }
+    const t = v.trim();
+    if (!t) {
+      addRemoved(path, 'empty');
+      delete obj[key];
+      return;
+    }
+    obj[key] = t;
+  };
+
+  const cleanStringArray = (value: any, path: string): string[] => {
+    if (!Array.isArray(value)) {
+      addRemoved(path, 'not-array');
+      return [];
+    }
+    const out: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const v = value[i];
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (!t) {
+          addRemoved(`${path}[${i}]`, 'empty');
+          continue;
+        }
+        out.push(t);
+        continue;
+      }
+      if (typeof v === 'number' || typeof v === 'boolean') {
+        const t = String(v).trim();
+        if (!t) {
+          addRemoved(`${path}[${i}]`, 'empty');
+          continue;
+        }
+        out.push(t);
+        continue;
+      }
+      addRemoved(`${path}[${i}]`, 'non-string');
+    }
+    return out;
+  };
+
+  const cleanUrlArray = (value: any, path: string): string[] => {
+    const raw = cleanStringArray(value, path);
+    const seen = new Set<string>();
+    const out: string[] = [];
+
+    for (let i = 0; i < raw.length; i++) {
+      const u = raw[i];
+      const lower = u.toLowerCase();
+      if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+        addRemoved(`${path}[${i}]`, 'invalid-url');
+        continue;
+      }
+      if (seen.has(u)) {
+        addRemoved(`${path}[${i}]`, 'duplicate');
+        continue;
+      }
+      seen.add(u);
+      out.push(u);
+    }
+
+    return out;
+  };
+
+  const cleaned: any = isPlainObject(listingJson) ? { ...(listingJson || {}) } : {};
+
+  // Common top-level strings
+  cleanStringField(cleaned, 'title', 'title');
+  cleanStringField(cleaned, 'description', 'description');
+  cleanStringField(cleaned, 'brand', 'brand');
+  cleanStringField(cleaned, 'model', 'model');
+  cleanStringField(cleaned, 'sku', 'sku');
+  cleanStringField(cleaned, 'condition_name', 'condition_name');
+  cleanStringField(cleaned, 'condition_description', 'condition_description');
+
+  // Price
+  if (cleaned.price != null) {
+    const raw = cleaned.price;
+    const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number.parseFloat(raw) : NaN;
+    if (Number.isFinite(n) && n > 0) {
+      cleaned.price = Math.round(n * 100) / 100;
+    } else {
+      addRemoved('price', 'invalid price');
+    }
+  }
+
+  // Images (sanitize whichever the JSON has)
+  if (cleaned.images != null) {
+    const urls = cleanUrlArray(cleaned.images, 'images');
+    if (urls.length) cleaned.images = urls;
+    else {
+      addRemoved('images', 'empty');
+      delete cleaned.images;
+    }
+  }
+
+  if (cleaned.image_urls != null) {
+    const urls = cleanUrlArray(cleaned.image_urls, 'image_urls');
+    if (urls.length) cleaned.image_urls = urls;
+    else {
+      addRemoved('image_urls', 'empty');
+      delete cleaned.image_urls;
+    }
+  }
+
+  // Category + condition
+  if (cleaned.category_id != null) {
+    const s = String(cleaned.category_id).trim();
+    if (!s) {
+      addRemoved('category_id', 'empty');
+      delete cleaned.category_id;
+    } else {
+      cleaned.category_id = s;
+      if (!/^\d+$/.test(s)) {
+        addRemoved('category_id', 'invalid category_id');
+      }
+    }
+  }
+
+  if (cleaned.condition_id != null) {
+    const n = typeof cleaned.condition_id === 'number' ? cleaned.condition_id : Number(String(cleaned.condition_id).trim());
+    if (Number.isFinite(n) && n > 0) {
+      cleaned.condition_id = n;
+    } else {
+      addRemoved('condition_id', 'invalid condition_id');
+    }
+  }
+
+  // Policies: trim only; do not invent.
+  cleanPolicyId(cleaned, 'payment_policy_id', 'payment_policy_id');
+  cleanPolicyId(cleaned, 'return_policy_id', 'return_policy_id');
+  cleanPolicyId(cleaned, 'fulfillment_policy_id', 'fulfillment_policy_id');
+
+  // Aspects: { Brand: ["Nike"] }
+  if (isPlainObject(cleaned.aspects)) {
+    const next: any = {};
+    for (const [rawKey, rawVal] of Object.entries(cleaned.aspects)) {
+      const key = String(rawKey || '').trim();
+      if (!key) {
+        addRemoved('aspects.<key>', 'empty-key');
+        continue;
+      }
+
+      if (Array.isArray(rawVal)) {
+        const vals = cleanStringArray(rawVal, `aspects.${key}`);
+        const trimmed = vals.map((v) => v.trim()).filter(Boolean);
+        if (!trimmed.length) {
+          addRemoved(`aspects.${key}`, 'empty');
+          continue;
+        }
+        next[key] = trimmed;
+        continue;
+      }
+
+      if (typeof rawVal === 'string' || typeof rawVal === 'number' || typeof rawVal === 'boolean') {
+        const t = String(rawVal).trim();
+        if (!t) {
+          addRemoved(`aspects.${key}`, 'empty');
+          continue;
+        }
+        next[key] = [t];
+        continue;
+      }
+
+      addRemoved(`aspects.${key}`, 'invalid');
+    }
+
+    cleaned.aspects = next;
+  }
+
+  // Item specifics array: [{ name, value }]
+  if (Array.isArray(cleaned.item_specifics)) {
+    const next: any[] = [];
+    for (let i = 0; i < cleaned.item_specifics.length; i++) {
+      const s = cleaned.item_specifics[i];
+      const name = String(s?.name ?? s?.Name ?? '').trim();
+      if (!name) {
+        addRemoved(`item_specifics[${i}].name`, 'empty');
+        continue;
+      }
+
+      const rawVal = s?.value ?? s?.Value;
+
+      if (Array.isArray(rawVal)) {
+        const vals = cleanStringArray(rawVal, `item_specifics.${name}`);
+        const trimmed = vals.map((v) => v.trim()).filter(Boolean);
+        if (!trimmed.length) {
+          addRemoved(`item_specifics.${name}`, 'empty');
+          continue;
+        }
+        next.push({ ...s, name, value: trimmed });
+        continue;
+      }
+
+      if (typeof rawVal === 'string' || typeof rawVal === 'number' || typeof rawVal === 'boolean') {
+        const t = String(rawVal).trim();
+        if (!t) {
+          addRemoved(`item_specifics.${name}`, 'empty');
+          continue;
+        }
+        next.push({ ...s, name, value: t });
+        continue;
+      }
+
+      addRemoved(`item_specifics.${name}`, 'invalid');
+    }
+
+    cleaned.item_specifics = next;
+  }
+
+  return { cleaned, removed };
+}
+
 function pickEbayApiBase(env: string) {
   const e = String(env || 'production').toLowerCase();
   return e === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
@@ -612,6 +865,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 4) Server-side validations (must run before any eBay calls)
     const listingJson: any = (listing as any).listing_json || {};
 
+    const { cleaned: cleanedListingJson, removed: sanitizedRemoved } = sanitizeListingForEbay(listingJson);
+
+    if (sanitizedRemoved.length > 0) {
+      console.log('[publish] sanitized listing', {
+        listing_id: (listing as any).id,
+        removedCount: sanitizedRemoved.length,
+      });
+      // Optional: log removed paths for debugging
+      console.log('[publish] sanitized removed', sanitizedRemoved);
+    }
+
     const rawImages = body?.images ?? body?.image_urls ?? (listing as any)?.images ?? [];
     const incomingUrls = normalizeStringArray(rawImages);
     const invalidImageUrls = incomingUrls.filter((u) => !isHttpUrl(u));
@@ -632,38 +896,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!incomingUrls.length || invalidImageUrls.length) missing.push('images');
 
     const rawConditionId =
-      listingJson.condition_id ??
-      listingJson.conditionId ??
-      listingJson.conditionID ??
-      listingJson.ebay_condition_id ??
+      cleanedListingJson.condition_id ??
+      cleanedListingJson.conditionId ??
+      cleanedListingJson.conditionID ??
+      cleanedListingJson.ebay_condition_id ??
       '';
     const conditionIdStr = String(rawConditionId || '').trim();
     if (!conditionIdStr) missing.push('condition_id');
 
     const paymentPolicyId = String(
-      listingJson.payment_policy_id ??
-        listingJson.paymentPolicyId ??
-        listingJson.ebay_payment_policy_id ??
-        listingJson.ebayPaymentPolicyId ??
+      cleanedListingJson.payment_policy_id ??
+        cleanedListingJson.paymentPolicyId ??
+        cleanedListingJson.ebay_payment_policy_id ??
+        cleanedListingJson.ebayPaymentPolicyId ??
         (listing as any).ebay_payment_policy_id ??
         ''
     ).trim();
 
     const returnPolicyId = String(
-      listingJson.return_policy_id ??
-        listingJson.returnPolicyId ??
-        listingJson.ebay_return_policy_id ??
-        listingJson.ebayReturnPolicyId ??
+      cleanedListingJson.return_policy_id ??
+        cleanedListingJson.returnPolicyId ??
+        cleanedListingJson.ebay_return_policy_id ??
+        cleanedListingJson.ebayReturnPolicyId ??
         (listing as any).ebay_return_policy_id ??
         ''
     ).trim();
 
     const fulfillmentPolicyId = String(
-      listingJson.fulfillment_policy_id ??
-        listingJson.fulfillmentPolicyId ??
-        listingJson.shippingPolicyId ??
-        listingJson.ebay_fulfillment_policy_id ??
-        listingJson.ebayFulfillmentPolicyId ??
+      cleanedListingJson.fulfillment_policy_id ??
+        cleanedListingJson.fulfillmentPolicyId ??
+        cleanedListingJson.shippingPolicyId ??
+        cleanedListingJson.ebay_fulfillment_policy_id ??
+        cleanedListingJson.ebayFulfillmentPolicyId ??
         (listing as any).ebay_fulfillment_policy_id ??
         ''
     ).trim();
@@ -749,6 +1013,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const listingForPublish = {
       ...(listing as any),
       images: incomingUrls,
+      listing_json: cleanedListingJson,
       ebay_payment_policy_id: paymentPolicyId,
       ebay_return_policy_id: returnPolicyId,
       ebay_fulfillment_policy_id: fulfillmentPolicyId,
