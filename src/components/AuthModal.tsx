@@ -13,8 +13,8 @@ interface AuthModalProps {
 }
 
 const titles: Record<AuthMode, string> = {
-  login: "Log in to SnapLine",
-  signup: "Create your SnapLine account",
+  login: "Log in to Nexax.app",
+  signup: "Create your Nexax.app account",
   reset: "Reset your password",
 };
 
