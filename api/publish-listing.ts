@@ -3,7 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 import { getValidEbayToken } from "../lib/ebay/ebay-token-manager.js";
 import { ensureMerchantLocation } from "../lib/ebay/ebay-merchant-location.js";
 import { ebayFetch, EbayHttpError } from "../lib/ebay/ebay-http.js";
-import { classifyEbayError } from "../lib/ebay/ebay-error-classifier.js";
 import { sentryCaptureException } from "../lib/sentry.js";
 
 export const config = {
@@ -545,10 +544,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return respond(res, 404, { ok: false, requestId, code: 'NOT_FOUND', message: 'Listing not found', error: 'Listing not found' });
     }
 
-    listingRowForFailure = listing as any;
-
     workspaceIdForSentry = (listing as any).workspace_id ? String((listing as any).workspace_id) : null;
-
+ 
     if ((listing as any).created_by !== user.id) {
       sentryCaptureException(new Error('Forbidden'), {
         operation: 'publish',
@@ -559,6 +556,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
       return respond(res, 403, { ok: false, requestId, code: 'FORBIDDEN', message: 'Forbidden', error: 'Forbidden' });
     }
+
+    listingRowForFailure = listing as any;
 
     if (((listing as any).marketplace || 'ebay').toLowerCase() !== 'ebay') {
       sentryCaptureException(new Error('Validation failed'), {
@@ -610,24 +609,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // 4) Validations (must run before any eBay calls)
-    const rawImages = body?.images ?? body?.image_urls ?? (listing as any)?.images ?? [];
-    const incomingUrls = normalizeStringArray(rawImages);
-
-    const invalidImageUrls = incomingUrls.filter((u) => !isHttpUrl(u));
-
-    const errors: string[] = [];
-    if (!(listing as any).title?.trim()) errors.push('Title is required.');
-    if (!(listing as any).description?.trim()) errors.push('Description is required.');
-    if (!(listing as any).category_id) errors.push('Category is required.');
-    if (typeof (listing as any).price !== 'number' || (listing as any).price <= 0) errors.push('Price must be greater than 0.');
-    if (!incomingUrls.length) errors.push('At least one image URL is required.');
-    if (invalidImageUrls.length) errors.push('All image URLs must be http/https.');
-
+    // 4) Server-side validations (must run before any eBay calls)
     const listingJson: any = (listing as any).listing_json || {};
 
+    const rawImages = body?.images ?? body?.image_urls ?? (listing as any)?.images ?? [];
+    const incomingUrls = normalizeStringArray(rawImages);
+    const invalidImageUrls = incomingUrls.filter((u) => !isHttpUrl(u));
+
+    const missing: string[] = [];
+
+    const title = String((listing as any).title || '').trim();
+    const description = String((listing as any).description || '').trim();
+    const categoryId = String((listing as any).category_id || '').trim();
+
+    if (!title) missing.push('title');
+    if (!description) missing.push('description');
+    if (!categoryId) missing.push('category_id');
+
+    const price = (listing as any).price;
+    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) missing.push('price');
+
+    if (!incomingUrls.length || invalidImageUrls.length) missing.push('images');
+
+    const rawConditionId =
+      listingJson.condition_id ??
+      listingJson.conditionId ??
+      listingJson.conditionID ??
+      listingJson.ebay_condition_id ??
+      '';
+    const conditionIdStr = String(rawConditionId || '').trim();
+    if (!conditionIdStr) missing.push('condition_id');
+
     const paymentPolicyId = String(
-      listingJson.paymentPolicyId ??
+      listingJson.payment_policy_id ??
+        listingJson.paymentPolicyId ??
         listingJson.ebay_payment_policy_id ??
         listingJson.ebayPaymentPolicyId ??
         (listing as any).ebay_payment_policy_id ??
@@ -635,7 +650,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ).trim();
 
     const returnPolicyId = String(
-      listingJson.returnPolicyId ??
+      listingJson.return_policy_id ??
+        listingJson.returnPolicyId ??
         listingJson.ebay_return_policy_id ??
         listingJson.ebayReturnPolicyId ??
         (listing as any).ebay_return_policy_id ??
@@ -643,7 +659,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ).trim();
 
     const fulfillmentPolicyId = String(
-      listingJson.fulfillmentPolicyId ??
+      listingJson.fulfillment_policy_id ??
+        listingJson.fulfillmentPolicyId ??
         listingJson.shippingPolicyId ??
         listingJson.ebay_fulfillment_policy_id ??
         listingJson.ebayFulfillmentPolicyId ??
@@ -651,73 +668,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ''
     ).trim();
 
-    if (!paymentPolicyId || paymentPolicyId.length < 5) errors.push('Payment policy ID is invalid (must be a real eBay policy ID).');
-    if (!returnPolicyId || returnPolicyId.length < 5) errors.push('Return policy ID is invalid (must be a real eBay policy ID).');
-    if (!fulfillmentPolicyId || fulfillmentPolicyId.length < 5) errors.push('Fulfillment (shipping) policy ID is invalid (must be a real eBay policy ID).');
+    if (!paymentPolicyId) missing.push('payment_policy_id');
+    if (!returnPolicyId) missing.push('return_policy_id');
+    if (!fulfillmentPolicyId) missing.push('fulfillment_policy_id');
 
-    // Condition: required only if eBay returns condition options for this category.
-    const marketplaceId = String(process.env.EBAY_MARKETPLACE_ID || 'EBAY_US');
-    const publishEnv = String(process.env.EBAY_ENV || 'production').toLowerCase();
+    if (missing.length) {
+      const msg = `Missing required fields: ${missing.join(', ')}`;
 
-    const categoryConditions = await getCategoryConditionsForPublish({
-      env: publishEnv,
-      marketplaceId,
-      categoryId: String((listing as any).category_id || ''),
-      requestId,
-    });
-
-    if (Array.isArray(categoryConditions) && categoryConditions.length > 0) {
-      const rawConditionId =
-        listingJson.condition_id ??
-        listingJson.conditionId ??
-        listingJson.conditionID ??
-        listingJson.ebay_condition_id ??
-        '';
-
-      const conditionIdStr = String(rawConditionId || '').trim();
-      if (!conditionIdStr) {
-        errors.push('Condition is required.');
-      } else {
-        const conditionIdNum = Number.parseInt(conditionIdStr, 10);
-        if (!Number.isFinite(conditionIdNum) || conditionIdNum <= 0) {
-          errors.push('Condition is required.');
-        }
-      }
-    }
-
-    if (errors.length) {
-      try {
-        const ts = nowIso();
-        await serviceClient
-          .from('listings')
-          .update({
-            status: 'publish_failed',
-            last_publish_attempt_at: ts,
-            last_publish_error: 'Validation failed',
-            last_publish_error_id: null,
-            last_publish_error_at: ts,
-            last_publish_error_details: { stage: 'validation', errors },
-          })
-          .eq('id', (listing as any).id)
-          .eq('workspace_id', (listing as any).workspace_id);
-      } catch (e) {
-        console.error('[publish] failed to persist validation error', { requestId, e });
-      }
-
-      sentryCaptureException(new Error('Validation failed'), {
-        operation: 'publish',
-        requestId,
-        listing_id: listingIdForSentry,
-        workspace_id: workspaceIdForSentry,
-        extras: { code: 'VALIDATION_ERROR', message: 'Validation failed', errors },
+      await persistPublishFailed({
+        message: msg,
+        errorId: null,
+        stage: 'validation',
       });
+
       return respond(res, 400, {
         ok: false,
         requestId,
-        code: 'VALIDATION_ERROR',
-        message: 'Validation failed',
-        error: 'Validation failed',
-        errors,
+        error: 'Missing required fields',
+        missing,
       });
     }
 
@@ -731,7 +699,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
       .eq('id', (listing as any).id)
       .eq('workspace_id', (listing as any).workspace_id)
-      .eq('status', 'draft')
+      .in('status', ['draft', 'publish_failed'])
       .select('id');
 
     if (publishingLockErr) throw publishingLockErr;
@@ -843,9 +811,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (err: any) {
       const msg = String(err?.message || 'Publish failed');
 
-      const ebayErrorId = extractEbayErrorId(err?.ebayPayload);
-      const ebayReqId = extractEbayRequestId(err?.ebayPayload);
+      const ebayPayload = err?.ebayPayload || null;
+      const ebayErrorId = extractEbayErrorId(ebayPayload);
+      const ebayReqId = extractEbayRequestId(ebayPayload);
       const idForDb = ebayErrorId || ebayReqId || requestId;
+
+      const firstMsg = ebayPayload
+        ? String(ebayPayload?.errors?.[0]?.message || '').trim() ||
+          String(ebayPayload?.errors?.[0]?.longMessage || '').trim() ||
+          String(ebayPayload?.message || '').trim() ||
+          msg
+        : msg;
+
+      const safe = ebayPayload ? `eBay rejected the listing: ${firstMsg}` : msg;
       const ts = nowIso();
 
       // Mark publish_failed so user can retry
@@ -854,10 +832,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .update({
           status: 'publish_failed',
           last_publish_attempt_at: ts,
-          last_publish_error: msg,
+          last_publish_error: safe,
           last_publish_error_id: idForDb,
           last_publish_error_at: ts,
-          last_publish_error_details: { stage: 'publish', error: msg },
+          last_publish_error_details: { stage: 'publish', error: safe },
         })
         .eq('id', (listing as any).id)
         .eq('workspace_id', (listing as any).workspace_id)
@@ -906,12 +884,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const isEbay = msg.includes('eBay rejected') || !!err?.ebayPayload || typeof err?.statusCode === 'number';
 
     if (isEbay) {
-      const classified = classifyEbayError({
-        statusCode: typeof err?.statusCode === 'number' ? err.statusCode : undefined,
-        ebayPayload: err?.ebayPayload,
-        fallbackMessage: msg,
-        errorCode: err?.code,
-      });
+      const ebayPayload = err?.ebayPayload || {};
+      const ebayErrorId = extractEbayErrorId(ebayPayload);
+      const firstMsg =
+        String(ebayPayload?.errors?.[0]?.message || '').trim() ||
+        String(ebayPayload?.errors?.[0]?.longMessage || '').trim() ||
+        String(ebayPayload?.message || '').trim() ||
+        String(msg || '').trim() ||
+        'eBay API error';
+
+      const safe = `eBay rejected the listing: ${firstMsg}`;
+      const statusCode = typeof err?.statusCode === 'number' ? err.statusCode : undefined;
+      const httpStatus = statusCode != null && statusCode >= 400 && statusCode < 500 ? 400 : 502;
+
+      // Log raw payload server-side only
+      console.error('[publish] eBay error payload', { requestId, statusCode, ebayErrorId, ebayPayload });
 
       sentryCaptureException(new Error('eBay publish error'), {
         operation: 'publish',
@@ -919,27 +906,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
         extras: {
-          code: classified.code,
-          httpStatus: classified.httpStatus,
-          message: classified.message,
+          httpStatus,
+          message: safe,
+          ebayErrorId: ebayErrorId || undefined,
           hint: err?.hint || undefined,
         },
       });
 
-      const ebayErrorId = extractEbayErrorId(err?.ebayPayload);
-      const ebayReqId = extractEbayRequestId(err?.ebayPayload);
-      const idForDb = ebayErrorId || ebayReqId || requestId;
+      await persistPublishFailed({ message: safe, errorId: ebayErrorId || requestId, stage: 'publish' });
 
-      await persistPublishFailed({ message: classified.message, errorId: idForDb, stage: 'publish' });
-
-      return respond(res, classified.httpStatus, {
+      return respond(res, httpStatus, {
         ok: false,
         requestId,
-        code: classified.code,
-        message: classified.message,
-        error: classified.message,
+        error: safe,
         ebayErrorId: ebayErrorId || undefined,
-        errors: classified.errors || [],
       });
     }
 
