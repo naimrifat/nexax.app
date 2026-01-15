@@ -875,6 +875,26 @@ export default function ResultsPage() {
     }
   }, [missingRequirements.totalMissingCount]);
 
+  const lastUiErrorClearKeyRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!uiError) {
+      lastUiErrorClearKeyRef.current = preflightInputKey;
+      return;
+    }
+
+    if (missingRequirements.totalMissingCount <= 0) {
+      lastUiErrorClearKeyRef.current = preflightInputKey;
+      return;
+    }
+
+    if (lastUiErrorClearKeyRef.current && lastUiErrorClearKeyRef.current !== preflightInputKey) {
+      setUiError(null);
+    }
+
+    lastUiErrorClearKeyRef.current = preflightInputKey;
+  }, [preflightInputKey, missingRequirements.totalMissingCount, uiError]);
+
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (!isDirty) return;
@@ -1647,6 +1667,9 @@ export default function ResultsPage() {
         });
         setIsDirty(false);
         setUiError(null);
+        setPublishErrors([]);
+        setHighlightMissing(false);
+        setShowTitleInlineError(false);
         navigate('/dashboard');
         return;
       }
@@ -2420,10 +2443,12 @@ export default function ResultsPage() {
               ) : null}
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setHighlightMissing(true);
+             <button
+               type="button"
+               onClick={() => {
+                 setUiError(null);
+                 setHighlightMissing(true);
+
 
                 const missingBasics = missingRequirements.missingBasics;
                 const missingPolicies = missingRequirements.missingPolicies;
@@ -2505,7 +2530,7 @@ export default function ResultsPage() {
         <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             onClick={handleSaveDraft}
-            disabled={disableActions}
+            disabled={disableActions || publishing || preflightLoading}
             className="btn"
             style={{
               padding: '12px 24px',
