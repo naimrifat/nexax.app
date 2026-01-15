@@ -17,7 +17,7 @@ const Footer: React.FC = () => {
                   <TrendingUp className="w-4 h-4 text-white absolute translate-x-1 translate-y-0.5" />
                 </div>
               </div>
-              <span className="text-xl font-bold text-gray-900">SnapLine</span>
+              <span className="text-xl font-bold text-gray-900">Nexax.app</span>
             </div>
             <p className="text-gray-600 text-sm">
               Effortlessly create professional product listings for all major marketplaces with AI-powered descriptions.
@@ -73,7 +73,7 @@ const Footer: React.FC = () => {
 
         <div className="border-t border-gray-200 mt-10 pt-6 flex flex-col md:flex-row md:items-center md:justify-between text-sm text-gray-600">
           <div className="flex flex-col md:flex-row md:space-x-6 space-y-2 md:space-y-0 mb-4 md:mb-0">
-            <span>© 2025 SnapLine. All rights reserved.</span>
+            <span>© 2025 Nexax.app. All rights reserved.</span>
             <Link to="/privacy" className="hover:text-teal-600 transition-colors">Privacy Policy</Link>
             <Link to="/terms" className="hover:text-teal-600 transition-colors">Terms of Service</Link>
           </div>
