@@ -105,53 +105,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const text = await ebayRes.text().catch(() => '');
-    const data: any = text ? JSON.parse(text) : {};
+
+    let json: any = {};
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      json = {};
+    }
 
     if (!ebayRes.ok) {
-      const firstErr = Array.isArray(data?.errors) ? data.errors[0] : null;
+      const firstErr = Array.isArray(json?.errors) ? json.errors[0] : null;
       const errorId = firstErr?.errorId != null ? String(firstErr.errorId) : undefined;
 
-      console.error('[ebay-item-conditions] eBay error', {
-        requestId,
-        categoryId,
-        status: ebayRes.status,
-        errorId,
-        body: String(text || '').slice(0, 300),
-      });
-
-      sentryCaptureException(new Error('eBay condition policies failed'), {
-        operation: 'ebay_item_conditions',
-        requestId,
-        extras: {
-          status: ebayRes.status,
-          errorId,
-        },
-      });
-
-      return res.status(500).json({
+      return res.status(ebayRes.status).json({
         error: 'Failed to fetch eBay conditions',
         ...(errorId ? { errorId } : {}),
+        debugSnippet: String(text || '').slice(0, 1000),
         requestId,
       });
     }
 
-    const policies = Array.isArray(data?.itemConditionPolicies) ? data.itemConditionPolicies : [];
-    const firstPolicy = policies[0] || null;
-    const conditionPolicies = Array.isArray(firstPolicy?.conditionPolicies) ? firstPolicy.conditionPolicies : [];
+    const rootPolicies = Array.isArray(json?.itemConditionPolicies)
+      ? json.itemConditionPolicies
+      : json?.itemConditionPolicies && typeof json.itemConditionPolicies === 'object'
+        ? [json.itemConditionPolicies]
+        : [];
 
-    const conditions = conditionPolicies
-      .map((p: any) => ({
-        conditionId: Number(p?.condition?.conditionId ?? NaN),
-        conditionName: String(p?.condition?.conditionName ?? '').trim(),
-      }))
+    const firstPolicy = rootPolicies[0] || null;
+
+    const policyConditionPoliciesA = Array.isArray(firstPolicy?.conditionPolicies) ? firstPolicy.conditionPolicies : [];
+    const policyConditionPoliciesB = Array.isArray(firstPolicy?.itemConditionPolicies)
+      ? firstPolicy.itemConditionPolicies
+      : Array.isArray(firstPolicy?.itemConditionPolicies?.[0]?.conditionPolicies)
+        ? firstPolicy.itemConditionPolicies[0].conditionPolicies
+        : [];
+
+    const conditionPolicies = policyConditionPoliciesA.length ? policyConditionPoliciesA : policyConditionPoliciesB;
+
+    const mapped = conditionPolicies
+      .map((p: any) => {
+        const c = p?.condition ?? p;
+        return {
+          conditionId: Number(c?.conditionId ?? c?.id ?? NaN),
+          conditionName: String(c?.conditionName ?? c?.conditionDescription ?? c?.name ?? '').trim(),
+        };
+      })
       .filter((c: any) => Number.isFinite(c.conditionId) && c.conditionId > 0 && c.conditionName);
 
-    if (!conditions.length && String(text || '').trim()) {
-      console.error('[ebay-item-conditions] unexpected response shape', {
+    const uniqMap = new Map<number, string>();
+    for (const c of mapped) {
+      if (!uniqMap.has(c.conditionId)) uniqMap.set(c.conditionId, c.conditionName);
+    }
+
+    const conditions = Array.from(uniqMap.entries()).map(([conditionId, conditionName]) => ({ conditionId, conditionName }));
+
+    if (!conditions.length) {
+      console.error('[ebay-item-conditions] empty conditions', {
         requestId,
         categoryId,
         status: ebayRes.status,
-        body: String(text || '').slice(0, 300),
+        keys: Object.keys(json || {}),
+      });
+
+      return res.status(200).json({
+        conditions: [],
+        rawCategoryId: categoryId,
+        marketplaceId,
+        debugStatus: ebayRes.status,
+        debugKeys: Object.keys(json || {}),
+        debugSnippet: JSON.stringify(json).slice(0, 1500),
       });
     }
 
