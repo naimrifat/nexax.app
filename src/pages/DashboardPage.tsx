@@ -741,7 +741,7 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
                   <Edit className="w-4 h-4 mr-1.5" />
                   Edit
                 </button>
-              )
+              )}
             </div>
           </div>
         </div>
