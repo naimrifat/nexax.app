@@ -1068,12 +1068,16 @@ export default function ResultsPage() {
         const t = await ensureTenancy();
 
         const urlParams = new URLSearchParams(window.location.search);
-        const mode = urlParams.get('mode');
         const listingIdParam = urlParams.get('listingId');
-        const sessionId = urlParams.get('session');
 
-        // EDIT MODE
-        if (mode === 'edit' && listingIdParam) {
+        if (!listingIdParam) {
+          setLoading(false);
+          setError('No listing found. Please start from Dashboard.');
+          return;
+        }
+
+        // Load listing from Supabase (single source of truth)
+        {
           const { data, error: readErr } = await withTimeout(
             supabase
               .from('listings')
@@ -1155,61 +1159,6 @@ export default function ResultsPage() {
 
           setLoading(false);
           return;
-        }
-
-        // CREATE MODE
-        let wrapper: any = null;
-        let analysis: any = null;
-
-        if (sessionId) {
-          const res = await fetch(`/api/listing-data/${sessionId}`);
-          if (!res.ok) throw new Error('Failed to fetch data from API');
-          wrapper = await res.json();
-          analysis = wrapper.data || wrapper.analysis || wrapper;
-        } else {
-          const raw = sessionStorage.getItem('aiListingData');
-          if (!raw) {
-            navigate('/create-listing', { replace: true });
-            return;
-          }
-          wrapper = JSON.parse(raw);
-          analysis = wrapper.data || wrapper.analysis || wrapper;
-        }
-
-        aiSpecificsRef.current = normalizeSpecifics(analysis.item_specifics);
-        aiDetectedRef.current = analysis.detected || {};
-
-        setTitle(String(analysis.title ?? ''));
-        setDescription(String(analysis.description ?? ''));
-
-        const optimal = analysis.price_suggestion?.optimal;
-        setPrice(typeof optimal === 'number' ? optimal.toFixed(2) : String(optimal ?? '0.00'));
-
-        const imgsRaw: string[] =
-          analysis.images ||
-          analysis.image_urls ||
-          wrapper.images ||
-          wrapper.image_urls ||
-          (analysis.image_url ? [analysis.image_url] : []) ||
-          [];
-
-        setImages(sanitizeHostedImages(imgsRaw));
-        setMainImageIndex(0);
-
-        setKeywords(Array.isArray(analysis.keywords) ? analysis.keywords.join(', ') : String(analysis.keywords ?? ''));
-        setCategorySuggestions(Array.isArray(analysis.category_suggestions) ? analysis.category_suggestions : []);
-
-        const initialCategory: CategoryWithPath | null = analysis.category ?? null;
-        setCategory(initialCategory);
-
-        const initialCategoryPath = getCategoryPathString(initialCategory);
-
-        if (initialCategory?.id) {
-          await fetchCategorySpecifics(initialCategory.id, initialCategoryPath);
-        } else {
-          const base = normalizeSpecifics(analysis.item_specifics);
-          const filled = smartFillSpecifics(base, aiDetectedRef.current || {});
-          setSpecifics(applySizeTypeFilterToSpecifics(filled, initialCategoryPath));
         }
 
         setLoading(false);
@@ -1940,10 +1889,11 @@ export default function ResultsPage() {
   }
 
   if (error) {
+    const noListing = /no listing found/i.test(error);
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
-        <h2 style={{ color: 'red' }}>{error}</h2>
-        <button onClick={() => navigate('/create-listing')}>Go Back</button>
+        <h2 style={{ color: noListing ? '#111827' : 'red' }}>{error}</h2>
+        <button onClick={() => navigate(noListing ? '/dashboard' : '/create-listing')}>{noListing ? 'Go to Dashboard' : 'Go Back'}</button>
       </div>
     );
   }
