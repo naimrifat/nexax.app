@@ -473,9 +473,9 @@ interface ListingCardProps {
 
 const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
   const navigate = useNavigate();
-   const { workspaceId } = useAuth();
-   const [isMenuOpen, setIsMenuOpen] = useState(false);
-   const [retryPublishing, setRetryPublishing] = useState(false);
+  const { workspaceId } = useAuth();
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
 
 
   const formatDate = (dateString: string) => {
@@ -537,48 +537,11 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
     navigate(listingHref);
   };
 
-  const canRetryPublish = (() => {
-    const s = String(listing.status || '').toLowerCase();
-    return s === 'publish_failed';
-  })();
+  const isPublishFailed = String(listing.status || '').toLowerCase() === 'publish_failed';
 
-  const handleRetryPublish = async () => {
+  const handleFixAndPublish = () => {
     setIsMenuOpen(false);
-    setRetryPublishing(true);
-
-    try {
-      const {
-        data: { session },
-        error: sessionErr,
-      } = await supabase.auth.getSession();
-
-      if (sessionErr || !session?.access_token) {
-        throw new Error('Not logged in. Please sign in again and retry.');
-      }
-
-      const res = await fetch('/api/publish-listing', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ listing_id: listing.id }),
-      });
-
-      const body: any = await res.json().catch(() => ({}));
-
-      if (!res.ok || body?.ok !== true) {
-        const msg = String(body?.error || body?.message || 'Publish failed');
-        throw new Error(msg);
-      }
-
-      await onRefresh();
-    } catch (e: any) {
-      console.error('[DashboardPage] retry publish failed:', e);
-      window.alert(e?.message || 'Publish failed.');
-    } finally {
-      setRetryPublishing(false);
-    }
+    navigate(listingHref);
   };
 
   const handleDuplicate = async () => {
@@ -741,10 +704,10 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
 
              {getStatusBadge(String(listing.status))}
 
-             {String(listing.status || '').toLowerCase() === 'publish_failed' && listing.last_publish_error ? (
+             {isPublishFailed && listing.last_publish_error ? (
                <div className="mt-2 text-xs text-red-700">
-                 <div>Last publish failed: {listing.last_publish_error}</div>
-                 {listing.last_publish_error_id ? <div>ID: {listing.last_publish_error_id}</div> : null}
+                 <div>{listing.last_publish_error}</div>
+                 {listing.last_publish_error_id ? <div className="text-gray-500">Error ID: {listing.last_publish_error_id}</div> : null}
                </div>
              ) : null}
 
@@ -768,22 +731,17 @@ const ListingCard: React.FC<ListingCardProps> = ({ listing, onRefresh }) => {
             )}
 
             <div className="flex sm:flex-col gap-2">
-              {canRetryPublish ? (
-                <button
-                  onClick={handleRetryPublish}
-                  disabled={retryPublishing}
-                  className="btn btn-outline py-1.5 text-sm px-3 flex items-center justify-center"
-                  type="button"
-                >
-                  <ArrowUp className="w-4 h-4 mr-1.5" />
-                  {retryPublishing ? 'Retrying…' : 'Retry Publish'}
+              {isPublishFailed ? (
+                <button onClick={handleFixAndPublish} className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center" type="button">
+                  <Edit className="w-4 h-4 mr-1.5" />
+                  Fix &amp; Publish
                 </button>
-              ) : null}
-
-              <button onClick={handleEdit} className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center" type="button">
-                <Edit className="w-4 h-4 mr-1.5" />
-                Edit
-              </button>
+              ) : (
+                <button onClick={handleEdit} className="btn btn-primary py-1.5 text-sm px-3 flex items-center justify-center" type="button">
+                  <Edit className="w-4 h-4 mr-1.5" />
+                  Edit
+                </button>
+              )
             </div>
           </div>
         </div>
