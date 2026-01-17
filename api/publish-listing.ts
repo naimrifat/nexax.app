@@ -532,48 +532,105 @@ async function publishToEbayInventoryApi(opts: {
   const { env, accessToken, marketplaceId, listing, merchantLocationKey, requestId } = opts;
   const base = pickEbayApiBase(env);
 
+  const failGuard = (field: string, userMessage: string) => {
+    const e: any = new Error(userMessage);
+    e.code = 'PUBLISH_GUARD';
+    e.field = field;
+    return e;
+  };
+
   // Use listing id as SKU (stable)
-  const sku = String(listing.id);
+  const sku = String(listing.id || '').trim();
+  if (!sku) throw failGuard('sku', 'Missing SKU for publish.');
+
+  const safeMarketplaceId = String(marketplaceId || '').trim();
+  if (!safeMarketplaceId) throw failGuard('marketplaceId', 'Marketplace is required for publish.');
+  if (safeMarketplaceId !== 'EBAY_US') {
+    // Minimal production-safe guard (current app uses EBAY_US)
+    throw failGuard('marketplaceId', 'Unsupported marketplace for publish.');
+  }
+
+  const safeMerchantLocationKey = String(merchantLocationKey || '').trim();
+  if (!safeMerchantLocationKey) throw failGuard('merchantLocationKey', 'Merchant location is not configured for this eBay account.');
 
   // images: enforce ordered hosted URLs
   const imageUrls = normalizeStringArray(listing.images || []).filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u));
-  if (!imageUrls.length) throw new Error('No hosted images found for publish.');
+  if (!imageUrls.length) throw failGuard('images', 'At least one hosted image is required for publish.');
 
   // policy ids
   const paymentPolicyId = String(listing.ebay_payment_policy_id || '').trim();
   const returnPolicyId = String(listing.ebay_return_policy_id || '').trim();
   const fulfillmentPolicyId = String(listing.ebay_fulfillment_policy_id || '').trim(); // UI label: Shipping policy
 
-  if (!paymentPolicyId || !returnPolicyId || !fulfillmentPolicyId) {
-    throw new Error('Missing required policy IDs (payment/return/shipping). Save draft and retry.');
-  }
+  if (!paymentPolicyId) throw failGuard('payment_policy_id', 'Missing required policy IDs (payment/return/shipping). Save draft and retry.');
+  if (!returnPolicyId) throw failGuard('return_policy_id', 'Missing required policy IDs (payment/return/shipping). Save draft and retry.');
+  if (!fulfillmentPolicyId) throw failGuard('fulfillment_policy_id', 'Missing required policy IDs (payment/return/shipping). Save draft and retry.');
 
   const price = listing.price;
-  if (typeof price !== 'number' || price <= 0) throw new Error('Invalid price for publish.');
-  const currency = String(listing.currency || 'USD');
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) throw failGuard('price', 'Invalid price for publish.');
+  const currency = String(listing.currency || 'USD').trim();
+  if (!currency) throw failGuard('currency', 'Currency is required for publish.');
+  if (safeMarketplaceId === 'EBAY_US' && currency !== 'USD') throw failGuard('currency', 'Currency must be USD for this marketplace.');
 
   const title = String(listing.title || '').trim();
   const description = String(listing.description || '').trim();
   const categoryId = String(listing.category_id || '').trim();
 
-  if (!title || !description || !categoryId) throw new Error('Title/description/category are required for publish.');
+  if (!title) throw failGuard('title', 'Title is required for publish.');
+  if (!description) throw failGuard('description', 'Description is required for publish.');
+  if (!categoryId || !/^\d+$/.test(categoryId)) throw failGuard('category_id', 'Category is required for publish.');
 
   // 1) Upsert inventory item
   const inventoryItemUrl = `${base}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`;
 
-  const rawConditionId = listing?.listing_json?.condition_id ?? listing?.listing_json?.conditionId ?? '';
+  // Condition: must be present and a digits-only string id
+  const rawConditionId =
+    listing?.listing_json?.condition_id ??
+    listing?.listing_json?.conditionId ??
+    listing?.listing_json?.conditionID ??
+    listing?.listing_json?.ebay_condition_id ??
+    '';
+
   const conditionIdStr = String(rawConditionId || '').trim();
   const conditionIdNum = conditionIdStr ? Number.parseInt(conditionIdStr, 10) : NaN;
 
+  if (!conditionIdStr || !/^\d+$/.test(conditionIdStr) || !Number.isFinite(conditionIdNum) || conditionIdNum <= 0) {
+    throw failGuard('condition_id', 'Condition is required. Please select a condition for this category.');
+  }
+
+  const rawAspects: any = listing?.listing_json?.aspects;
+  const aspects: any = {};
+
+  if (rawAspects && typeof rawAspects === 'object' && !Array.isArray(rawAspects)) {
+    for (const [k, v] of Object.entries(rawAspects)) {
+      const key = String(k || '').trim();
+      if (!key) continue;
+      if (!Array.isArray(v)) continue;
+
+      const vals = (v as any[])
+        .filter((x) => typeof x === 'string' || typeof x === 'number')
+        .map((x) => String(x).trim())
+        .filter((x) => x.length > 0);
+
+      if (vals.length) aspects[key] = vals;
+    }
+  }
+
+  const invProduct: any = {
+    title,
+    description,
+    imageUrls,
+    ...(Object.keys(aspects).length ? { aspects } : {}),
+    conditionId: conditionIdNum,
+  };
+
+  if (!invProduct.title) throw failGuard('inventory.product.title', 'Title is required for publish.');
+  if (!invProduct.description) throw failGuard('inventory.product.description', 'Description is required for publish.');
+  if (!Array.isArray(invProduct.imageUrls) || invProduct.imageUrls.length === 0) throw failGuard('inventory.product.imageUrls', 'At least one hosted image is required for publish.');
+
   const invPayload: any = {
     availability: { shipToLocationAvailability: { quantity: 1 } },
-    product: {
-      title,
-      description,
-      imageUrls,
-      aspects: {}, // TODO: map later
-      ...(Number.isFinite(conditionIdNum) && conditionIdNum > 0 ? { conditionId: conditionIdNum } : {}),
-    },
+    product: invProduct,
   };
 
   const r1 = await ebayFetch(
@@ -597,6 +654,7 @@ async function publishToEbayInventoryApi(opts: {
 
     const firstErr = j?.errors?.[0] || {};
     console.error('[ebay] inventory_item PUT failed', {
+      operation: 'inventory',
       requestId,
       status: r1.status,
       errorId: firstErr.errorId,
@@ -629,12 +687,12 @@ async function publishToEbayInventoryApi(opts: {
 
   const offerPayload: any = {
     sku,
-    marketplaceId,
+    marketplaceId: safeMarketplaceId,
     format: 'FIXED_PRICE',
     listingDescription: description,
     availableQuantity: 1,
     categoryId,
-    ...(Number.isFinite(conditionIdNum) && conditionIdNum > 0 ? { conditionId: conditionIdNum } : {}),
+    conditionId: conditionIdNum,
     ...(conditionDescription && conditionDescription.length <= 1000 ? { conditionDescription } : {}),
     listingPolicies: {
       paymentPolicyId,
@@ -649,8 +707,40 @@ async function publishToEbayInventoryApi(opts: {
   const country = String(process.env.EBAY_ITEM_COUNTRY || 'US').trim();
   const postalCode = String(process.env.EBAY_ITEM_POSTAL_CODE || '10001').trim();
 
-  offerPayload.merchantLocationKey = merchantLocationKey;
+  offerPayload.merchantLocationKey = safeMerchantLocationKey;
   offerPayload.location = { country, postalCode };
+
+  // Offer payload hardening (structural guard)
+  if (!offerPayload.sku) throw failGuard('offer.sku', 'Unable to publish. Please review the listing and try again.');
+  if (offerPayload.marketplaceId !== 'EBAY_US') throw failGuard('offer.marketplaceId', 'Unable to publish. Please review the listing and try again.');
+  if (offerPayload.format !== 'FIXED_PRICE') throw failGuard('offer.format', 'Unable to publish. Please review the listing and try again.');
+  if (typeof offerPayload.listingDescription !== 'string' || !offerPayload.listingDescription.trim()) {
+    throw failGuard('offer.listingDescription', 'Unable to publish. Please review the listing and try again.');
+  }
+  if (!Number.isInteger(offerPayload.availableQuantity) || offerPayload.availableQuantity < 1) {
+    throw failGuard('offer.availableQuantity', 'Unable to publish. Please review the listing and try again.');
+  }
+  if (typeof offerPayload.categoryId !== 'string' || !/^\d+$/.test(offerPayload.categoryId)) {
+    throw failGuard('offer.categoryId', 'Unable to publish. Please review the listing and try again.');
+  }
+  if (!offerPayload.merchantLocationKey) {
+    throw failGuard('offer.merchantLocationKey', 'Merchant location is not configured for this eBay account.');
+  }
+
+  const lp = offerPayload.listingPolicies || {};
+  if (!String(lp.paymentPolicyId || '').trim()) throw failGuard('offer.listingPolicies.paymentPolicyId', 'Missing required policy IDs (payment/return/shipping). Save draft and retry.');
+  if (!String(lp.returnPolicyId || '').trim()) throw failGuard('offer.listingPolicies.returnPolicyId', 'Missing required policy IDs (payment/return/shipping). Save draft and retry.');
+  if (!String(lp.fulfillmentPolicyId || '').trim()) throw failGuard('offer.listingPolicies.fulfillmentPolicyId', 'Missing required policy IDs (payment/return/shipping). Save draft and retry.');
+
+  const pv = Number.parseFloat(String(offerPayload.pricingSummary?.price?.value ?? ''));
+  const pc = String(offerPayload.pricingSummary?.price?.currency || '').trim();
+  if (!Number.isFinite(pv) || pv <= 0) throw failGuard('offer.pricingSummary.price.value', 'Invalid price for publish.');
+  if (!/^[0-9]+\.[0-9]{2}$/.test(String(offerPayload.pricingSummary?.price?.value || ''))) {
+    throw failGuard('offer.pricingSummary.price.value', 'Invalid price for publish.');
+  }
+  if (!pc) throw failGuard('offer.pricingSummary.price.currency', 'Currency is required for publish.');
+  if (offerPayload.marketplaceId === 'EBAY_US' && pc !== 'USD') throw failGuard('offer.pricingSummary.price.currency', 'Currency must be USD for this marketplace.');
+
 
   const r2 = await ebayFetch(
     offerUrl,
@@ -672,6 +762,7 @@ async function publishToEbayInventoryApi(opts: {
   if (!r2.ok) {
     const firstErr = offerJson?.errors?.[0] || {};
     console.error('[ebay] offer POST failed', {
+      operation: 'offer',
       requestId,
       status: r2.status,
       errorId: firstErr.errorId,
@@ -718,6 +809,7 @@ async function publishToEbayInventoryApi(opts: {
   if (!r3.ok) {
     const firstErr = pubJson?.errors?.[0] || {};
     console.error('[ebay] publish POST failed', {
+      operation: 'publish',
       requestId,
       status: r3.status,
       errorId: firstErr.errorId,
@@ -1128,14 +1220,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const env = String(process.env.EBAY_ENV || 'production').toLowerCase() as 'production' | 'sandbox';
       const accessToken = await getValidEbayToken(String((listing as any).workspace_id), env);
 
-      const merchantLocationKey = "mainWarehouse";
+      const merchantLocationKey = String("mainWarehouse").trim();
+      if (!merchantLocationKey) {
+        console.error('[publish] missing merchantLocationKey', {
+          listing_id: (listing as any).id,
+          workspace_id: (listing as any).workspace_id,
+          requestId,
+        });
+        await persistPublishFailed({
+          message: 'Merchant location is not configured for this eBay account.',
+          errorId: null,
+          stage: 'validation',
+        });
+        return respond(res, 400, {
+          ok: false,
+          requestId,
+          error: 'Merchant location is not configured for this eBay account.',
+        });
+      }
 
-      await ensureMerchantLocation({
+      const locationResult = await ensureMerchantLocation({
         env,
         accessToken,
         merchantLocationKey,
         requestId,
       });
+
+      if (!locationResult?.merchantLocationKey) {
+        console.error('[publish] merchant location not configured', {
+          listing_id: (listing as any).id,
+          workspace_id: (listing as any).workspace_id,
+          requestId,
+        });
+        await persistPublishFailed({
+          message: 'Merchant location is not configured for this eBay account.',
+          errorId: null,
+          stage: 'validation',
+        });
+        return respond(res, 400, {
+          ok: false,
+          requestId,
+          error: 'Merchant location is not configured for this eBay account.',
+        });
+      }
 
       // 6) Publish
       const EBAY_MARKETPLACE_ID = String(process.env.EBAY_MARKETPLACE_ID || 'EBAY_US');
@@ -1178,6 +1305,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ebay_listing_url: publishResult.ebayListingUrl,
       });
     } catch (err: any) {
+      // Publish-time guard failures: return 400 with user-safe message (no eBay call made)
+      if (err?.code === 'PUBLISH_GUARD') {
+        const field = String(err?.field || 'unknown');
+        console.error('[publish] payload guard blocked eBay call', {
+          requestId,
+          listing_id: (listing as any).id,
+          workspace_id: (listing as any).workspace_id,
+          field,
+        });
+
+        await persistPublishFailed({ message: String(err?.message || 'Publish validation failed.'), errorId: null, stage: 'validation' });
+
+        return respond(res, 400, {
+          ok: false,
+          requestId,
+          error: String(err?.message || 'Publish validation failed.'),
+        });
+      }
+
       const msg = String(err?.message || 'Publish failed');
 
       const ebayPayload = err?.ebayPayload || null;
