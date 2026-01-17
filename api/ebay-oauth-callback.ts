@@ -59,6 +59,7 @@ async function exchangeCodeForTokens(args: { env: string; clientId: string; clie
 
   if (!resp.ok) {
     const msg = json?.error_description || json?.error || text || 'Token exchange failed';
+    // Do not include authorization code/tokens; msg is safe.
     throw new Error(`eBay token exchange failed: ${msg}`);
   }
 
@@ -72,6 +73,10 @@ async function exchangeCodeForTokens(args: { env: string; clientId: string; clie
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let workspaceIdForSentry: string | null = null;
+  let envForSentry: string | null = null;
+
   try {
     if (req.method !== 'GET') return res.status(405).send('Method not allowed');
 
@@ -109,18 +114,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const EBAY_ENV = String(payload.env || process.env.EBAY_ENV || 'production').toLowerCase();
+    workspaceIdForSentry = typeof payload?.w === 'string' ? payload.w : null;
+    envForSentry = EBAY_ENV;
     const CLIENT_ID = mustEnv('EBAY_CLIENT_ID');
     const CLIENT_SECRET = mustEnv('EBAY_CLIENT_SECRET');
     const RUNAME = mustEnv('EBAY_REDIRECT_URI');
     const SCOPES_STR = mustEnv('EBAY_OAUTH_SCOPES');
 
-    const tokens = await exchangeCodeForTokens({
-      env: EBAY_ENV,
-      clientId: CLIENT_ID,
-      clientSecret: CLIENT_SECRET,
-      runame: RUNAME,
-      code,
-    });
+    let tokens: {
+      access_token: string;
+      expires_in: number;
+      refresh_token: string;
+      refresh_token_expires_in: number;
+      token_type: string;
+    };
+
+    try {
+      tokens = await exchangeCodeForTokens({
+        env: EBAY_ENV,
+        clientId: CLIENT_ID,
+        clientSecret: CLIENT_SECRET,
+        runame: RUNAME,
+        code,
+      });
+    } catch (e: any) {
+      sentryCaptureException(e, {
+        operation: 'oauth',
+        requestId,
+        workspace_id: workspaceIdForSentry,
+        tags: { operation: 'oauth', workspace_id: workspaceIdForSentry || '' },
+        extras: { requestId, env: EBAY_ENV, stage: 'token_exchange' },
+      });
+      throw e;
+    }
 
     const now = Date.now();
     const accessExpiresAt = new Date(now + (Number(tokens.expires_in) || 0) * 1000).toISOString();
@@ -148,16 +174,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('marketplace_connections')
       .upsert(upsertPayload, { onConflict: 'workspace_id,user_id,marketplace,environment' });
 
-    if (error) throw error;
+    if (error) {
+      sentryCaptureException(error, {
+        operation: 'oauth',
+        requestId,
+        workspace_id: workspaceIdForSentry,
+        tags: { operation: 'oauth', workspace_id: workspaceIdForSentry || '' },
+        extras: { requestId, env: envForSentry, stage: 'db_persist' },
+      });
+      throw error;
+    }
 
     res.status(302).setHeader('Location', payload.r || '/settings?ebay=connected');
     return res.end();
   } catch (err: any) {
+    // OAuth errors: capture without secrets (no code/tokens/headers).
     sentryCaptureException(err, {
-      operation: 'ebay_oauth_callback',
-      workspace_id: String((req.query as any)?.w || '' || ''),
-      extras: { message: String(err?.message || ''), status: 302 },
+      operation: 'oauth',
+      requestId,
+      workspace_id: workspaceIdForSentry,
+      tags: {
+        operation: 'oauth',
+        workspace_id: workspaceIdForSentry || '',
+      },
+      extras: {
+        requestId,
+        env: envForSentry || String(process.env.EBAY_ENV || 'production').toLowerCase(),
+      },
     });
+
     const msg = encodeURIComponent(err?.message || 'OAuth failed');
     res.status(302).setHeader('Location', `/settings?ebay=error&message=${msg}`);
     return res.end();
