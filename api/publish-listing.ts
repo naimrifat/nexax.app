@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getValidEbayToken } from "../lib/ebay/ebay-token-manager.js";
 import { ensureMerchantLocation } from "../lib/ebay/ebay-merchant-location.js";
 import { ebayFetch, EbayHttpError } from "../lib/ebay/ebay-http.js";
-import { sentryCaptureException } from "../lib/sentry.js";
+import { sentryCaptureException, sentryCaptureMessage } from "../lib/sentry.js";
 
 export const config = {
   api: { bodyParser: { sizeLimit: '2mb' } },
@@ -901,12 +901,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const user = authData?.user;
 
     if (authErr || !user) {
-      sentryCaptureException(new Error('Unauthorized'), {
-        operation: 'publish',
+      // Auth/validation errors are expected; don't treat as exceptions.
+      sentryCaptureMessage('publish unauthorized', 'info', {
+        operation: 'validation',
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
-        extras: { code: 'UNAUTHORIZED', message: 'Unauthorized' },
       });
       return respond(res, 401, { ok: false, requestId, code: 'UNAUTHORIZED', message: 'Unauthorized', error: 'Unauthorized' });
     }
@@ -916,12 +916,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const listingId = body.listing_id || body.listingId || body.id;
     listingIdForSentry = listingId ? String(listingId) : null;
     if (!listingId) {
-      sentryCaptureException(new Error('Validation failed'), {
-        operation: 'publish',
+      sentryCaptureMessage('publish validation error', 'info', {
+        operation: 'validation',
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
-        extras: { code: 'VALIDATION_ERROR', message: 'Missing listing_id' },
+        extras: { code: 'VALIDATION_ERROR' },
       });
       return respond(res, 400, {
         ok: false,
@@ -967,12 +967,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .single();
 
     if (listingErr || !listing) {
-      sentryCaptureException(new Error('Listing not found'), {
-        operation: 'publish',
+      sentryCaptureMessage('publish listing not found', 'info', {
+        operation: 'validation',
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
-        extras: { code: 'NOT_FOUND', message: 'Listing not found' },
+        extras: { code: 'NOT_FOUND' },
       });
       return respond(res, 404, { ok: false, requestId, code: 'NOT_FOUND', message: 'Listing not found', error: 'Listing not found' });
     }
@@ -980,12 +980,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     workspaceIdForSentry = (listing as any).workspace_id ? String((listing as any).workspace_id) : null;
  
     if ((listing as any).created_by !== user.id) {
-      sentryCaptureException(new Error('Forbidden'), {
-        operation: 'publish',
+      sentryCaptureMessage('publish forbidden', 'info', {
+        operation: 'validation',
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
-        extras: { code: 'FORBIDDEN', message: 'Forbidden' },
+        extras: { code: 'FORBIDDEN' },
       });
       return respond(res, 403, { ok: false, requestId, code: 'FORBIDDEN', message: 'Forbidden', error: 'Forbidden' });
     }
@@ -993,12 +993,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     listingRowForFailure = listing as any;
 
     if (((listing as any).marketplace || 'ebay').toLowerCase() !== 'ebay') {
-      sentryCaptureException(new Error('Validation failed'), {
-        operation: 'publish',
+      sentryCaptureMessage('publish validation error', 'info', {
+        operation: 'validation',
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
-        extras: { code: 'VALIDATION_ERROR', message: 'Only eBay publishing is supported currently' },
+        extras: { code: 'VALIDATION_ERROR' },
       });
       return respond(res, 400, {
         ok: false,
@@ -1026,12 +1026,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (status === 'publishing') {
-      sentryCaptureException(new Error('Publishing in progress'), {
-        operation: 'publish',
+      sentryCaptureMessage('publish in progress', 'info', {
+        operation: 'validation',
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
-        extras: { code: 'PUBLISH_IN_PROGRESS', message: 'Publishing in progress. Please wait and refresh.' },
+        extras: { code: 'PUBLISH_IN_PROGRESS' },
       });
       return respond(res, 409, {
         ok: false,
@@ -1047,6 +1047,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Sanitize listing_json for eBay payloads (payload-only; do not persist to DB)
     const { cleaned: cleanedListingJson, removed: sanitizedRemoved } = sanitizeListingForEbay(listingJson);
+    const sanitizedRemovedCount = sanitizedRemoved.length;
 
     if (sanitizedRemoved.length > 0) {
       console.log('[publish] sanitized listing', {
@@ -1315,6 +1316,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           field,
         });
 
+        // Guards are user-driven validation issues; do not send as exceptions.
+        // Optional: emit an info-level breadcrumb/message in Sentry for visibility.
+        sentryCaptureMessage('publish guard blocked request', 'info', {
+          operation: 'validation',
+          workspace_id: String((listing as any).workspace_id || ''),
+          listing_id: String((listing as any).id || ''),
+          tags: { field },
+          extras: { requestId, removedCount: sanitizedRemovedCount },
+        });
+
         await persistPublishFailed({ message: String(err?.message || 'Publish validation failed.'), errorId: null, stage: 'validation' });
 
         return respond(res, 400, {
@@ -1366,9 +1377,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
+        tags: {
+          operation: 'publish',
+          workspace_id: workspaceIdForSentry || '',
+          listing_id: listingIdForSentry || '',
+        },
         extras: {
           code: 'EBAY_RECONNECT_REQUIRED',
-          message: 'eBay connection expired. Please reconnect eBay.',
+          requestId,
+          removedCount: sanitizedRemovedCount,
         },
       });
 
@@ -1415,15 +1432,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Log raw payload server-side only
       console.error('[publish] eBay error payload', { requestId, statusCode, ebayErrorId, ebayPayload });
 
+      // eBay upstream error: capture exception with minimal safe context.
       sentryCaptureException(new Error('eBay publish error'), {
         operation: 'publish',
         requestId,
         listing_id: listingIdForSentry,
         workspace_id: workspaceIdForSentry,
+        tags: {
+          ebay_error_id: ebayErrorId || '',
+          operation: 'publish',
+          workspace_id: workspaceIdForSentry || '',
+          listing_id: listingIdForSentry || '',
+        },
         extras: {
+          requestId,
+          removedCount: sanitizedRemovedCount,
           httpStatus,
-          message: safe,
-          ebayErrorId: ebayErrorId || undefined,
+          ebay_error_id: ebayErrorId || undefined,
           hint: err?.hint || undefined,
         },
       });
@@ -1438,12 +1463,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    sentryCaptureException(new Error(msg || 'Unexpected server error'), {
+      sentryCaptureException(new Error(msg || 'Unexpected server error'), {
       operation: 'publish',
       requestId,
       listing_id: listingIdForSentry,
       workspace_id: workspaceIdForSentry,
-      extras: { code: 'UNEXPECTED', message: msg || 'Unexpected server error.' },
+      tags: {
+        operation: 'publish',
+        workspace_id: workspaceIdForSentry || '',
+        listing_id: listingIdForSentry || '',
+      },
+      extras: {
+        requestId,
+        removedCount: sanitizedRemovedCount,
+      },
     });
     await persistPublishFailed({ message: msg || 'Unexpected server error.', errorId: requestId, stage: 'publish' });
 
