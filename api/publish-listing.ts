@@ -67,10 +67,13 @@ function extractEbayRequestId(payload: any): string | null {
   return null;
 }
 
-function sanitizeListingForEbay(listingJson: any): {
+function sanitizeListingForEbay(listingJson: unknown): {
   cleaned: any;
   removed: { path: string; reason: string }[];
 } {
+  // NOTE: This sanitizer is payload-only. It intentionally does NOT persist changes back to DB.
+  // Use `any` only inside this function to keep the rest of the file type-safe.
+
   const removed: { path: string; reason: string }[] = [];
 
   const addRemoved = (path: string, reason: string) => {
@@ -83,46 +86,67 @@ function sanitizeListingForEbay(listingJson: any): {
     return proto === Object.prototype || proto === null;
   };
 
-  const cleanStringField = (obj: any, key: string, path: string) => {
+  const cleanStringField = (obj: any, key: string, path: string, opts?: { coerceNumber?: boolean }) => {
     const v = obj?.[key];
     if (v == null) return;
-    if (typeof v !== 'string') {
-      addRemoved(path, 'non-string');
-      delete obj[key];
+
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (!t) {
+        addRemoved(path, 'empty');
+        delete obj[key];
+        return;
+      }
+      obj[key] = t;
       return;
     }
-    const t = v.trim();
-    if (!t) {
-      addRemoved(path, 'empty');
-      delete obj[key];
+
+    // Only coerce non-string primitives when explicitly safe.
+    if (opts?.coerceNumber && typeof v === 'number' && Number.isFinite(v)) {
+      const t = String(v).trim();
+      if (!t) {
+        addRemoved(path, 'empty');
+        delete obj[key];
+        return;
+      }
+      obj[key] = t;
       return;
     }
-    obj[key] = t;
+
+    addRemoved(path, 'non-string');
+    delete obj[key];
   };
 
   const cleanPolicyId = (obj: any, key: string, path: string) => {
     const v = obj?.[key];
     if (v == null) return;
-    if (typeof v !== 'string') {
+
+    // IDs are safe to stringify when primitive.
+    if (typeof v !== 'string' && typeof v !== 'number') {
       addRemoved(path, 'non-string');
       delete obj[key];
       return;
     }
-    const t = v.trim();
+
+    const t = String(v).trim();
     if (!t) {
       addRemoved(path, 'empty');
       delete obj[key];
       return;
     }
+
     obj[key] = t;
   };
 
-  const cleanStringArray = (value: any, path: string): string[] => {
+  const cleanStringArray = (value: any, path: string, opts?: { coercePrimitives?: boolean }): string[] => {
     if (!Array.isArray(value)) {
       addRemoved(path, 'not-array');
       return [];
     }
+
+    const coerce = opts?.coercePrimitives !== false;
     const out: string[] = [];
+
     for (let i = 0; i < value.length; i++) {
       const v = value[i];
       if (typeof v === 'string') {
@@ -134,7 +158,8 @@ function sanitizeListingForEbay(listingJson: any): {
         out.push(t);
         continue;
       }
-      if (typeof v === 'number' || typeof v === 'boolean') {
+
+      if (coerce && typeof v === 'number') {
         const t = String(v).trim();
         if (!t) {
           addRemoved(`${path}[${i}]`, 'empty');
@@ -143,20 +168,21 @@ function sanitizeListingForEbay(listingJson: any): {
         out.push(t);
         continue;
       }
+
       addRemoved(`${path}[${i}]`, 'non-string');
     }
+
     return out;
   };
 
   const cleanUrlArray = (value: any, path: string): string[] => {
-    const raw = cleanStringArray(value, path);
+    const raw = cleanStringArray(value, path, { coercePrimitives: false });
     const seen = new Set<string>();
     const out: string[] = [];
 
     for (let i = 0; i < raw.length; i++) {
       const u = raw[i];
-      const lower = u.toLowerCase();
-      if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+      if (!isHttpUrl(u)) {
         addRemoved(`${path}[${i}]`, 'invalid-url');
         continue;
       }
@@ -178,9 +204,14 @@ function sanitizeListingForEbay(listingJson: any): {
   cleanStringField(cleaned, 'description', 'description');
   cleanStringField(cleaned, 'brand', 'brand');
   cleanStringField(cleaned, 'model', 'model');
-  cleanStringField(cleaned, 'sku', 'sku');
+  cleanStringField(cleaned, 'sku', 'sku', { coerceNumber: true });
   cleanStringField(cleaned, 'condition_name', 'condition_name');
   cleanStringField(cleaned, 'condition_description', 'condition_description');
+
+  // Also trim the canonical eBay policy keys if present in listing_json
+  cleanPolicyId(cleaned, 'ebay_payment_policy_id', 'ebay_payment_policy_id');
+  cleanPolicyId(cleaned, 'ebay_return_policy_id', 'ebay_return_policy_id');
+  cleanPolicyId(cleaned, 'ebay_fulfillment_policy_id', 'ebay_fulfillment_policy_id');
 
   // Price
   if (cleaned.price != null) {
@@ -189,6 +220,7 @@ function sanitizeListingForEbay(listingJson: any): {
     if (Number.isFinite(n) && n > 0) {
       cleaned.price = Math.round(n * 100) / 100;
     } else {
+      // Requirement: do not change value, just record invalid.
       addRemoved('price', 'invalid price');
     }
   }
@@ -227,7 +259,8 @@ function sanitizeListingForEbay(listingJson: any): {
   }
 
   if (cleaned.condition_id != null) {
-    const n = typeof cleaned.condition_id === 'number' ? cleaned.condition_id : Number(String(cleaned.condition_id).trim());
+    const raw = cleaned.condition_id;
+    const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
     if (Number.isFinite(n) && n > 0) {
       cleaned.condition_id = n;
     } else {
@@ -251,17 +284,16 @@ function sanitizeListingForEbay(listingJson: any): {
       }
 
       if (Array.isArray(rawVal)) {
-        const vals = cleanStringArray(rawVal, `aspects.${key}`);
-        const trimmed = vals.map((v) => v.trim()).filter(Boolean);
-        if (!trimmed.length) {
+        const vals = cleanStringArray(rawVal, `aspects.${key}`, { coercePrimitives: true });
+        if (!vals.length) {
           addRemoved(`aspects.${key}`, 'empty');
           continue;
         }
-        next[key] = trimmed;
+        next[key] = vals;
         continue;
       }
 
-      if (typeof rawVal === 'string' || typeof rawVal === 'number' || typeof rawVal === 'boolean') {
+      if (typeof rawVal === 'string' || typeof rawVal === 'number') {
         const t = String(rawVal).trim();
         if (!t) {
           addRemoved(`aspects.${key}`, 'empty');
@@ -277,8 +309,55 @@ function sanitizeListingForEbay(listingJson: any): {
     cleaned.aspects = next;
   }
 
-  // Item specifics array: [{ name, value }]
-  if (Array.isArray(cleaned.item_specifics)) {
+  // Item specifics: support either object map or array
+  // - object map: { "Brand": "Nike" }
+  // - array: [{ name, value }]
+  if (isPlainObject(cleaned.item_specifics)) {
+    const next: any = {};
+    for (const [rawKey, rawVal] of Object.entries(cleaned.item_specifics)) {
+      const key = String(rawKey || '').trim();
+      if (!key) {
+        addRemoved('item_specifics.<key>', 'empty-key');
+        continue;
+      }
+
+      if (Array.isArray(rawVal)) {
+        const vals = cleanStringArray(rawVal, `item_specifics.${key}`);
+        if (!vals.length) {
+          addRemoved(`item_specifics.${key}`, 'empty');
+          continue;
+        }
+        next[key] = vals;
+        continue;
+      }
+
+      if (typeof rawVal === 'string') {
+        const t = rawVal.trim();
+        if (!t) {
+          addRemoved(`item_specifics.${key}`, 'empty');
+          continue;
+        }
+        next[key] = t;
+        continue;
+      }
+
+      // Only coerce primitives to string when safe: numbers/bools are safe here.
+      if (typeof rawVal === 'number') {
+        const t = String(rawVal).trim();
+        if (!t) {
+          addRemoved(`item_specifics.${key}`, 'empty');
+          continue;
+        }
+        next[key] = t;
+        continue;
+      }
+
+
+      addRemoved(`item_specifics.${key}`, 'invalid');
+    }
+
+    cleaned.item_specifics = next;
+  } else if (Array.isArray(cleaned.item_specifics)) {
     const next: any[] = [];
     for (let i = 0; i < cleaned.item_specifics.length; i++) {
       const s = cleaned.item_specifics[i];
@@ -292,16 +371,25 @@ function sanitizeListingForEbay(listingJson: any): {
 
       if (Array.isArray(rawVal)) {
         const vals = cleanStringArray(rawVal, `item_specifics.${name}`);
-        const trimmed = vals.map((v) => v.trim()).filter(Boolean);
-        if (!trimmed.length) {
+        if (!vals.length) {
           addRemoved(`item_specifics.${name}`, 'empty');
           continue;
         }
-        next.push({ ...s, name, value: trimmed });
+        next.push({ ...s, name, value: vals });
         continue;
       }
 
-      if (typeof rawVal === 'string' || typeof rawVal === 'number' || typeof rawVal === 'boolean') {
+      if (typeof rawVal === 'string') {
+        const t = rawVal.trim();
+        if (!t) {
+          addRemoved(`item_specifics.${name}`, 'empty');
+          continue;
+        }
+        next.push({ ...s, name, value: t });
+        continue;
+      }
+
+      if (typeof rawVal === 'number') {
         const t = String(rawVal).trim();
         if (!t) {
           addRemoved(`item_specifics.${name}`, 'empty');
@@ -865,6 +953,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 4) Server-side validations (must run before any eBay calls)
     const listingJson: any = (listing as any).listing_json || {};
 
+    // Sanitize listing_json for eBay payloads (payload-only; do not persist to DB)
     const { cleaned: cleanedListingJson, removed: sanitizedRemoved } = sanitizeListingForEbay(listingJson);
 
     if (sanitizedRemoved.length > 0) {
@@ -872,25 +961,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         listing_id: (listing as any).id,
         removedCount: sanitizedRemoved.length,
       });
-      // Optional: log removed paths for debugging
+
+      // Optional debug: removed paths/reasons only (no secrets)
       console.log('[publish] sanitized removed', sanitizedRemoved);
     }
 
-    const rawImages = body?.images ?? body?.image_urls ?? (listing as any)?.images ?? [];
-    const incomingUrls = normalizeStringArray(rawImages);
-    const invalidImageUrls = incomingUrls.filter((u) => !isHttpUrl(u));
+    // Use sanitized images for the actual eBay payloads.
+    const rawImages =
+      body?.images ??
+      body?.image_urls ??
+      cleanedListingJson.images ??
+      cleanedListingJson.image_urls ??
+      (listing as any)?.images ??
+      [];
+
+    const incomingUrls = normalizeStringArray(rawImages).filter((u) => isHttpUrl(u));
+    const invalidImageUrls = normalizeStringArray(rawImages).filter((u) => !isHttpUrl(u));
 
     const missing: string[] = [];
 
-    const title = String((listing as any).title || '').trim();
-    const description = String((listing as any).description || '').trim();
-    const categoryId = String((listing as any).category_id || '').trim();
+    const title = String(cleanedListingJson.title ?? (listing as any).title ?? '').trim();
+    const description = String(cleanedListingJson.description ?? (listing as any).description ?? '').trim();
+    const categoryId = String(cleanedListingJson.category_id ?? (listing as any).category_id ?? '').trim();
 
     if (!title) missing.push('title');
     if (!description) missing.push('description');
     if (!categoryId) missing.push('category_id');
 
-    const price = (listing as any).price;
+    const price = cleanedListingJson.price ?? (listing as any).price;
     if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) missing.push('price');
 
     if (!incomingUrls.length || invalidImageUrls.length) missing.push('images');
@@ -1012,7 +1110,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Ensure we publish with the validated/derived values (policies + hosted images)
     const listingForPublish = {
       ...(listing as any),
-      images: incomingUrls,
+      title,
+      description,
+      category_id: categoryId,
+      price,
+      currency: String((listing as any).currency || 'USD'),
+      // Ensure the eBay request payload sees sanitized + hosted URLs.
+      images: Array.from(new Set(incomingUrls)),
       listing_json: cleanedListingJson,
       ebay_payment_policy_id: paymentPolicyId,
       ebay_return_policy_id: returnPolicyId,
