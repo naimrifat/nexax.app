@@ -1,5 +1,7 @@
 // lib/ebay-token-manager.ts
 import { createClient } from '@supabase/supabase-js';
+import { sentryCaptureException } from '../sentry.js';
+
 
 type EbayEnv = 'production' | 'sandbox';
 
@@ -52,24 +54,46 @@ async function refreshToken(params: {
   body.set('refresh_token', params.refreshToken);
   body.set('scope', mustEnv('EBAY_OAUTH_SCOPES'));
 
-  const res = await fetch(`${tokenHost(params.env)}/identity/v1/oauth2/token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization:
-        'Basic ' +
-        Buffer.from(
-          `${mustEnv('EBAY_CLIENT_ID')}:${mustEnv('EBAY_CLIENT_SECRET')}`
-        ).toString('base64'),
-    },
-    body,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${tokenHost(params.env)}/identity/v1/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization:
+          'Basic ' +
+          Buffer.from(`${mustEnv('EBAY_CLIENT_ID')}:${mustEnv('EBAY_CLIENT_SECRET')}`).toString('base64'),
+      },
+      body,
+    });
+  } catch (e: any) {
+    // Network errors only (no tokens)
+    sentryCaptureException(e, {
+      operation: 'token_refresh',
+      tags: { operation: 'token_refresh' },
+      extras: { error_type: 'network' },
+    });
+    throw e;
+  }
+
 
   const json = await res.json().catch(() => ({}));
 
   if (!res.ok) {
     const err = json?.error || 'refresh_failed';
     const desc = json?.error_description || 'Unknown refresh error';
+
+    const httpStatus = res.status;
+    const errorType = err === 'invalid_grant' ? 'invalid_grant' : 'unexpected_response';
+
+    // Capture refresh failure (no tokens)
+    // Note: workspace_id is added at the callsite where workspace context exists.
+    sentryCaptureException(new Error('eBay token refresh failed'), {
+      operation: 'token_refresh',
+      tags: { operation: 'token_refresh' },
+      extras: { httpStatus, error_type: errorType },
+    });
+
 
     if (err === 'invalid_grant') {
       if (params.connectionId) {
@@ -93,10 +117,11 @@ async function refreshToken(params: {
       });
     }
 
-    throw Object.assign(
-      new Error(`eBay token refresh failed: ${desc}`),
-      { code: 'EBAY_REFRESH_FAILED', statusCode: 502, details: json }
-    );
+    throw Object.assign(new Error(`eBay token refresh failed: ${desc}`), {
+      code: 'EBAY_REFRESH_FAILED',
+      statusCode: 502,
+      details: json,
+    });
   }
 
   return json as {
@@ -190,7 +215,33 @@ export async function getValidEbayToken(
       });
     }
 
-    const refreshed = await refreshToken({ env, refreshToken: refreshTok, connectionId: data.id });
+    let refreshed: { access_token: string; expires_in: number; refresh_token?: string };
+    try {
+      refreshed = await refreshToken({ env, refreshToken: refreshTok, connectionId: data.id });
+    } catch (e: any) {
+      // Add workspace context at callsite (no tokens)
+      sentryCaptureException(e, {
+        operation: 'token_refresh',
+        workspace_id: workspaceId,
+        tags: { operation: 'token_refresh', workspace_id: workspaceId },
+        extras: { error_type: String(e?.code || 'refresh_failed') },
+      });
+      throw e;
+    }
+
+    if (!refreshed?.access_token) {
+      const e: any = new Error('eBay token refresh failed: unexpected response');
+      e.code = 'EBAY_REFRESH_FAILED';
+      e.statusCode = 502;
+      sentryCaptureException(e, {
+        operation: 'token_refresh',
+        workspace_id: workspaceId,
+        tags: { operation: 'token_refresh', workspace_id: workspaceId },
+        extras: { error_type: 'unexpected_response' },
+      });
+      throw e;
+    }
+
 
     const update: any = {
       access_token: refreshed.access_token,
@@ -205,7 +256,15 @@ export async function getValidEbayToken(
         connectionId: data.id,
         error: upErr.message,
       });
+
+      sentryCaptureException(upErr, {
+        operation: 'token_refresh',
+        workspace_id: workspaceId,
+        tags: { operation: 'token_refresh', workspace_id: workspaceId },
+        extras: { error_type: 'db_persist' },
+      });
     }
+
 
     return refreshed.access_token;
   } finally {
