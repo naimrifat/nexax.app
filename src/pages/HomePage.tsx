@@ -7,29 +7,7 @@ import { compressForUpload } from '../utils/compressImage';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 
-/* -------------------------------------------------------
-   Listing style settings (optional)
-------------------------------------------------------- */
-type ListingStyleSettings = {
-  titleExample?: string;
-  titleRules?: string;
-  descriptionExample?: string;
-  descriptionRules?: string;
-  keywordsRules?: string;
-  extraInstructions?: string;
-};
 
-function loadListingStyleSettings(): ListingStyleSettings | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem('listingStyleSettings');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed ?? null;
-  } catch {
-    return null;
-  }
-}
 
 /* -------------------------------------------------------
    Size / Size Type dependency helpers (uses sizeMaps.ts)
@@ -698,17 +676,12 @@ export default function HomePage() {
 
       setStatus('Images uploaded! Analyzing with AI...');
 
-      // Load listing style settings (if any)
-      const listingStyle = loadListingStyleSettings();
-
       const analyzePayload: any = {
         session_id: Date.now().toString(),
         images: uploadedUrls,
+        workspace_id: workspaceId,
       };
 
-      if (listingStyle) {
-        analyzePayload.listing_style = listingStyle;
-      }
 
       const analysisResponse = await fetch('/api/analyze-listing', {
         method: 'POST',
