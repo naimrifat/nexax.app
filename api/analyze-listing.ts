@@ -1,5 +1,6 @@
 import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from "../lib/prompts/reconcilePrompt.js";
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
 
 export const config = {
   api: { bodyParser: { sizeLimit: '50mb' } },
@@ -37,6 +38,59 @@ function normalizeStringArray(input: any): string[] {
     .map((v) => v.trim())
     .filter((v) => v.length > 0);
 }
+
+function getEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
+}
+
+function clipInstruction(v: unknown, max: number, label: string): string {
+  const s = String(v ?? '').trim();
+  if (s.length <= max) return s;
+  console.warn('[gen] listing style truncated', { field: label, max });
+  return s.slice(0, max);
+}
+
+async function fetchWorkspaceListingStyle(params: {
+  authHeader: string;
+  workspaceId: string;
+}): Promise<
+  | {
+      enabled: boolean;
+      title_instructions: string;
+      description_instructions: string;
+      extra_rules: string;
+    }
+  | null
+> {
+  const wsId = String(params.workspaceId || '').trim();
+  if (!wsId) return null;
+
+  // Use user-scoped client to respect RLS.
+  const client = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_ANON_KEY'), {
+    global: { headers: params.authHeader ? { Authorization: params.authHeader } : {} },
+    auth: { persistSession: false },
+  });
+
+  const q = await client
+    .from('workspace_listing_style')
+    .select('enabled,title_instructions,description_instructions,extra_rules')
+    .eq('workspace_id', wsId)
+    .maybeSingle();
+
+  if (q.error) throw q.error;
+  const row: any = q.data || null;
+  if (!row) return null;
+
+  return {
+    enabled: Boolean(row.enabled),
+    title_instructions: String(row.title_instructions || ''),
+    description_instructions: String(row.description_instructions || ''),
+    extra_rules: String(row.extra_rules || ''),
+  };
+}
+
 
 /**
  * Cloudinary optimization for vision requests:
@@ -428,7 +482,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const body: any = req.body || {};
-    const { session_id, listing_style } = body;
+    const { session_id } = body;
+
+    // Resolve workspace_id for style settings (optional)
+    const workspace_id = String(body.workspace_id || body.workspaceId || '').trim();
+    const authHeader = String(req.headers.authorization || '').trim();
 
     // Normalize images from common keys (be permissive, validate strictly)
     const rawImages = body.images ?? body.image_urls ?? [];
@@ -498,33 +556,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     -----------------------------------------*/
 
     // Build seller-style instruction block for the vision model
+    // IMPORTANT: only apply workspace settings when enabled === true.
     let listingStyleInstructions = '';
-    if (listing_style && typeof listing_style === 'object') {
-      const {
-        titleExample,
-        titleRules,
-        descriptionExample,
-        descriptionRules,
-        keywordsRules,
-        extraInstructions,
-      } = listing_style as any;
 
-      const lines: string[] = [];
+    try {
+      if (workspace_id && authHeader) {
+        const wsStyle = await fetchWorkspaceListingStyle({ authHeader, workspaceId: workspace_id });
+        if (wsStyle?.enabled) {
+          console.log('[gen] using listing style', { workspace_id, enabled: true });
 
-      lines.push(
-        'The seller has provided custom instructions for how the listing should be written.',
-        'When you generate the "title", "description", and "keywords" fields in the JSON, follow these seller instructions as long as they do not contradict the actual item details in the photos, eBay marketplace rules, or the JSON structure described below.'
-      );
+          const title = clipInstruction(wsStyle.title_instructions, 800, 'title_instructions');
+          const desc = clipInstruction(wsStyle.description_instructions, 1200, 'description_instructions');
+          const extra = clipInstruction(wsStyle.extra_rules, 800, 'extra_rules');
 
-      if (titleExample) lines.push('\nExample title:', String(titleExample));
-      if (titleRules) lines.push('\nTitle rules:', String(titleRules));
-      if (descriptionExample) lines.push('\nExample description:', String(descriptionExample));
-      if (descriptionRules) lines.push('\nDescription rules:', String(descriptionRules));
-      if (keywordsRules) lines.push('\nKeyword rules:', String(keywordsRules));
-      if (extraInstructions) lines.push('\nAdditional instructions:', String(extraInstructions));
+          if (title || desc || extra) {
+            const lines: string[] = [];
+            lines.push('STYLE (apply ONLY to writing style/structure; never invent facts; never include secrets):');
 
-      listingStyleInstructions = lines.join('\n');
+            if (title) lines.push('STYLE_TITLE_INSTRUCTIONS:\n' + title);
+            if (desc) lines.push('STYLE_DESCRIPTION_INSTRUCTIONS:\n' + desc);
+            if (extra) lines.push('STYLE_EXTRA_RULES:\n' + extra);
+
+            listingStyleInstructions = lines.join('\n\n');
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error('[gen] failed to load listing style', { requestId, workspace_id, message: String(e?.message || '') });
     }
+
 
     const vision = await callOpenAIChat({
       model: 'gpt-5.1',
