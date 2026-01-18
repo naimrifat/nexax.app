@@ -53,7 +53,7 @@ function clipInstruction(v: unknown, max: number, label: string): string {
 }
 
 async function fetchWorkspaceListingStyle(params: {
-  authHeader: string;
+  userClient: any;
   workspaceId: string;
 }): Promise<
   | {
@@ -67,13 +67,7 @@ async function fetchWorkspaceListingStyle(params: {
   const wsId = String(params.workspaceId || '').trim();
   if (!wsId) return null;
 
-  // Use user-scoped client to respect RLS.
-  const client = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_ANON_KEY'), {
-    global: { headers: params.authHeader ? { Authorization: params.authHeader } : {} },
-    auth: { persistSession: false },
-  });
-
-  const q = await client
+  const q = await params.userClient
     .from('workspace_listing_style')
     .select('enabled,title_instructions,description_instructions,extra_rules')
     .eq('workspace_id', wsId)
@@ -488,6 +482,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const workspace_id = String(body.workspace_id || body.workspaceId || '').trim();
     const authHeader = String(req.headers.authorization || '').trim();
 
+    // Tenancy guard: require auth + verify workspace ownership
+    if (!workspace_id) {
+      return res.status(400).json({ error: 'Missing workspace_id', requestId });
+    }
+
+    if (!authHeader) {
+      return res.status(401).json({ error: 'Unauthorized', requestId });
+    }
+
+    const userClient = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_ANON_KEY'), {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false },
+    });
+
+    const serviceClient = createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'), {
+      auth: { persistSession: false },
+    });
+
+    const { data: authData, error: authErr } = await userClient.auth.getUser();
+    const user = authData?.user;
+
+    if (authErr || !user) {
+      return res.status(401).json({ error: 'Unauthorized', requestId });
+    }
+
+    const u = await serviceClient
+      .from('users')
+      .select('workspace_id')
+      .eq('auth_provider_user_id', user.id)
+      .maybeSingle();
+
+    if (u.error) {
+      console.error('[gen] failed to resolve user workspace', { requestId, message: String(u.error.message || '') });
+      return res.status(500).json({ error: 'Internal server error', requestId });
+    }
+
+    const userWorkspaceId = String((u.data as any)?.workspace_id || '').trim();
+
+    if (!userWorkspaceId || userWorkspaceId !== workspace_id) {
+      console.error('[gen] unauthorized workspace', {
+        requestId,
+        body_workspace_id: workspace_id,
+        user_workspace_id: userWorkspaceId,
+      });
+      return res.status(403).json({ error: 'Unauthorized workspace.', requestId });
+    }
+
     // Normalize images from common keys (be permissive, validate strictly)
     const rawImages = body.images ?? body.image_urls ?? [];
     const incoming = normalizeStringArray(rawImages);
@@ -560,8 +601,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let listingStyleInstructions = '';
 
     try {
-      if (workspace_id && authHeader) {
-        const wsStyle = await fetchWorkspaceListingStyle({ authHeader, workspaceId: workspace_id });
+      if (workspace_id) {
+        const wsStyle = await fetchWorkspaceListingStyle({ userClient, workspaceId: workspace_id });
         if (wsStyle?.enabled) {
           console.log('[gen] using listing style', { workspace_id, enabled: true });
 
