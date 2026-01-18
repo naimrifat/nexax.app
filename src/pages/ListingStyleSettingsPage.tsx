@@ -1,6 +1,8 @@
 // src/pages/ListingStyleSettingsPage.tsx
 import React, { useEffect, useState } from 'react';
 import { Save, Settings2 } from 'lucide-react';
+import { supabase } from '../../lib/supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
 type ListingStyleSettings = {
   useCustomStyle: boolean;
@@ -18,26 +20,94 @@ const defaultSettings: ListingStyleSettings = {
   extraNotes: '',
 };
 
+const MAX_TITLE = 800;
+const MAX_DESCRIPTION = 1200;
+const MAX_EXTRA = 800;
+
+function trimAndClip(v: unknown, max: number): string {
+  const s = String(v ?? '').trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max);
+}
+
 const ListingStyleSettingsPage: React.FC = () => {
+  const { workspaceId } = useAuth();
   const [settings, setSettings] = useState<ListingStyleSettings>(defaultSettings);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
-  // Load existing settings from localStorage on mount
+
+  // Load existing settings from Supabase (fallback to localStorage)
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setSettings({
-          ...defaultSettings,
-          ...parsed,
-        });
+    let cancelled = false;
+
+    const load = async () => {
+      // 1) Local fallback (fast)
+      try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (!cancelled) {
+            setSettings({
+              ...defaultSettings,
+              ...parsed,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load listing style settings:', err);
       }
-    } catch (err) {
-      console.error('Failed to load listing style settings:', err);
-    }
-  }, []);
+
+      // 2) Workspace-scoped source of truth
+      const wsId = String(workspaceId || '').trim();
+      if (!wsId) return;
+
+      try {
+        const q = await supabase
+          .from('workspace_listing_style')
+          .select('enabled,title_instructions,description_instructions,extra_rules,updated_at')
+          .eq('workspace_id', wsId)
+          .maybeSingle();
+
+        if (q.error) throw q.error;
+        const row: any = q.data || null;
+        if (!row) return;
+
+        const next: ListingStyleSettings = {
+          useCustomStyle: Boolean(row.enabled),
+          titleInstructions: String(row.title_instructions || ''),
+          descriptionInstructions: String(row.description_instructions || ''),
+          extraNotes: String(row.extra_rules || ''),
+        };
+
+        // Mirror to localStorage so generation can start quickly.
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+
+        if (!cancelled) {
+          setSettings(next);
+          if (row.updated_at) {
+            try {
+              setSavedAt(new Date(String(row.updated_at)).toLocaleString());
+            } catch {
+              // ignore
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load listing style settings from Supabase:', err);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
 
   const handleChange = <K extends keyof ListingStyleSettings>(
     key: K,
@@ -49,12 +119,37 @@ const ListingStyleSettingsPage: React.FC = () => {
     }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     try {
       setSaving(true);
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+
+      const cleaned: ListingStyleSettings = {
+        useCustomStyle: Boolean(settings.useCustomStyle),
+        titleInstructions: trimAndClip(settings.titleInstructions, MAX_TITLE),
+        descriptionInstructions: trimAndClip(settings.descriptionInstructions, MAX_DESCRIPTION),
+        extraNotes: trimAndClip(settings.extraNotes, MAX_EXTRA),
+      };
+
+      // Always mirror to localStorage (fast path for generation)
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
+
+      const wsId = String(workspaceId || '').trim();
+      if (wsId) {
+        const upsertPayload = {
+          workspace_id: wsId,
+          enabled: cleaned.useCustomStyle,
+          title_instructions: cleaned.titleInstructions,
+          description_instructions: cleaned.descriptionInstructions,
+          extra_rules: cleaned.extraNotes,
+        };
+
+        const up = await supabase.from('workspace_listing_style').upsert(upsertPayload, { onConflict: 'workspace_id' });
+        if (up.error) throw up.error;
+      }
+
       const ts = new Date().toLocaleString();
       setSavedAt(ts);
+      setSettings(cleaned);
     } catch (err) {
       console.error('Failed to save listing style settings:', err);
       alert('Failed to save your settings. Check the console for details.');
