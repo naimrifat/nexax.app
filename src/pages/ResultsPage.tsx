@@ -1,6 +1,7 @@
 // src/pages/ResultsPage.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import './ResultsPage.css';
 import CategorySelector from '../components/CategorySelector';
 import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
 import { supabase } from '../../lib/supabaseClient';
@@ -279,8 +280,10 @@ function TokenSelect({
           selected.map((s) => (
             <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-0.5">
               {s}
-              <button
-                type="button"
+          <button
+            type="button"
+            className="results-action-btn"
+                className="results-highlight-btn"
                 className="text-teal-700/70 hover:text-teal-900"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2013,8 +2016,8 @@ export default function ResultsPage() {
   }
 
    return (
-     <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
-        <main>
+     <div className="results-layout">
+        <main className="results-main" style={{ minWidth: 0 }}>
         <h1>Generated Listing</h1>
 
         <section
@@ -2048,7 +2051,7 @@ export default function ResultsPage() {
           </div>
 
           {images.length > 1 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
+            <div className="results-thumbs" style={{ marginTop: 8 }}>
               {images.map((img, idx) => (
                 <div
                   key={idx}
@@ -2116,13 +2119,14 @@ export default function ResultsPage() {
               setIsDirty(true);
               setTitle(e.target.value);
             }}
-            style={{
-              width: '100%',
-              maxWidth: '64ch',
-              padding: '8px 12px',
-              marginTop: 8,
-              fontSize: 14,
-              borderRadius: 6,
+             style={{
+               width: '100%',
+               maxWidth: '64ch',
+               padding: '8px 12px',
+               marginTop: 8,
+               fontSize: 14,
+               borderRadius: 6,
+               boxSizing: 'border-box',
               border:
                 highlightMissing && missingRequirements.missingBasics.includes('Title')
                   ? '1px solid #ef4444'
@@ -2142,13 +2146,14 @@ export default function ResultsPage() {
         </section>
 
         <section style={{ marginTop: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="results-sku-row">
             <h4 style={{ margin: 0 }}>SKU</h4>
             <input
               placeholder="Enter SKU..."
               value={sku}
               onChange={(e) => setSku(e.target.value)}
-              style={{ width: '25%', minWidth: 160, padding: 12, fontSize: 14 }}
+              className="results-sku-input"
+              style={{ padding: 12, fontSize: 14 }}
             />
           </div>
         </section>
@@ -2378,7 +2383,8 @@ export default function ResultsPage() {
                setPrice(e.target.value);
              }}
 
-            style={{ width: 240, padding: 12, marginTop: 8, fontSize: 14 }}
+            className="results-price-input"
+            style={{ padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
 
@@ -2421,7 +2427,7 @@ export default function ResultsPage() {
           ) : null}
 
           {/* Row 1: Shipping policy + package + irregular */}
-          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 12 }}>
+          <div className="results-policy-row1" style={{ marginTop: 12 }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Shipping policy</label>
               {fulfillmentPolicies.length > 0 ? (
@@ -2466,7 +2472,7 @@ export default function ResultsPage() {
 
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Package weight (optional)</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div className="results-subgrid-2">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={packageWeightLb}
@@ -2498,7 +2504,7 @@ export default function ResultsPage() {
 
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Package dimensions (optional)</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+              <div className="results-subgrid-3">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={packageLengthIn}
@@ -2544,178 +2550,15 @@ export default function ResultsPage() {
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Irregular package</label>
               <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsDirty(true);
-                    setIrregularPackage(true);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '10px 12px',
-                    background: irregularPackage ? '#10b981' : '#fff',
-                    color: irregularPackage ? '#fff' : '#111',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsDirty(true);
-                    setIrregularPackage(false);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '10px 12px',
-                    background: !irregularPackage ? '#10b981' : '#fff',
-                    color: !irregularPackage ? '#fff' : '#111',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
-                  No
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Row 2: Return + Payment */}
-          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Return policy</label>
-              {returnPolicies.length > 0 ? (
-                <select
-                  value={ebayReturnPolicyId}
-                  onChange={(e) => {
-                    setIsDirty(true);
-                    setEbayReturnPolicyId(e.target.value);
-                  }}
-                  disabled={policyLoading}
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    border: highlightMissing && !String(ebayReturnPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
-                    borderRadius: 6,
-                  }}
-                >
-                  <option value="">Select…</option>
-                  {returnPolicies.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.id})
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={ebayReturnPolicyId}
-                  onChange={(e) => {
-                    setIsDirty(true);
-                    setEbayReturnPolicyId(e.target.value);
-                  }}
-                  placeholder="Enter return policy ID"
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    border: highlightMissing && !String(ebayReturnPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
-                    borderRadius: 6,
-                  }}
-                />
-              )}
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Payment policy</label>
-              {paymentPolicies.length > 0 ? (
-                <select
-                  value={ebayPaymentPolicyId}
-                  onChange={(e) => {
-                    setIsDirty(true);
-                    setEbayPaymentPolicyId(e.target.value);
-                  }}
-                  disabled={policyLoading}
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    border: highlightMissing && !String(ebayPaymentPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
-                    borderRadius: 6,
-                  }}
-                >
-                  <option value="">Select…</option>
-                  {paymentPolicies.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.id})
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={ebayPaymentPolicyId}
-                  onChange={(e) => {
-                    setIsDirty(true);
-                    setEbayPaymentPolicyId(e.target.value);
-                  }}
-                  placeholder="Enter payment policy ID"
-                  style={{
-                    width: '100%',
-                    padding: 10,
-                    border: highlightMissing && !String(ebayPaymentPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
-                    borderRadius: 6,
-                  }}
-                />
-              )}
-            </div>
-          </div>
-        </section>
-
-        {missingRequirements.totalMissingCount > 0 ? (
-          <div
-            style={{
-              marginTop: 28,
-              border: '1px solid #fecaca',
-              background: '#fef2f2',
-              color: '#991b1b',
-              borderRadius: 8,
-              padding: 12,
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}
-          >
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                Just {missingRequirements.totalMissingCount} thing{missingRequirements.totalMissingCount === 1 ? '' : 's'} missing…
-              </div>
-
-              {missingRequirements.missingBasics.length ? (
-                <div style={{ fontSize: 13, marginTop: 4 }}>
-                  <span style={{ fontWeight: 600 }}>Item details:</span> {missingRequirements.missingBasics.join(', ')}
-                </div>
-              ) : null}
-
-              {missingRequirements.missingPolicies.length || missingRequirements.missingAspects.length ? (
-                <div style={{ fontSize: 13, marginTop: 4 }}>
-                  <span style={{ fontWeight: 600 }}>eBay:</span>{' '}
-                  {[...missingRequirements.missingPolicies, ...missingRequirements.missingAspects].filter(Boolean).join(', ')}
-                </div>
-              ) : null}
-            </div>
-
-             <button
-               type="button"
-               onClick={() => {
-                 setUiError(null);
-                 setHighlightMissing(true);
-
-
-                const missingBasics = missingRequirements.missingBasics;
+              <button
+                type="button"
+                className="results-highlight-btn"
+                onClick={() => {
+                  setUiError(null);
+                  setHighlightMissing(true);
+ 
+ 
+                 const missingBasics = missingRequirements.missingBasics;
                 const missingPolicies = missingRequirements.missingPolicies;
                 const missingAspects = missingRequirements.missingAspects;
 
@@ -2781,8 +2624,9 @@ export default function ResultsPage() {
           </div>
         ) : null}
 
-          <div style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="results-action-bar" style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
+              className="results-action-btn"
               onClick={handleManualSaveDraft}
               disabled={disableActions || publishing || preflightLoading || savingDraft}
               className="btn"
@@ -3033,8 +2877,8 @@ export default function ResultsPage() {
         ) : null}
       </main>
 
-       <aside>
-         <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, position: 'sticky', top: 24 }}>
+       <aside className="results-aside">
+         <div className="results-aside-panel" style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16 }}>
            {(() => {
              const priceNum = parseFloat(price || '0');
              const basicsOk =
@@ -3104,7 +2948,7 @@ export default function ResultsPage() {
                        background: ready ? '#dcfce7' : '#fef2f2',
                        color: ready ? '#166534' : '#991b1b',
                        border: `1px solid ${ready ? '#bbf7d0' : '#fecaca'}`,
-                       whiteSpace: 'nowrap',
+                 whiteSpace: 'normal',
                      }}
                    >
                      {ready ? 'Ready to publish' : 'Not ready'}
