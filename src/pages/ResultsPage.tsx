@@ -765,6 +765,18 @@ export default function ResultsPage() {
         setConditionRequired(true);
         setConditionOptions(next);
 
+        if (next.length > 0) {
+          console.log('[debug] condition options', {
+            listingId: String(listingId || ''),
+            categoryId: String(category?.id || ''),
+            optionsCount: next.length,
+            sample: next.slice(0, 5).map((o: any) => ({
+              id: o?.id ?? o?.conditionId ?? o?.condition_id,
+              name: o?.name ?? o?.label ?? o?.conditionName ?? o?.condition_name,
+            })),
+          });
+        }
+
         if (conditionId) {
           const stillValid = next.some((c: any) => String(c?.conditionId) === String(conditionId));
           if (!stillValid) {
@@ -808,6 +820,14 @@ export default function ResultsPage() {
 
     const intent = String(conditionIntentRef.current || '').trim().toUpperCase();
     if (!intent || intent === 'UNKNOWN') return;
+
+    console.log('[debug] condition auto-select attempt', {
+      listingId: listingIdStr,
+      categoryId,
+      intent,
+      currentConditionId: String(conditionId || '').trim(),
+      optionsCount: conditionOptions.length,
+    });
 
     const key = `${listingIdStr}:${categoryId}`;
     if (autoSelectConditionKeyRef.current === key) return;
@@ -870,6 +890,7 @@ export default function ResultsPage() {
         categoryId,
         intent,
         optionsCount: conditionOptions.length,
+        sampleLabels: conditionOptions.slice(0, 8).map((o: any) => o?.name ?? o?.label ?? o?.conditionName ?? o?.condition_name ?? ''),
       });
       autoSelectConditionKeyRef.current = key;
       return;
@@ -877,8 +898,19 @@ export default function ResultsPage() {
 
     autoSelectConditionKeyRef.current = key;
 
-    setConditionId(String(chosen.conditionId));
-    setConditionName(String(chosen.conditionName || ''));
+    const matchedId = (chosen as any)?.id ?? (chosen as any)?.conditionId ?? (chosen as any)?.condition_id;
+    const matchedName = (chosen as any)?.name ?? (chosen as any)?.label ?? (chosen as any)?.conditionName ?? (chosen as any)?.condition_name;
+
+    console.log('[debug] condition auto-select matched', {
+      listingId: listingIdStr,
+      categoryId,
+      intent,
+      matchedId,
+      matchedName,
+    });
+
+    setConditionId(String((chosen as any).conditionId));
+    setConditionName(String((chosen as any).conditionName || ''));
     // Do not auto-fill conditionDescription.
   }, [listingId, category?.id, conditionsLoading, conditionOptions, conditionId]);
 
@@ -1202,6 +1234,15 @@ export default function ResultsPage() {
 
             conditionIntentRef.current = String(lj?.condition_intent || '').trim();
             autoSelectConditionKeyRef.current = '';
+
+            if (lj?.condition_intent) {
+              console.log('[debug] listing condition intent', {
+                listingId: String(row.id || ''),
+                categoryId: (lj as any)?.category_id ?? (category as any)?.id ?? null,
+                intent: (lj as any)?.condition_intent,
+                currentConditionId: (lj as any)?.condition_id ?? conditionId,
+              });
+            }
 
 
 
