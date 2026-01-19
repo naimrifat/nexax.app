@@ -2118,6 +2118,7 @@ export default function ResultsPage() {
             }}
             style={{
               width: '100%',
+              maxWidth: '80ch',
               padding: '8px 12px',
               marginTop: 8,
               fontSize: 14,
