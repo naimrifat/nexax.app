@@ -687,9 +687,23 @@ export default function HomePage() {
       };
 
 
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) {
+        console.error('[home] getSession failed', { message: String(sessionErr.message || '') });
+      }
+
+      const accessToken = String(sessionData?.session?.access_token || '').trim();
+      if (!accessToken) {
+        setStatus('Unauthorized. Please sign in again.');
+        return;
+      }
+
       const analysisResponse = await fetch('/api/analyze-listing', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(analyzePayload),
       });
 
