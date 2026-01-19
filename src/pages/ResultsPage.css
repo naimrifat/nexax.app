@@ -225,3 +225,132 @@
 .btn-primary:hover {
     transform: translateY(-2px);
 }
+
+/* ---------------------------------
+   ResultsPage responsive helpers
+---------------------------------- */
+.results-layout {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 24px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.results-layout > * {
+  min-width: 0;
+}
+
+.results-aside-panel {
+  position: sticky;
+  top: 24px;
+}
+
+.results-thumbs {
+  display: grid;
+  grid-template-columns: repeat(4, 70px);
+  justify-content: center;
+  justify-items: center;
+  gap: 8px;
+}
+
+.results-sku-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.results-sku-input {
+  width: 25%;
+  min-width: 160px;
+}
+
+.results-price-input {
+  width: 240px;
+  max-width: 100%;
+}
+
+.results-policy-row1 {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.results-policy-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.results-subgrid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.results-subgrid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.results-action-bar .results-action-btn {
+  flex: 1 1 180px;
+}
+
+@media (max-width: 900px) {
+  .results-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .results-aside-panel {
+    position: static;
+    top: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .results-layout {
+    padding: 12px;
+    gap: 16px;
+  }
+
+  .results-thumbs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+    justify-items: center;
+  }
+
+  .results-sku-input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .results-price-input {
+    width: 100%;
+  }
+
+  .results-policy-row1 {
+    grid-template-columns: 1fr;
+  }
+
+  .results-policy-row2 {
+    grid-template-columns: 1fr;
+  }
+
+  .results-subgrid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .results-highlight-btn {
+    width: 100%;
+  }
+
+  .results-action-bar .results-action-btn {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}
+
