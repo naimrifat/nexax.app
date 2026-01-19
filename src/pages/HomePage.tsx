@@ -798,6 +798,8 @@ export default function HomePage() {
         listing_json: {
           ...aiListingPayload,
           internal_user_id: iuId,
+          condition_intent: String(aiData?.condition_intent || 'UNKNOWN'),
+          // condition_reason is intentionally not stored.
         },
       };
 
