@@ -294,7 +294,14 @@ export default function HomePage() {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const navigate = useNavigate();
 
-  const { user, workspaceId, internalUserId, isLoading: authLoading, refreshTenancy } = useAuth();
+  const {
+    user,
+    workspaceId,
+    internalUserId,
+    tenancyStatus,
+    isLoading: authLoading,
+    refreshTenancy,
+  } = useAuth();
 
   const specificsCacheRef = useRef<Map<string, any[]>>(new Map());
   const inFlightControllerRef = useRef<AbortController | null>(null);
@@ -597,15 +604,12 @@ export default function HomePage() {
       return;
     }
 
-    if (!workspaceId || !internalUserId) {
+    // Client-side tenancy guard: do not call APIs until tenancy is ready.
+    if (tenancyStatus !== 'ready' || !workspaceId || !internalUserId) {
       setStatus('Loading your workspace...');
-      try {
-        await refreshTenancy();
-      } catch {
-        // ignore
-      }
       return;
     }
+
 
     if (photos.length === 0) {
       setStatus('Please upload at least one image.');
@@ -745,18 +749,8 @@ export default function HomePage() {
         image_urls: uploadedUrls,
       };
 
-      let wsId = workspaceId;
-      let iuId = internalUserId;
-
-      if (!wsId || !iuId) {
-        try {
-          await refreshTenancy();
-        } catch {
-          // ignore
-        }
-        wsId = workspaceId;
-        iuId = internalUserId;
-      }
+      const wsId = workspaceId;
+      const iuId = internalUserId;
 
       if (!wsId || !iuId) {
         throw new Error('Workspace not ready. Please try again.');
@@ -1070,11 +1064,19 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  <button
-                    type="submit"
-                    disabled={isLoading || photos.length === 0}
-                    className="btn bg-white text-teal-700 hover:bg-teal-50 w-full py-3 flex items-center justify-center"
-                  >
+                    <button
+                      type="submit"
+                      disabled={
+                        isLoading ||
+                        photos.length === 0 ||
+                        authLoading ||
+                        !user?.id ||
+                        tenancyStatus !== 'ready' ||
+                        !workspaceId ||
+                        !internalUserId
+                      }
+                      className="btn bg-white text-teal-700 hover:bg-teal-50 w-full py-3 flex items-center justify-center"
+                    >
                     <Sparkles className="w-5 h-5 mr-2" />
                     {isLoading ? 'Generating...' : 'Generate Listings'}
                   </button>
