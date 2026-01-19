@@ -428,7 +428,7 @@ export default function ResultsPage() {
   const [mainImageIndex, setMainImageIndex] = useState(0);
 
   const conditionIntentRef = useRef<string>('');
-  const didAutoSelectConditionRef = useRef<boolean>(false);
+  const autoSelectConditionKeyRef = useRef<string>('');
 
   const [title, setTitle] = useState('');
   const [sku, setSku] = useState('');
@@ -784,11 +784,24 @@ export default function ResultsPage() {
     void fetchItemConditions(String(category?.id || ''));
   }, [category?.id, fetchItemConditions]);
 
-  // Auto-select condition_id from condition_intent once conditions are loaded.
+  function normalizeLabel(s: string): string {
+    return String(s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  // Auto-select condition_id from condition_intent once the listing + category + options are ready.
   useEffect(() => {
-    const cid = String(category?.id || '').trim();
-    if (!cid) return;
+    const listingIdStr = String(listingId || '').trim();
+    const categoryId = String(category?.id || '').trim();
+
+    // 1) Gate on required prerequisites
+    if (!listingIdStr) return; // listing must be loaded
+    if (!categoryId) return;
     if (conditionsLoading) return;
+
+    if (!Array.isArray(conditionOptions) || conditionOptions.length === 0) return;
 
     // Do not override manual selection.
     if (String(conditionId || '').trim()) return;
@@ -796,53 +809,78 @@ export default function ResultsPage() {
     const intent = String(conditionIntentRef.current || '').trim().toUpperCase();
     if (!intent || intent === 'UNKNOWN') return;
 
-    if (!Array.isArray(conditionOptions) || conditionOptions.length === 0) return;
-    if (didAutoSelectConditionRef.current) return;
+    const key = `${listingIdStr}:${categoryId}`;
+    if (autoSelectConditionKeyRef.current === key) return;
 
-    const norm = (s: any) => String(s ?? '').toLowerCase().trim();
+    // 2) Matching helpers
+    const has = (label: string, needle: string) => normalizeLabel(label).includes(normalizeLabel(needle));
 
-    const findByAny = (needles: string[]) => {
+    const isNewWithDefects = (label: string) => {
+      const l = normalizeLabel(label);
+      return l.includes('defect') || l.includes('defects');
+    };
+
+    const findFirst = (needles: string[], opts?: { avoidDefects?: boolean }) => {
+      const avoidDefects = opts?.avoidDefects !== false;
+
+      // Pass 1: avoid defects
       for (const opt of conditionOptions) {
-        const label = norm(opt?.conditionName);
+        const label = String(opt?.conditionName || '');
         if (!label) continue;
-        if (needles.some((n) => label.includes(norm(n)))) return opt;
+        if (avoidDefects && isNewWithDefects(label)) continue;
+        if (needles.some((n) => has(label, n))) return opt;
       }
+
+      // Pass 2: allow defects
+      for (const opt of conditionOptions) {
+        const label = String(opt?.conditionName || '');
+        if (!label) continue;
+        if (needles.some((n) => has(label, n))) return opt;
+      }
+
       return null;
     };
 
     let chosen: { conditionId: number; conditionName: string } | null = null;
 
+    // 3) Intent-specific priority
     if (intent === 'NEW_WITH_TAGS') {
-      chosen = findByAny(['new with tags', 'nwt']);
+      chosen = findFirst(['new with tags']);
+      if (!chosen) chosen = findFirst(['new without tags']);
+      if (!chosen) chosen = findFirst(['new']);
     } else if (intent === 'NEW_WITH_BOX') {
-      chosen = findByAny(['new with box', 'new in box', 'with box']);
+      chosen = findFirst(['new with box', 'new in box', 'new in original box']);
+      if (!chosen) chosen = findFirst(['new']);
     } else if (intent === 'NEW_OTHER') {
-      chosen = findByAny(['brand new', 'new']);
+      chosen = findFirst(['brand new', 'new other', 'new']);
     } else if (intent === 'USED_EXCELLENT') {
-      chosen = findByAny(['used - excellent', 'pre-owned - excellent', 'pre owned - excellent', 'excellent']);
+      chosen = findFirst(['used excellent', 'pre owned excellent', 'preowned excellent', 'used']);
+      if (!chosen) chosen = findFirst(['pre owned', 'preowned', 'used']);
     } else if (intent === 'USED_GOOD') {
-      chosen = findByAny(['used - good', 'pre-owned - good', 'pre owned - good', 'good']);
+      chosen = findFirst(['used good', 'pre owned good', 'preowned good', 'used']);
+      if (!chosen) chosen = findFirst(['pre owned', 'preowned', 'used']);
     } else if (intent === 'USED_FAIR') {
-      chosen = findByAny(['used - fair', 'pre-owned - fair', 'pre owned - fair', 'acceptable', 'fair']);
+      chosen = findFirst(['used fair', 'acceptable', 'used']);
+      if (!chosen) chosen = findFirst(['pre owned', 'preowned', 'used']);
     }
 
-    // Fallbacks
     if (!chosen) {
-      if (intent.startsWith('NEW_')) {
-        chosen = findByAny(['new']);
-      } else if (intent.startsWith('USED_')) {
-        chosen = findByAny(['used', 'pre-owned', 'pre owned']);
-      }
+      console.log('[results] condition auto-select: no match', {
+        listingId: listingIdStr,
+        categoryId,
+        intent,
+        optionsCount: conditionOptions.length,
+      });
+      autoSelectConditionKeyRef.current = key;
+      return;
     }
 
-    if (!chosen) return;
-
-    didAutoSelectConditionRef.current = true;
+    autoSelectConditionKeyRef.current = key;
 
     setConditionId(String(chosen.conditionId));
     setConditionName(String(chosen.conditionName || ''));
     // Do not auto-fill conditionDescription.
-  }, [category?.id, conditionsLoading, conditionOptions, conditionId]);
+  }, [listingId, category?.id, conditionsLoading, conditionOptions, conditionId]);
 
   const mainImageUrl = images[mainImageIndex] || '';
 
@@ -1162,8 +1200,9 @@ export default function ResultsPage() {
            const row: any = data || {};
            const lj: any = row.listing_json || {};
 
-           conditionIntentRef.current = String(lj?.condition_intent || '').trim();
-           didAutoSelectConditionRef.current = false;
+            conditionIntentRef.current = String(lj?.condition_intent || '').trim();
+            autoSelectConditionKeyRef.current = '';
+
 
 
           setListingId(row.id);
