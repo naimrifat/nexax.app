@@ -2015,7 +2015,7 @@ export default function ResultsPage() {
    return (
      <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
         <main>
-        <h1>Create eBay Listing</h1>
+        <h1>Generate Listing</h1>
 
         <section
           ref={photosSectionRef as any}
