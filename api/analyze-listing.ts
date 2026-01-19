@@ -117,6 +117,22 @@ function safeJSON<T = any>(txt: string, fallback: T): T {
   }
 }
 
+function normalizeConditionIntent(v: unknown): ConditionIntent {
+  const s = String(v ?? '').trim().toUpperCase();
+  if (
+    s === 'NEW_WITH_TAGS' ||
+    s === 'NEW_WITH_BOX' ||
+    s === 'NEW_OTHER' ||
+    s === 'USED_EXCELLENT' ||
+    s === 'USED_GOOD' ||
+    s === 'USED_FAIR'
+  ) {
+    return s as ConditionIntent;
+  }
+  return 'UNKNOWN';
+}
+
+
 function includesAny(hay: string, needles: string[]) {
   const h = norm(hay);
   return needles.some((n) => h.includes(norm(n)));
@@ -313,7 +329,18 @@ type AspectSchema = {
 };
 
 // Typed model outputs (prevents TS {} / never errors)
+type ConditionIntent =
+  | 'NEW_WITH_TAGS'
+  | 'NEW_WITH_BOX'
+  | 'NEW_OTHER'
+  | 'USED_EXCELLENT'
+  | 'USED_GOOD'
+  | 'USED_FAIR'
+  | 'UNKNOWN';
+
 type VisionJSON = {
+  condition_intent?: ConditionIntent | string;
+  condition_reason?: string;
   detected?: {
     department?: string;
     sizeTypeHint?: string;
@@ -652,6 +679,8 @@ ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must ret
 {
   "title": "... (<=80 chars, follow seller rules if provided)",
   "description": "... (follow seller rules if provided)",
+  "condition_intent": "NEW_WITH_TAGS|NEW_WITH_BOX|NEW_OTHER|USED_EXCELLENT|USED_GOOD|USED_FAIR|UNKNOWN",
+  "condition_reason": "... short reason (for server logs only)",
   "detected": {
     "brand": "...",
     "size": "...",
@@ -678,6 +707,14 @@ ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must ret
 }
 
 Always obey the visual facts in the images and eBay-style accuracy first. Seller instructions are for *style and structure*, not for making up untrue details.
+
+For condition_intent:
+- Choose NEW_WITH_TAGS only if retail tags are clearly visible.
+- Choose NEW_WITH_BOX only if a retail box is clearly visible (e.g., shoes with box).
+- Choose NEW_OTHER if item appears new/unused but tags/box aren't clearly visible.
+- Choose USED_EXCELLENT/USED_GOOD/USED_FAIR based on visible wear.
+- If unclear, choose UNKNOWN.
+condition_reason should be a short phrase like "tags visible" or "light wear".
 `,
             },
           ],
@@ -690,11 +727,22 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
       title: '',
       description: '',
       keywords: [],
+      condition_intent: 'UNKNOWN',
+      condition_reason: '',
     });
 
     const detected = (visionJSON.detected || {}) as NonNullable<VisionJSON['detected']>;
     const title = visionJSON.title || '';
     const description = visionJSON.description || '';
+
+    const condition_intent = normalizeConditionIntent((visionJSON as any).condition_intent);
+    const condition_reason = String((visionJSON as any).condition_reason || '').trim().slice(0, 200);
+
+    if (condition_intent && condition_intent !== 'UNKNOWN') {
+      console.log('[gen] condition intent', { workspace_id, intent: condition_intent });
+      // Do not log condition_reason content; it can include sensitive text.
+    }
+
 
     // coarse, model-independent inferences
     const categoryGuessingText = `${title}\n${description}`;
@@ -924,6 +972,8 @@ Always obey the visual facts in the images and eBay-style accuracy first. Seller
       title,
       description,
       category,
+      condition_intent,
+      // condition_reason is for server logs only; do not return to client.
       category_suggestions: categorySuggestions,
       ebay_category_id: category.id,
       ebay_category_name: category.name,
