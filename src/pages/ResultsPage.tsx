@@ -2340,15 +2340,16 @@ export default function ResultsPage() {
           }}
         >
           <h3>Description</h3>
-          <textarea
-            ref={descriptionInputRef}
-            placeholder="Enter description..."
-            value={description}
-            onChange={(e) => {
-              setIsDirty(true);
-              setDescription(e.target.value);
-            }}
-            rows={2}
+<textarea
+  ref={descriptionInputRef}
+  placeholder="Enter description..."
+  className="results-description-textarea"
+  value={description}
+  onChange={(e) => {
+    setIsDirty(true);
+    setDescription(e.target.value);
+  }}
+  rows={2}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
         </section>
