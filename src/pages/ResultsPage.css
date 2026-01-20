@@ -236,10 +236,16 @@
   gap: 24px;
   width: 100%;
   box-sizing: border-box;
+  max-width: 100%;
 }
 
 .results-layout > * {
   min-width: 0;
+}
+
+.results-title-input {
+  width: 100%;
+  max-width: 64ch;
 }
 
 .results-aside-panel {
@@ -344,6 +350,14 @@
     grid-template-columns: 1fr;
   }
 
+  .results-subgrid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .results-title-input {
+    max-width: 100%;
+  }
+
   .results-highlight-btn {
     width: 100%;
   }
@@ -352,5 +366,10 @@
     flex: 1 1 100%;
     width: 100%;
   }
-}
 
+  .results-action-status {
+    flex: 1 1 100%;
+    width: 100%;
+    text-align: left;
+  }
+}
