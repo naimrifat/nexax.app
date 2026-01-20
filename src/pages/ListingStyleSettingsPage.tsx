@@ -262,7 +262,7 @@ const ListingStyleSettingsPage: React.FC = () => {
           </div>
 
           {/* Footer actions */}
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
             <div className="text-xs text-gray-500">
               {savedAt ? (
                 <span>Last saved: {savedAt}</span>
@@ -274,7 +274,7 @@ const ListingStyleSettingsPage: React.FC = () => {
               type="button"
               onClick={handleSave}
               disabled={saving}
-              className="btn bg-teal-600 text-white hover:bg-teal-700 inline-flex items-center gap-2"
+              className="btn bg-teal-600 text-white hover:bg-teal-700 inline-flex items-center justify-center gap-2 w-full sm:w-auto"
             >
               <Save className="w-4 h-4" />
               {saving ? 'Saving...' : 'Save settings'}
