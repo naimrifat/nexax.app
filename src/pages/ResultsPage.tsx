@@ -280,10 +280,8 @@ function TokenSelect({
           selected.map((s) => (
             <span key={s} className="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 text-xs px-2 py-0.5">
               {s}
-          <button
-            type="button"
-            className="results-action-btn"
-                className="results-highlight-btn"
+              <button
+                type="button"
                 className="text-teal-700/70 hover:text-teal-900"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2113,29 +2111,29 @@ export default function ResultsPage() {
           <h3>Title</h3>
           <input
             ref={titleInputRef}
+            className="results-title-input"
             placeholder="Enter title..."
             value={title}
             onChange={(e) => {
               setIsDirty(true);
               setTitle(e.target.value);
             }}
-             style={{
-               width: '100%',
-               maxWidth: '64ch',
-               padding: '8px 12px',
-               marginTop: 8,
-               fontSize: 14,
-               borderRadius: 6,
-               boxSizing: 'border-box',
-              border:
-                highlightMissing && missingRequirements.missingBasics.includes('Title')
-                  ? '1px solid #ef4444'
-                  : showTitleInlineError && !title.trim()
-                    ? '1px solid #ef4444'
-                    : '1px solid #d1d5db',
-              background:
-                highlightMissing && missingRequirements.missingBasics.includes('Title') ? '#fff7f7' : 'white',
-              outline: 'none',
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                marginTop: 8,
+                fontSize: 14,
+                borderRadius: 6,
+                boxSizing: 'border-box',
+               border:
+                 highlightMissing && missingRequirements.missingBasics.includes('Title')
+                   ? '1px solid #ef4444'
+                   : showTitleInlineError && !title.trim()
+                     ? '1px solid #ef4444'
+                     : '1px solid #d1d5db',
+               background:
+                 highlightMissing && missingRequirements.missingBasics.includes('Title') ? '#fff7f7' : 'white',
+               outline: 'none',
             }}
             maxLength={80}
           />
@@ -2550,10 +2548,10 @@ export default function ResultsPage() {
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Irregular package</label>
               <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden' }}>
-              <button
-                type="button"
-                className="results-highlight-btn"
-                onClick={() => {
+            <button
+              type="button"
+              className="results-highlight-btn"
+              onClick={() => {
                   setUiError(null);
                   setHighlightMissing(true);
  
@@ -2615,7 +2613,7 @@ export default function ResultsPage() {
                 color: '#991b1b',
                 cursor: 'pointer',
                 fontWeight: 700,
-                whiteSpace: 'nowrap',
+                whiteSpace: 'normal',
                 fontSize: 14,
               }}
             >
@@ -2626,89 +2624,92 @@ export default function ResultsPage() {
 
           <div className="results-action-bar" style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
-              className="results-action-btn"
               onClick={handleManualSaveDraft}
               disabled={disableActions || publishing || preflightLoading || savingDraft}
-              className="btn"
-             style={{
-               padding: '12px 24px',
-               background: disableActions || publishing || preflightLoading || savingDraft ? '#999' : '#10b981',
-               color: 'white',
-               border: 'none',
-               borderRadius: '4px',
-               cursor: disableActions || publishing || preflightLoading || savingDraft ? 'default' : 'pointer',
-               fontSize: 16,
-               fontWeight: 600,
-             }}
-           >
-            Save Draft
-          </button>
-
-          <button
-            type="button"
-            onClick={handlePublish}
-            disabled={publishing || preflightLoading || savingDraft || disableActions}
-            style={{
-              padding: '12px 32px',
-              background: publishing || preflightLoading || savingDraft || disableActions ? '#999' : '#0064d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: publishing || preflightLoading || savingDraft || disableActions ? 'default' : 'pointer',
-              fontSize: 16,
-              fontWeight: 600,
-            }}
-          >
-            {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
-          </button>
-
-          {draftSavedSuccessfully ? (
-
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
+              className="results-action-btn"
               style={{
                 padding: '12px 24px',
-                background: '#3b82f6',
+                background: disableActions || publishing || preflightLoading || savingDraft ? '#999' : '#10b981',
                 color: 'white',
                 border: 'none',
-                borderRadius: 4,
-                cursor: 'pointer',
+                borderRadius: '4px',
+                cursor: disableActions || publishing || preflightLoading || savingDraft ? 'default' : 'pointer',
                 fontSize: 16,
                 fontWeight: 600,
               }}
             >
-              Go to Dashboard
+              Save Draft
             </button>
-          ) : null}
 
-           <button
-             type="button"
-             onClick={() => navigate('/create-listing')}
-             style={{
-               padding: '12px 32px',
-               background: '#f0f0f0',
-               color: '#333',
-               border: '1px solid #ddd',
-               borderRadius: 4,
-               cursor: 'pointer',
-               fontSize: 16,
-             }}
-           >
-             Cancel
-           </button>
+            <button
+              type="button"
+              onClick={handlePublish}
+              disabled={publishing || preflightLoading || savingDraft || disableActions}
+              className="results-action-btn"
+              style={{
+                padding: '12px 32px',
+                background: publishing || preflightLoading || savingDraft || disableActions ? '#999' : '#0064d2',
+                color: 'white',
+                border: 'none',
+                borderRadius: 4,
+                cursor: publishing || preflightLoading || savingDraft || disableActions ? 'default' : 'pointer',
+                fontSize: 16,
+                fontWeight: 600,
+              }}
+            >
+              {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
+            </button>
 
-           <span
-             style={{
-               minWidth: 80,
-               fontSize: 13,
-               color: saveIndicator === 'saved' ? '#166534' : '#6b7280',
-               fontWeight: saveIndicator === 'saved' ? 600 : 400,
-               whiteSpace: 'nowrap',
-             }}
-           >
-             {saveIndicator === 'saving' ? 'Saving…' : saveIndicator === 'saved' ? '✓ Saved' : ''}
-           </span>
+            {draftSavedSuccessfully ? (
+
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="results-action-btn"
+                style={{
+                  padding: '12px 24px',
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontSize: 16,
+                  fontWeight: 600,
+                }}
+              >
+                Go to Dashboard
+              </button>
+            ) : null}
+
+             <button
+               type="button"
+               onClick={() => navigate('/create-listing')}
+               className="results-action-btn"
+               style={{
+                 padding: '12px 32px',
+                 background: '#f0f0f0',
+                 color: '#333',
+                 border: '1px solid #ddd',
+                 borderRadius: 4,
+                 cursor: 'pointer',
+                 fontSize: 16,
+               }}
+             >
+               Cancel
+             </button>
+
+            <span
+              className="results-action-status"
+              style={{
+                minWidth: 80,
+                fontSize: 13,
+                color: saveIndicator === 'saved' ? '#166534' : '#6b7280',
+                fontWeight: saveIndicator === 'saved' ? 600 : 400,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {saveIndicator === 'saving' ? 'Saving…' : saveIndicator === 'saved' ? '✓ Saved' : ''}
+            </span>
  
          </div>
 
@@ -2727,13 +2728,14 @@ export default function ResultsPage() {
               alignItems: 'flex-start',
               justifyContent: 'space-between',
               gap: 12,
+              flexWrap: 'wrap',
             }}
           >
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>{uiError.title}</div>
-              <div style={{ fontSize: 14 }}>{uiError.message}</div>
+              <div style={{ fontSize: 14, overflowWrap: 'anywhere' }}>{uiError.message}</div>
               {uiError.requestId || uiError.ebayErrorId ? (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
+                <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280', overflowWrap: 'anywhere' }}>
                   {uiError.requestId ? <div>Request ID: {uiError.requestId}</div> : null}
                   {uiError.ebayErrorId ? <div>eBay Error ID: {uiError.ebayErrorId}</div> : null}
                 </div>
@@ -2743,6 +2745,7 @@ export default function ResultsPage() {
             <button
               type="button"
               onClick={() => setUiError(null)}
+              className="results-action-btn"
               style={{
                 padding: '10px 14px',
                 borderRadius: 8,
