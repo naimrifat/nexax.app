@@ -2547,11 +2547,12 @@ export default function ResultsPage() {
 
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Irregular package</label>
+              {missingRequirements.totalMissingCount > 0 ? (
               <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden' }}>
-            <button
-              type="button"
-              className="results-highlight-btn"
-              onClick={() => {
+             <button
+               type="button"
+               className="results-highlight-btn"
+               onClick={() => {
                   setUiError(null);
                   setHighlightMissing(true);
  
@@ -2621,6 +2622,9 @@ export default function ResultsPage() {
             </button>
           </div>
         ) : null}
+
+            </div>
+          </div>
 
         </section>
 
