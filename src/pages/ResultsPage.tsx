@@ -2622,6 +2622,8 @@ export default function ResultsPage() {
           </div>
         ) : null}
 
+        </section>
+
           <div className="results-action-bar" style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={handleManualSaveDraft}
