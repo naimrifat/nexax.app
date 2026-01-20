@@ -1121,9 +1121,9 @@ export default function HomePage() {
                 </div>
 
                 <div className="lg:col-span-2 space-y-6">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <h2 className="text-2xl font-bold text-gray-900">Your Generated Listing</h2>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                       <button
                         onClick={handlePublishToEbay}
                         disabled={!listingData?.category?.id || loadingSpecifics}
@@ -1131,7 +1131,7 @@ export default function HomePage() {
                           !listingData?.category?.id || loadingSpecifics
                             ? 'opacity-50 cursor-not-allowed'
                             : 'bg-teal-600 text-white hover:bg-teal-700'
-                        }`}
+                        } w-full sm:w-auto`}
                       >
                         Publish to eBay
                       </button>
@@ -1152,7 +1152,7 @@ export default function HomePage() {
                           setStatus('');
                           setValidationErrors([]);
                         }}
-                        className="btn btn-outline"
+                        className="btn btn-outline w-full sm:w-auto"
                       >
                         Create Another
                       </button>
