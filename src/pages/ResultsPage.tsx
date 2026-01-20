@@ -2014,7 +2014,7 @@ export default function ResultsPage() {
   }
 
    return (
-     <div className="results-layout">
+     <div className="results-page results-layout">
         <main className="results-main" style={{ minWidth: 0 }}>
         <h1>Generated Listing</h1>
 
