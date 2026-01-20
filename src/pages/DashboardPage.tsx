@@ -362,7 +362,7 @@ const DashboardPage: React.FC = () => {
                 />
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-grow">
                   <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
                     <Search className="w-4 h-4 text-gray-400" />
@@ -370,18 +370,18 @@ const DashboardPage: React.FC = () => {
                   <input
                     type="text"
                     placeholder="Search listings..."
-                    className="input pl-10"
+                    className="input pl-10 w-full"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
                 </div>
 
-                <button className="btn btn-outline flex items-center" type="button" disabled>
+                <button className="btn btn-outline flex items-center justify-center w-full sm:w-auto" type="button" disabled>
                   <Filter className="w-4 h-4 mr-1.5" />
                   Filter
                 </button>
 
-                <button className="btn btn-outline flex items-center" onClick={toggleSortDirection} type="button">
+                <button className="btn btn-outline flex items-center justify-center w-full sm:w-auto" onClick={toggleSortDirection} type="button">
                   {sortDirection === "asc" ? (
                     <ArrowUp className="w-4 h-4 mr-1.5" />
                   ) : (
