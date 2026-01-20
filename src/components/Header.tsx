@@ -150,7 +150,7 @@ const Header: React.FC = () => {
                   </button>
 
                   {profileOpen && (
-                    <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+                    <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-50">
                       <div className="px-4 py-3 bg-gray-50">
                         <div className="text-xs text-gray-500">Signed in as</div>
                         <div className="text-sm font-medium text-gray-900 truncate">{user.email}</div>
