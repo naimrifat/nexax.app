@@ -388,7 +388,8 @@
 .results-action-bar .results-action-btn {
   padding: 8px 12px;
   font-size: 12px;
-  flex: 0 1 35%;
+  flex: 0 0 35%;
+  width: 35%;
   max-width: 35%;
 }
 
