@@ -2478,12 +2478,12 @@ export default function ResultsPage() {
               onClick={() => workspaceId && fetchPolicyLists(workspaceId)}
               disabled={policyLoading || !workspaceId}
               style={{
-                padding: '8px 12px',
+                padding: '6px 10px',
                 background: policyLoading ? '#999' : '#f3f4f6',
                 border: '1px solid #ddd',
                 borderRadius: 6,
                 cursor: policyLoading ? 'default' : 'pointer',
-                fontSize: 12,
+                fontSize: 11,
               }}
               title="Reload policy lists from eBay (if eligible)"
             >
@@ -2811,13 +2811,13 @@ export default function ResultsPage() {
               disabled={disableActions || publishing || preflightLoading || savingDraft}
               className="results-action-btn"
               style={{
-                padding: '12px 24px',
+                padding: '8px 12px',
                 background: disableActions || publishing || preflightLoading || savingDraft ? '#999' : '#10b981',
                 color: 'white',
                 border: 'none',
                 borderRadius: '4px',
                 cursor: disableActions || publishing || preflightLoading || savingDraft ? 'default' : 'pointer',
-                fontSize: 16,
+                fontSize: 12,
                 fontWeight: 600,
               }}
             >
@@ -2830,13 +2830,13 @@ export default function ResultsPage() {
               disabled={publishing || preflightLoading || savingDraft || disableActions}
               className="results-action-btn"
               style={{
-                padding: '12px 32px',
+                padding: '8px 12px',
                 background: publishing || preflightLoading || savingDraft || disableActions ? '#999' : '#0064d2',
                 color: 'white',
                 border: 'none',
                 borderRadius: 4,
                 cursor: publishing || preflightLoading || savingDraft || disableActions ? 'default' : 'pointer',
-                fontSize: 16,
+                fontSize: 12,
                 fontWeight: 600,
               }}
             >
@@ -2850,13 +2850,13 @@ export default function ResultsPage() {
                 onClick={() => navigate('/dashboard')}
                 className="results-action-btn"
                 style={{
-                  padding: '12px 24px',
+                  padding: '8px 12px',
                   background: '#3b82f6',
                   color: 'white',
                   border: 'none',
                   borderRadius: 4,
                   cursor: 'pointer',
-                  fontSize: 16,
+                  fontSize: 12,
                   fontWeight: 600,
                 }}
               >
@@ -2869,13 +2869,13 @@ export default function ResultsPage() {
                onClick={() => navigate('/create-listing')}
                className="results-action-btn"
                style={{
-                 padding: '12px 32px',
+                 padding: '8px 12px',
                  background: '#f0f0f0',
                  color: '#333',
                  border: '1px solid #ddd',
                  borderRadius: 4,
                  cursor: 'pointer',
-                 fontSize: 16,
+                 fontSize: 12,
                }}
              >
                Cancel
