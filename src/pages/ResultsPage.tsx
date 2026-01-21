@@ -436,6 +436,8 @@ export default function ResultsPage() {
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.00');
   const [keywords, setKeywords] = useState('');
+  const [keywordsList, setKeywordsList] = useState<string[]>([]);
+  const [keywordDraft, setKeywordDraft] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -518,6 +520,7 @@ export default function ResultsPage() {
   const specificsSectionRef = useRef<HTMLElement | null>(null);
   const priceSectionRef = useRef<HTMLElement | null>(null);
   const policiesSectionRef = useRef<HTMLElement | null>(null);
+  const keywordInputRef = useRef<HTMLInputElement | null>(null);
 
   // ----------------------------
   // Tenancy guard
@@ -952,6 +955,14 @@ export default function ResultsPage() {
       irregularPackage,
     ]
   );
+
+  useEffect(() => {
+    const parsed = keywords
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    setKeywordsList(parsed);
+  }, [keywords]);
 
   const missingRequirements = useMemo(() => {
     const missingBasics: string[] = [];
@@ -2356,12 +2367,57 @@ export default function ResultsPage() {
 
         <section style={{ marginTop: 24 }}>
           <h3>Keywords</h3>
-          <input
-            placeholder="e.g., vintage, designer, rare"
-            value={keywords}
-            onChange={(e) => setKeywords(e.target.value)}
-            style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
-          />
+          <div
+            className="results-keywords-input"
+            onClick={() => keywordInputRef.current?.focus()}
+            role="group"
+            aria-label="Keywords"
+          >
+            {keywordsList.map((keyword) => (
+              <span key={keyword} className="results-keywords-chip">
+                {keyword}
+                <button
+                  type="button"
+                  className="results-keywords-chip-remove"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsDirty(true);
+                    setKeywordsList((prev) => {
+                      const next = prev.filter((item) => item !== keyword);
+                      setKeywords(next.join(', '));
+                      return next;
+                    });
+                  }}
+                  aria-label={`Remove ${keyword}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <input
+              ref={keywordInputRef}
+              type="text"
+              value={keywordDraft}
+              placeholder={keywordsList.length ? '' : 'e.g., vintage, designer, rare'}
+              className="results-keywords-field"
+              onChange={(e) => setKeywordDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                const trimmed = keywordDraft.trim();
+                if (!trimmed) return;
+                setIsDirty(true);
+                setKeywordsList((prev) => {
+                  const exists = prev.some((item) => item.toLowerCase() === trimmed.toLowerCase());
+                  if (exists) return prev;
+                  const next = [...prev, trimmed];
+                  setKeywords(next.join(', '));
+                  return next;
+                });
+                setKeywordDraft('');
+              }}
+            />
+          </div>
         </section>
 
         <section
