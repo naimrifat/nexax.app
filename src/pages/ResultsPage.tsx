@@ -2819,6 +2819,8 @@ export default function ResultsPage() {
                 cursor: disableActions || publishing || preflightLoading || savingDraft ? 'default' : 'pointer',
                 fontSize: 12,
                 fontWeight: 600,
+                width: '35%',
+                flex: '0 0 35%',
               }}
             >
               Save Draft
@@ -2838,6 +2840,8 @@ export default function ResultsPage() {
                 cursor: publishing || preflightLoading || savingDraft || disableActions ? 'default' : 'pointer',
                 fontSize: 12,
                 fontWeight: 600,
+                width: '35%',
+                flex: '0 0 35%',
               }}
             >
               {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
@@ -2858,6 +2862,8 @@ export default function ResultsPage() {
                   cursor: 'pointer',
                   fontSize: 12,
                   fontWeight: 600,
+                  width: '35%',
+                  flex: '0 0 35%',
                 }}
               >
                 Go to Dashboard
@@ -2876,6 +2882,8 @@ export default function ResultsPage() {
                  borderRadius: 4,
                  cursor: 'pointer',
                  fontSize: 12,
+                 width: '35%',
+                 flex: '0 0 35%',
                }}
              >
                Cancel
