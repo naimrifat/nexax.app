@@ -385,6 +385,35 @@
   font-size: 14px;
 }
 
+.results-policy-input {
+  height: 40px;
+  box-sizing: border-box;
+}
+
+.results-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f9fafb;
+}
+
+.results-toggle-btn {
+  border: 0;
+  background: transparent;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.results-toggle-btn.is-active {
+  background: #ecfdf5;
+  color: #0f766e;
+}
+
 .results-subgrid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
