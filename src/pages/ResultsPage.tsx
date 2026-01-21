@@ -2511,6 +2511,7 @@ export default function ResultsPage() {
                     setEbayFulfillmentPolicyId(e.target.value);
                   }}
                   disabled={policyLoading}
+                  className="results-policy-input"
                   style={{
                     width: '100%',
                     padding: 10,
@@ -2533,6 +2534,7 @@ export default function ResultsPage() {
                     setEbayFulfillmentPolicyId(e.target.value);
                   }}
                   placeholder="Enter shipping policy ID"
+                  className="results-policy-input"
                   style={{
                     width: '100%',
                     padding: 10,
@@ -2622,17 +2624,30 @@ export default function ResultsPage() {
 
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Irregular package</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151' }}>
-                <input
-                  type="checkbox"
-                  checked={irregularPackage}
-                  onChange={(e) => {
+              <div className="results-toggle-group" role="group" aria-label="Irregular package">
+                <button
+                  type="button"
+                  className={`results-toggle-btn ${irregularPackage ? 'is-active' : ''}`}
+                  onClick={() => {
                     setIsDirty(true);
-                    setIrregularPackage(e.target.checked);
+                    setIrregularPackage(true);
                   }}
-                />
-                This package is irregular
-              </label>
+                  aria-pressed={irregularPackage}
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  className={`results-toggle-btn ${!irregularPackage ? 'is-active' : ''}`}
+                  onClick={() => {
+                    setIsDirty(true);
+                    setIrregularPackage(false);
+                  }}
+                  aria-pressed={!irregularPackage}
+                >
+                  No
+                </button>
+              </div>
 
             </div>
           </div>
@@ -2648,6 +2663,7 @@ export default function ResultsPage() {
                     setEbayPaymentPolicyId(e.target.value);
                   }}
                   disabled={policyLoading}
+                  className="results-policy-input"
                   style={{
                     width: '100%',
                     padding: 10,
@@ -2670,6 +2686,7 @@ export default function ResultsPage() {
                     setEbayPaymentPolicyId(e.target.value);
                   }}
                   placeholder="Enter payment policy ID"
+                  className="results-policy-input"
                   style={{
                     width: '100%',
                     padding: 10,
@@ -2690,6 +2707,7 @@ export default function ResultsPage() {
                     setEbayReturnPolicyId(e.target.value);
                   }}
                   disabled={policyLoading}
+                  className="results-policy-input"
                   style={{
                     width: '100%',
                     padding: 10,
@@ -2712,6 +2730,7 @@ export default function ResultsPage() {
                     setEbayReturnPolicyId(e.target.value);
                   }}
                   placeholder="Enter return policy ID"
+                  className="results-policy-input"
                   style={{
                     width: '100%',
                     padding: 10,
