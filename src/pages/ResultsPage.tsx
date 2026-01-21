@@ -2622,84 +2622,167 @@ export default function ResultsPage() {
 
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Irregular package</label>
-              {missingRequirements.totalMissingCount > 0 ? (
-              <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden' }}>
-             <button
-               type="button"
-               className="results-highlight-btn"
-               onClick={() => {
-                  setUiError(null);
-                  setHighlightMissing(true);
- 
- 
-                 const missingBasics = missingRequirements.missingBasics;
-                const missingPolicies = missingRequirements.missingPolicies;
-                const missingAspects = missingRequirements.missingAspects;
-
-                if (missingBasics.includes('Title')) {
-                  titleInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  titleInputRef.current?.focus();
-                  return;
-                }
-
-                if (missingBasics.includes('Description')) {
-                  descriptionInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  descriptionInputRef.current?.focus();
-                  return;
-                }
-
-                if (missingBasics.includes('Category')) {
-                  categorySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  return;
-                }
-
-                if (missingBasics.includes('Condition')) {
-                  conditionSelectRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  conditionSelectRef.current?.focus();
-                  return;
-                }
-
-
-
-                if (missingBasics.includes('Price')) {
-                  priceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  return;
-                }
-
-                if (missingBasics.includes('Photos')) {
-                  photosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  return;
-                }
-
-                if (missingPolicies.length) {
-                  policiesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  return;
-                }
-
-                if (missingAspects.length) {
-                  specificsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  return;
-                }
-              }}
-              style={{
-                padding: '10px 14px',
-                borderRadius: 8,
-                border: '1px solid #ef4444',
-                background: '#fff',
-                color: '#991b1b',
-                cursor: 'pointer',
-                fontWeight: 700,
-                whiteSpace: 'normal',
-                fontSize: 14,
-              }}
-            >
-              Highlight missing fields
-            </button>
-          </div>
-        ) : null}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={irregularPackage}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setIrregularPackage(e.target.checked);
+                  }}
+                />
+                This package is irregular
+              </label>
 
             </div>
           </div>
+
+          <div className="results-policy-row2" style={{ marginTop: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Payment policy</label>
+              {paymentPolicies.length > 0 ? (
+                <select
+                  value={ebayPaymentPolicyId}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayPaymentPolicyId(e.target.value);
+                  }}
+                  disabled={policyLoading}
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayPaymentPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
+                >
+                  <option value="">Select…</option>
+                  {paymentPolicies.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.id})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={ebayPaymentPolicyId}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayPaymentPolicyId(e.target.value);
+                  }}
+                  placeholder="Enter payment policy ID"
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayPaymentPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
+                />
+              )}
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Return policy</label>
+              {returnPolicies.length > 0 ? (
+                <select
+                  value={ebayReturnPolicyId}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayReturnPolicyId(e.target.value);
+                  }}
+                  disabled={policyLoading}
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayReturnPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
+                >
+                  <option value="">Select…</option>
+                  {returnPolicies.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.id})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={ebayReturnPolicyId}
+                  onChange={(e) => {
+                    setIsDirty(true);
+                    setEbayReturnPolicyId(e.target.value);
+                  }}
+                  placeholder="Enter return policy ID"
+                  style={{
+                    width: '100%',
+                    padding: 10,
+                    border: highlightMissing && !String(ebayReturnPolicyId || '').trim() ? '1px solid #ef4444' : undefined,
+                    borderRadius: 6,
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          {missingRequirements.totalMissingCount > 0 ? (
+            <div className="results-policy-actions">
+              <button
+                type="button"
+                className="results-highlight-btn"
+                onClick={() => {
+                  setUiError(null);
+                  setHighlightMissing(true);
+
+                  const missingBasics = missingRequirements.missingBasics;
+                  const missingPolicies = missingRequirements.missingPolicies;
+                  const missingAspects = missingRequirements.missingAspects;
+
+                  if (missingBasics.includes('Title')) {
+                    titleInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    titleInputRef.current?.focus();
+                    return;
+                  }
+
+                  if (missingBasics.includes('Description')) {
+                    descriptionInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    descriptionInputRef.current?.focus();
+                    return;
+                  }
+
+                  if (missingBasics.includes('Category')) {
+                    categorySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return;
+                  }
+
+                  if (missingBasics.includes('Condition')) {
+                    conditionSelectRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    conditionSelectRef.current?.focus();
+                    return;
+                  }
+
+                  if (missingBasics.includes('Price')) {
+                    priceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return;
+                  }
+
+                  if (missingBasics.includes('Photos')) {
+                    photosSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return;
+                  }
+
+                  if (missingPolicies.length) {
+                    policiesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return;
+                  }
+
+                  if (missingAspects.length) {
+                    specificsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }}
+              >
+                Highlight missing fields
+              </button>
+            </div>
+          ) : null}
 
         </section>
 
