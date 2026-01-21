@@ -2407,19 +2407,32 @@ export default function ResultsPage() {
               className="results-keywords-field"
               onChange={(e) => setKeywordDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key !== 'Enter') return;
-                e.preventDefault();
-                const trimmed = keywordDraft.trim();
-                if (!trimmed) return;
-                setIsDirty(true);
-                setKeywordsList((prev) => {
-                  const exists = prev.some((item) => item.toLowerCase() === trimmed.toLowerCase());
-                  if (exists) return prev;
-                  const next = [...prev, trimmed];
-                  setKeywords(next.join(', '));
-                  return next;
-                });
-                setKeywordDraft('');
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const trimmed = keywordDraft.trim();
+                  if (!trimmed) return;
+                  setIsDirty(true);
+                  setKeywordsList((prev) => {
+                    if (prev.length >= 10) return prev;
+                    const exists = prev.some((item) => item.toLowerCase() === trimmed.toLowerCase());
+                    if (exists) return prev;
+                    const next = [...prev, trimmed];
+                    setKeywords(next.join(', '));
+                    return next;
+                  });
+                  setKeywordDraft('');
+                  return;
+                }
+
+                if (e.key === 'Backspace' && !keywordDraft.trim()) {
+                  setIsDirty(true);
+                  setKeywordsList((prev) => {
+                    if (prev.length === 0) return prev;
+                    const next = prev.slice(0, -1);
+                    setKeywords(next.join(', '));
+                    return next;
+                  });
+                }
               }}
             />
           </div>
