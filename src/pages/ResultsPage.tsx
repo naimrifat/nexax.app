@@ -2499,7 +2499,7 @@ export default function ResultsPage() {
             </div>
           ) : null}
 
-          {/* Row 1: Shipping policy + package + irregular */}
+          {/* Row 1: Policies */}
           <div className="results-policy-row1" style={{ marginTop: 12 }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Shipping policy</label>
@@ -2545,114 +2545,6 @@ export default function ResultsPage() {
               )}
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Package weight (optional)</label>
-              <div className="results-subgrid-2">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    value={packageWeightLb}
-                    onChange={(e) => {
-                    setIsDirty(true);
-                    setPackageWeightLb(e.target.value);
-                  }}
-                    inputMode="numeric"
-                    placeholder="0"
-                    style={{ width: '100%', padding: 10 }}
-                  />
-                  <span style={{ fontSize: 12, color: '#666' }}>lb</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    value={packageWeightOz}
-                    onChange={(e) => {
-                    setIsDirty(true);
-                    setPackageWeightOz(e.target.value);
-                  }}
-                    inputMode="numeric"
-                    placeholder="0–15"
-                    style={{ width: '100%', padding: 10 }}
-                  />
-                  <span style={{ fontSize: 12, color: '#666' }}>oz</span>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Package dimensions (optional)</label>
-              <div className="results-subgrid-3">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    value={packageLengthIn}
-                    onChange={(e) => {
-                      setIsDirty(true);
-                      setPackageLengthIn(e.target.value);
-                    }}
-                    inputMode="decimal"
-                    placeholder="0"
-                    style={{ width: '100%', padding: 10 }}
-                  />
-                  <span style={{ fontSize: 12, color: '#666' }}>in</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    value={packageWidthIn}
-                    onChange={(e) => {
-                      setIsDirty(true);
-                      setPackageWidthIn(e.target.value);
-                    }}
-                    inputMode="decimal"
-                    placeholder="0"
-                    style={{ width: '100%', padding: 10 }}
-                  />
-                  <span style={{ fontSize: 12, color: '#666' }}>in</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    value={packageHeightIn}
-                    onChange={(e) => {
-                      setIsDirty(true);
-                      setPackageHeightIn(e.target.value);
-                    }}
-                    inputMode="decimal"
-                    placeholder="0"
-                    style={{ width: '100%', padding: 10 }}
-                  />
-                  <span style={{ fontSize: 12, color: '#666' }}>in</span>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Irregular package</label>
-              <div className="results-toggle-group" role="group" aria-label="Irregular package">
-                <button
-                  type="button"
-                  className={`results-toggle-btn ${irregularPackage ? 'is-active' : ''}`}
-                  onClick={() => {
-                    setIsDirty(true);
-                    setIrregularPackage(true);
-                  }}
-                  aria-pressed={irregularPackage}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  className={`results-toggle-btn ${!irregularPackage ? 'is-active' : ''}`}
-                  onClick={() => {
-                    setIsDirty(true);
-                    setIrregularPackage(false);
-                  }}
-                  aria-pressed={!irregularPackage}
-                >
-                  No
-                </button>
-              </div>
-
-            </div>
-          </div>
-
-          <div className="results-policy-row2" style={{ marginTop: 12 }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Payment policy</label>
               {paymentPolicies.length > 0 ? (
@@ -2739,6 +2631,114 @@ export default function ResultsPage() {
                   }}
                 />
               )}
+            </div>
+          </div>
+
+          {/* Row 2: Package details */}
+          <div className="results-policy-row2" style={{ marginTop: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Package weight (optional)</label>
+              <div className="results-subgrid-2">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    value={packageWeightLb}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPackageWeightLb(e.target.value);
+                    }}
+                    inputMode="numeric"
+                    placeholder="0"
+                    style={{ width: '100%', padding: 10 }}
+                  />
+                  <span style={{ fontSize: 12, color: '#666' }}>lb</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    value={packageWeightOz}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPackageWeightOz(e.target.value);
+                    }}
+                    inputMode="numeric"
+                    placeholder="0–15"
+                    style={{ width: '100%', padding: 10 }}
+                  />
+                  <span style={{ fontSize: 12, color: '#666' }}>oz</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Package dimensions (optional)</label>
+              <div className="results-subgrid-3">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    value={packageLengthIn}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPackageLengthIn(e.target.value);
+                    }}
+                    inputMode="decimal"
+                    placeholder="0"
+                    style={{ width: '100%', padding: 10 }}
+                  />
+                  <span style={{ fontSize: 12, color: '#666' }}>in</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    value={packageWidthIn}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPackageWidthIn(e.target.value);
+                    }}
+                    inputMode="decimal"
+                    placeholder="0"
+                    style={{ width: '100%', padding: 10 }}
+                  />
+                  <span style={{ fontSize: 12, color: '#666' }}>in</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    value={packageHeightIn}
+                    onChange={(e) => {
+                      setIsDirty(true);
+                      setPackageHeightIn(e.target.value);
+                    }}
+                    inputMode="decimal"
+                    placeholder="0"
+                    style={{ width: '100%', padding: 10 }}
+                  />
+                  <span style={{ fontSize: 12, color: '#666' }}>in</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Irregular package</label>
+              <div className="results-toggle-group" role="group" aria-label="Irregular package">
+                <button
+                  type="button"
+                  className={`results-toggle-btn ${irregularPackage ? 'is-active' : ''}`}
+                  onClick={() => {
+                    setIsDirty(true);
+                    setIrregularPackage(true);
+                  }}
+                  aria-pressed={irregularPackage}
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  className={`results-toggle-btn ${!irregularPackage ? 'is-active' : ''}`}
+                  onClick={() => {
+                    setIsDirty(true);
+                    setIrregularPackage(false);
+                  }}
+                  aria-pressed={!irregularPackage}
+                >
+                  No
+                </button>
+              </div>
             </div>
           </div>
 
