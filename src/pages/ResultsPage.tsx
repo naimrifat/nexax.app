@@ -1244,7 +1244,12 @@ export default function ResultsPage() {
 
           const kws =
             Array.isArray(lj.keywords) ? lj.keywords.join(', ') : typeof lj.keywords === 'string' ? lj.keywords : '';
+          const parsedKeywords = kws
+            .split(',')
+            .map((k) => k.trim())
+            .filter(Boolean);
           setKeywords(kws);
+          setKeywordsList(parsedKeywords);
 
           const catFromJson = lj.category || null;
           const cat: CategoryWithPath | null =
