@@ -367,6 +367,24 @@
   min-width: 0;
 }
 
+.results-policy-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.results-policy-actions .results-highlight-btn {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #ef4444;
+  background: #fff;
+  color: #991b1b;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+}
+
 .results-subgrid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
