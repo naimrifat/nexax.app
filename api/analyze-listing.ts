@@ -562,7 +562,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const blobOrObject = incoming.filter(isBlobOrObjectUrl);
     const nonHttp = incoming.filter((u) => !isBlobOrObjectUrl(u) && !isHttpUrl(u));
-    const hostedImages = incoming.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u)).slice(0, 12);
+    const hostedImages = incoming.filter((u) => !isBlobOrObjectUrl(u) && isHttpUrl(u)).slice(0, 23);
 
     // Apply Cloudinary optimizations for vision (reduces tokens / bandwidth)
     const visionImages = hostedImages.map(toOptimizedVisionUrl);
