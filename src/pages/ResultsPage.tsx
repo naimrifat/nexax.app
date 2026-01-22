@@ -967,7 +967,11 @@ export default function ResultsPage() {
       .split(',')
       .map((k) => k.trim())
       .filter(Boolean);
-    setKeywordsList(parsed);
+    const capped = parsed.slice(0, 10);
+    setKeywordsList(capped);
+    if (parsed.length > 10) {
+      setKeywords(capped.join(', '));
+    }
   }, [keywords]);
 
   const missingRequirements = useMemo(() => {
