@@ -3077,7 +3077,7 @@ export default function ResultsPage() {
               Dismiss
             </button>
           </div>
-        )}
+        ) : null}
 
         {preflightPassed === true ? (
 
@@ -3094,7 +3094,7 @@ export default function ResultsPage() {
           >
             {preflightMessage || 'Checks passed'}
           </div>
-        )}
+        ) : null}
 
         {publishSuccess ? (
           <div
@@ -3117,7 +3117,7 @@ export default function ResultsPage() {
               </div>
             ) : null}
           </div>
-        )}
+        ) : null}
 
         {ebayReconnectRequired ? (
           <div
