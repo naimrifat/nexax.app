@@ -307,7 +307,7 @@ function TokenSelect({
               ×
             </button>
           </span>
-        ) : null}
+        )}
 
         <input
           ref={inputRef}
@@ -2275,9 +2275,9 @@ export default function ResultsPage() {
               Rebuild Listing
             </button>
           </div>
-          {showTitleInlineError && !title.trim() ? (
+          {showTitleInlineError && !title.trim() && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#b91c1c' }}>Title is required.</div>
-          ) : null}
+          )}
           <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
           {rebuildSuccess ? <div className="results-rebuild-success">{rebuildSuccess}</div> : null}
         </section>
@@ -2349,7 +2349,7 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        {category?.id && conditionRequired ? (
+        {category?.id && conditionRequired && (
           <section ref={conditionSectionRef as any} style={{ marginTop: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <h3 style={{ margin: 0 }}>Condition</h3>
@@ -2406,7 +2406,7 @@ export default function ResultsPage() {
                     ))}
                   </select>
 
-                  {needsDescription ? (
+                  {needsDescription && (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Condition description</div>
                       <textarea
@@ -2428,12 +2428,12 @@ export default function ResultsPage() {
                         }}
                       />
                     </div>
-                  ) : null}
+                  )}
                 </div>
               );
             })()}
           </section>
-        ) : null}
+        )}
 
         <section ref={specificsSectionRef as any} style={{ marginTop: 24 }}>
 
@@ -2616,11 +2616,11 @@ export default function ResultsPage() {
 
           {policyError ? <div style={{ marginTop: 10, color: '#b45309', fontSize: 13 }}>{policyError}</div> : null}
 
-          {!paymentPolicies.length && !returnPolicies.length && !fulfillmentPolicies.length ? (
+          {!paymentPolicies.length && !returnPolicies.length && !fulfillmentPolicies.length && (
             <div style={{ marginTop: 10, fontSize: 13, color: '#666' }}>
               Policy lists are not available for this account (or could not be fetched). You can still paste policy IDs below.
             </div>
-          ) : null}
+          )}
 
           {/* Row 1: Policies */}
           <div className="results-policy-row1" style={{ marginTop: 12 }}>
@@ -2865,7 +2865,7 @@ export default function ResultsPage() {
             </div>
           </div>
 
-          {missingRequirements.totalMissingCount > 0 ? (
+          {missingRequirements.totalMissingCount > 0 && (
             <div className="results-policy-actions">
               <button
                 type="button"
@@ -2924,7 +2924,7 @@ export default function ResultsPage() {
                 Highlight missing fields
               </button>
             </div>
-          ) : null}
+          )}
 
         </section>
 
@@ -2970,7 +2970,7 @@ export default function ResultsPage() {
               {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
             </button>
 
-            {draftSavedSuccessfully ? (
+            {draftSavedSuccessfully && (
 
               <button
                 type="button"
@@ -2992,7 +2992,7 @@ export default function ResultsPage() {
               >
                 Go to Dashboard
               </button>
-            ) : null}
+            )}
 
              <button
                type="button"
@@ -3031,7 +3031,7 @@ export default function ResultsPage() {
 
 
 
-        {uiError ? (
+        {uiError && (
           <div
             style={{
               marginTop: 12,
@@ -3050,12 +3050,12 @@ export default function ResultsPage() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>{uiError.title}</div>
               <div style={{ fontSize: 14, overflowWrap: 'anywhere' }}>{uiError.message}</div>
-              {uiError.requestId || uiError.ebayErrorId ? (
+              {(uiError.requestId || uiError.ebayErrorId) && (
                 <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280', overflowWrap: 'anywhere' }}>
                   {uiError.requestId ? <div>Request ID: {uiError.requestId}</div> : null}
                   {uiError.ebayErrorId ? <div>eBay Error ID: {uiError.ebayErrorId}</div> : null}
                 </div>
-              ) : null}
+              )}
             </div>
 
             <button
@@ -3077,9 +3077,9 @@ export default function ResultsPage() {
               Dismiss
             </button>
           </div>
-        ) : null}
+        )}
 
-        {preflightPassed === true ? (
+        {preflightPassed === true && (
 
           <div
             style={{
@@ -3094,9 +3094,9 @@ export default function ResultsPage() {
           >
             {preflightMessage || 'Checks passed'}
           </div>
-        ) : null}
+        )}
 
-        {publishSuccess ? (
+        {publishSuccess && (
           <div
             style={{
               marginTop: 12,
@@ -3109,17 +3109,17 @@ export default function ResultsPage() {
           >
             <div style={{ fontWeight: 600, marginBottom: 6 }}>Published successfully</div>
             {publishSuccess.ebay_item_id ? <div style={{ fontSize: 14 }}>eBay item id: {publishSuccess.ebay_item_id}</div> : null}
-            {publishSuccess.ebay_listing_url ? (
+            {publishSuccess.ebay_listing_url && (
               <div style={{ fontSize: 14, marginTop: 4 }}>
                 <a href={publishSuccess.ebay_listing_url} target="_blank" rel="noreferrer" style={{ color: '#166534', textDecoration: 'underline' }}>
                   View on eBay
                 </a>
               </div>
-            ) : null}
+            )}
           </div>
-        ) : null}
+        )}
 
-        {ebayReconnectRequired ? (
+        {ebayReconnectRequired && (
           <div
             style={{
               marginTop: 12,
@@ -3150,9 +3150,9 @@ export default function ResultsPage() {
               {ebayReconnectLoading ? 'Redirecting…' : 'Reconnect eBay'}
             </button>
           </div>
-        ) : null}
+        )}
 
-        {publishErrors.length ? (
+        {publishErrors.length > 0 && (
           <div
             style={{
               marginTop: 12,
@@ -3170,7 +3170,7 @@ export default function ResultsPage() {
               ))}
             </ul>
           </div>
-        ) : null}
+        )}
 
         {showRebuildModal && (
           <div className="results-modal-backdrop">
@@ -3236,7 +3236,7 @@ export default function ResultsPage() {
                 </label>
               </div>
 
-              {showRebuildConfirm ? (
+              {showRebuildConfirm && (
                 <div className="results-rebuild-confirm">
                   <div>You have unsaved changes. Rebuild will overwrite selected fields. Continue?</div>
                   <div className="results-rebuild-actions">
@@ -3258,7 +3258,7 @@ export default function ResultsPage() {
                     </button>
                   </div>
                 </div>
-              ) : null}
+              )}
 
               {rebuildNotice ? <div className="results-rebuild-notice">{rebuildNotice}</div> : null}
 
@@ -3294,7 +3294,7 @@ export default function ResultsPage() {
           </div>
         )}
 
-        {saveError ? (
+        {saveError && (
           <div
             style={{
               marginTop: 12,
@@ -3309,13 +3309,13 @@ export default function ResultsPage() {
             <div style={{ fontWeight: 600, marginBottom: 6 }}>Save Draft failed:</div>
             <div>{saveError}</div>
           </div>
-        ) : null}
+        )}
 
-        {draftStatus ? (
+        {draftStatus && (
           <div style={{ marginTop: 8, fontSize: 14, color: draftStatus.toLowerCase().includes('fail') ? 'red' : '#2f855a' }}>
             {draftStatus}
           </div>
-        ) : null}
+        )}
       </main>
 
        <aside className="results-aside">
