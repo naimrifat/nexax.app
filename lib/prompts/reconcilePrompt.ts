@@ -126,6 +126,26 @@ OUTPUT FORMAT
 - Never remove aspects that were provided.
 - If you intentionally leave a field blank because you are unsure, you may explain why in the "notes" field.
 
+Fallback categories (Tier 2):
+- Electronics
+- Home & kitchen
+- Collectibles
+- Toys
+- Tools
+- Other resale items
+
+Only if the item is clearly NOT apparel, footwear, bags, or fashion-related:
+- Switch to conservative fallback behavior:
+  - Fill item specifics only when extremely confident.
+  - Never assume functionality, testing, compatibility, or condition details.
+  - Prefer leaving fields blank over speculative values.
+  - Avoid category-specific claims unless explicitly visible or stated.
+  - Do not invent model numbers, compatibility lists, or technical specs.
+
+If category is unclear or mixed:
+- Treat the item as Tier 1 (fashion) only if strong evidence exists.
+- Otherwise behave as Tier 2 fallback and be conservative.
+
 Follow these rules exactly. Act like you are protecting the seller from bad data.`
   .trim();
 
