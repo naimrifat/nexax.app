@@ -962,6 +962,18 @@ export default function ResultsPage() {
     ]
   );
 
+  const missingRequiredSpecifics = useMemo(() => {
+    const required = (specifics || []).filter((spec) => spec.required);
+    const missing = required.filter((spec) => {
+      const value = spec.value;
+      if (Array.isArray(value)) {
+        return value.filter((v) => String(v ?? '').trim().length > 0).length === 0;
+      }
+      return String(value ?? '').trim().length === 0;
+    });
+    return missing.map((spec) => spec.name).filter(Boolean);
+  }, [specifics]);
+
   useEffect(() => {
     const parsed = keywords
       .split(',')
@@ -2316,6 +2328,31 @@ export default function ResultsPage() {
           )}
           <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
           {rebuildSuccess ? <div className="results-rebuild-success">{rebuildSuccess}</div> : null}
+        </section>
+
+        <section className="results-seo-panel" aria-label="SEO Health">
+          <div className="results-seo-header">SEO Health</div>
+          <div className="results-seo-item">
+            <div className="results-seo-label">Title length</div>
+            <div className="results-seo-value">{title.length}/80</div>
+          </div>
+          {title.length < 50 ? (
+            <div className="results-seo-warning">Title may be too short for best visibility.</div>
+          ) : null}
+          {title.length > 80 ? <div className="results-seo-error">Title exceeds 80 characters.</div> : null}
+
+          <div className="results-seo-item">
+            <div className="results-seo-label">Missing required specifics</div>
+            <div className="results-seo-value">{missingRequiredSpecifics.length}</div>
+          </div>
+          {missingRequiredSpecifics.length > 0 ? (
+            <div className="results-seo-missing">
+              {missingRequiredSpecifics.slice(0, 8).join(', ')}
+              {missingRequiredSpecifics.length > 8 ? ` +${missingRequiredSpecifics.length - 8} more` : ''}
+            </div>
+          ) : (
+            <div className="results-seo-good">All required specifics filled.</div>
+          )}
         </section>
 
         <section style={{ marginTop: 24 }}>
