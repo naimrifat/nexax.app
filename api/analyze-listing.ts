@@ -1,4 +1,5 @@
 import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from "../lib/prompts/reconcilePrompt.js";
+import { optimizeEbayTitle } from "../lib/seo/titleOptimizer.js";
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -732,7 +733,7 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
     });
 
     const detected = (visionJSON.detected || {}) as NonNullable<VisionJSON['detected']>;
-    const title = visionJSON.title || '';
+    let title = visionJSON.title || '';
     const description = visionJSON.description || '';
 
     const condition_intent = normalizeConditionIntent((visionJSON as any).condition_intent);
@@ -796,6 +797,9 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
     } catch {
       // keep defaults
     }
+
+    const optimized = optimizeEbayTitle({ rawTitle: title, categoryPath: category.path, detected });
+    title = optimized.title || title;
 
     // Pull aspects for the chosen category
     let aspects: AspectSchema[] = [];
