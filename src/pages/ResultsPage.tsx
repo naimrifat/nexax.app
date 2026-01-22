@@ -2433,7 +2433,7 @@ export default function ResultsPage() {
               );
             })()}
           </section>
-        )}
+        ) : null}
 
         <section ref={specificsSectionRef as any} style={{ marginTop: 24 }}>
 
