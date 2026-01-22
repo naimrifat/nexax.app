@@ -307,7 +307,7 @@ function TokenSelect({
               ×
             </button>
           </span>
-        )}
+        ) : null}
 
         <input
           ref={inputRef}
