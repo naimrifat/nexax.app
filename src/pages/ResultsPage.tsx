@@ -440,7 +440,6 @@ export default function ResultsPage() {
   const [keywordDraft, setKeywordDraft] = useState('');
   const [showRebuildModal, setShowRebuildModal] = useState(false);
   const [rebuildFeedback, setRebuildFeedback] = useState('');
-  const [rebuildTargets, setRebuildTargets] = useState({ title: true, description: true, specifics: false });
   const [rebuildLoading, setRebuildLoading] = useState(false);
   const [rebuildNotice, setRebuildNotice] = useState('');
   const [rebuildSuccess, setRebuildSuccess] = useState('');
@@ -1170,6 +1169,38 @@ export default function ResultsPage() {
     }
   };
 
+  const inferRebuildTargets = (feedback: string) => {
+    const text = feedback.toLowerCase();
+    const wantsTitle = text.includes('title');
+    const wantsDescription = text.includes('description') || text.includes('desc');
+    const specificsHints = [
+      'specifics',
+      'item specifics',
+      'aspect',
+      'aspects',
+      'attribute',
+      'attributes',
+      'brand',
+      'material',
+      'color',
+      'size',
+      'style',
+      'pattern',
+      'model',
+    ];
+    const wantsSpecifics = specificsHints.some((hint) => text.includes(hint));
+
+    if (!wantsTitle && !wantsDescription && !wantsSpecifics) {
+      return { title: true, description: true, specifics: false };
+    }
+
+    return {
+      title: wantsTitle,
+      description: wantsDescription,
+      specifics: wantsSpecifics,
+    };
+  };
+
   const handleRebuildListing = async () => {
     const feedback = rebuildFeedback.trim();
     if (feedback.length < 10) {
@@ -1180,6 +1211,8 @@ export default function ResultsPage() {
       setRebuildNotice('Listing not loaded yet.');
       return;
     }
+
+    const targets = inferRebuildTargets(feedback);
 
     setRebuildLoading(true);
     setRebuildNotice('');
@@ -1206,7 +1239,7 @@ export default function ResultsPage() {
         body: JSON.stringify({
           listing_id: listingId,
           feedback,
-          targets: rebuildTargets,
+          targets,
           current: {
             title,
             description,
@@ -1226,13 +1259,13 @@ export default function ResultsPage() {
 
       const data = json?.data || json || {};
 
-      if (rebuildTargets.title && typeof data.title === 'string') {
+      if (targets.title && typeof data.title === 'string') {
         setTitle(data.title);
       }
-      if (rebuildTargets.description && typeof data.description === 'string') {
+      if (targets.description && typeof data.description === 'string') {
         setDescription(data.description);
       }
-      if (rebuildTargets.specifics && Array.isArray(data.item_specifics)) {
+      if (targets.specifics && Array.isArray(data.item_specifics)) {
         setSpecifics((prev) => {
           const incoming = new Map(
             data.item_specifics.map((s: any) => [String(s?.name || '').toLowerCase(), s])
@@ -2267,7 +2300,6 @@ export default function ResultsPage() {
                 setRebuildNotice('');
                 setRebuildSuccess('');
                 setShowRebuildConfirm(false);
-                setRebuildTargets({ title: true, description: true, specifics: false });
                 setShowRebuildModal(true);
               }}
               disabled={rebuildLoading}
@@ -3206,36 +3238,6 @@ export default function ResultsPage() {
                 <div>“Fill missing item specifics like material, style, color”</div>
               </div>
 
-              <div className="results-rebuild-targets">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={rebuildTargets.title}
-                    onChange={(e) => setRebuildTargets((prev) => ({ ...prev, title: e.target.checked }))}
-                    disabled={rebuildLoading}
-                  />
-                  Rebuild title
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={rebuildTargets.description}
-                    onChange={(e) => setRebuildTargets((prev) => ({ ...prev, description: e.target.checked }))}
-                    disabled={rebuildLoading}
-                  />
-                  Rebuild description
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={rebuildTargets.specifics}
-                    onChange={(e) => setRebuildTargets((prev) => ({ ...prev, specifics: e.target.checked }))}
-                    disabled={rebuildLoading}
-                  />
-                  Rebuild item specifics
-                </label>
-              </div>
-
               {showRebuildConfirm && (
                 <div className="results-rebuild-confirm">
                   <div>You have unsaved changes. Rebuild will overwrite selected fields. Continue?</div>
@@ -3281,11 +3283,7 @@ export default function ResultsPage() {
                     }
                     handleRebuildListing();
                   }}
-                  disabled={
-                    rebuildLoading ||
-                    rebuildFeedback.trim().length < 10 ||
-                    (!rebuildTargets.title && !rebuildTargets.description && !rebuildTargets.specifics)
-                  }
+                  disabled={rebuildLoading || rebuildFeedback.trim().length < 10}
                 >
                   {rebuildLoading ? 'Rebuilding…' : 'Rebuild'}
                 </button>
