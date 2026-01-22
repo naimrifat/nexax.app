@@ -550,8 +550,8 @@ export default function HomePage() {
     if (!files) return;
 
     const newFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
-    if (photos.length + newFiles.length > 12) {
-      alert('You can upload a maximum of 12 photos.');
+    if (photos.length + newFiles.length > 23) {
+      alert('You can upload a maximum of 23 photos.');
       return;
     }
 
@@ -936,7 +936,7 @@ export default function HomePage() {
                 Try It Now - Free Demo
               </h2>
               <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-                Upload up to 12 photos and see how our AI creates professional listings instantly
+                Upload up to 23 photos and see how our AI creates professional listings instantly
               </p>
             </div>
 
@@ -1053,7 +1053,7 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  <p className="text-sm text-gray-500 text-center">{photos.length}/12 photos uploaded</p>
+                  <p className="text-sm text-gray-500 text-center">{photos.length}/23 photos uploaded</p>
                 </div>
 
                 {/* AI Generation */}
@@ -1076,7 +1076,7 @@ export default function HomePage() {
                     </div>
                     <div className="flex items-center">
                       <CheckCircle className="w-5 h-5 mr-3 text-teal-200" />
-                      <span className="text-sm">Analyzes up to 12 photos</span>
+                      <span className="text-sm">Analyzes up to 23 photos</span>
                     </div>
                   </div>
 
