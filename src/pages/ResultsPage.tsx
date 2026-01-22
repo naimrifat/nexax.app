@@ -438,6 +438,13 @@ export default function ResultsPage() {
   const [keywords, setKeywords] = useState('');
   const [keywordsList, setKeywordsList] = useState<string[]>([]);
   const [keywordDraft, setKeywordDraft] = useState('');
+  const [showRebuildModal, setShowRebuildModal] = useState(false);
+  const [rebuildFeedback, setRebuildFeedback] = useState('');
+  const [rebuildTargets, setRebuildTargets] = useState({ title: true, description: true, specifics: false });
+  const [rebuildLoading, setRebuildLoading] = useState(false);
+  const [rebuildNotice, setRebuildNotice] = useState('');
+  const [rebuildSuccess, setRebuildSuccess] = useState('');
+  const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1160,6 +1167,105 @@ export default function ResultsPage() {
       }, 2000);
     } else {
       setSaveIndicator('idle');
+    }
+  };
+
+  const handleRebuildListing = async () => {
+    const feedback = rebuildFeedback.trim();
+    if (feedback.length < 10) {
+      setRebuildNotice('Feedback must be at least 10 characters.');
+      return;
+    }
+    if (!listingId) {
+      setRebuildNotice('Listing not loaded yet.');
+      return;
+    }
+
+    setRebuildLoading(true);
+    setRebuildNotice('');
+
+    try {
+      const {
+        data: { session },
+        error: sessionErr,
+      } = await supabase.auth.getSession();
+
+      if (sessionErr || !session?.access_token) {
+        setRebuildNotice('Not logged in. Please sign in again.');
+        return;
+      }
+
+      const currentSpecifics = (specifics || []).map((s) => ({ name: s.name, value: s.value }));
+
+      const res = await fetch('/api/rebuild-listing', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          listing_id: listingId,
+          feedback,
+          targets: rebuildTargets,
+          current: {
+            title,
+            description,
+            keywords,
+            item_specifics: currentSpecifics,
+            condition_intent: conditionIntentRef.current || null,
+            category_id: category?.id || null,
+          },
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRebuildNotice(json?.error || 'Failed to rebuild listing.');
+        return;
+      }
+
+      const data = json?.data || json || {};
+
+      if (rebuildTargets.title && typeof data.title === 'string') {
+        setTitle(data.title);
+      }
+      if (rebuildTargets.description && typeof data.description === 'string') {
+        setDescription(data.description);
+      }
+      if (rebuildTargets.specifics && Array.isArray(data.item_specifics)) {
+        setSpecifics((prev) => {
+          const incoming = new Map(
+            data.item_specifics.map((s: any) => [String(s?.name || '').toLowerCase(), s])
+          );
+          const next = prev.map((spec) => {
+            const match = incoming.get(String(spec.name || '').toLowerCase());
+            if (!match) return spec;
+            return { ...spec, value: match.value };
+          });
+          data.item_specifics.forEach((s: any) => {
+            const key = String(s?.name || '').toLowerCase();
+            if (!key) return;
+            const exists = next.some((spec) => String(spec.name || '').toLowerCase() === key);
+            if (!exists) {
+              next.push({
+                name: String(s.name || '').trim(),
+                value: s.value ?? '',
+              } as ItemSpecific);
+            }
+          });
+          return next;
+        });
+      }
+
+      setIsDirty(true);
+      setRebuildSuccess('Rebuilt. Review and Save Draft.');
+      setShowRebuildModal(false);
+      setShowRebuildConfirm(false);
+      setRebuildFeedback('');
+    } catch (err: any) {
+      setRebuildNotice(err?.message || 'Failed to rebuild listing.');
+    } finally {
+      setRebuildLoading(false);
     }
   };
   // ----------------------------
@@ -2125,38 +2231,55 @@ export default function ResultsPage() {
 
         <section style={{ marginTop: 24 }}>
           <h3>Title</h3>
-          <input
-            ref={titleInputRef}
-            className="results-title-input"
-            placeholder="Enter title..."
-            value={title}
-            onChange={(e) => {
-              setIsDirty(true);
-              setTitle(e.target.value);
-            }}
+          <div className="results-title-row">
+            <input
+              ref={titleInputRef}
+              className="results-title-input"
+              placeholder="Enter title..."
+              value={title}
+              onChange={(e) => {
+                setIsDirty(true);
+                setTitle(e.target.value);
+                setRebuildSuccess('');
+              }}
               style={{
                 width: '100%',
                 padding: '8px 12px',
-                marginTop: 8,
                 fontSize: 14,
                 borderRadius: 6,
                 boxSizing: 'border-box',
-               border:
-                 highlightMissing && missingRequirements.missingBasics.includes('Title')
-                   ? '1px solid #ef4444'
-                   : showTitleInlineError && !title.trim()
-                     ? '1px solid #ef4444'
-                     : '1px solid #d1d5db',
-               background:
-                 highlightMissing && missingRequirements.missingBasics.includes('Title') ? '#fff7f7' : 'white',
-               outline: 'none',
-            }}
-            maxLength={80}
-          />
+                border:
+                  highlightMissing && missingRequirements.missingBasics.includes('Title')
+                    ? '1px solid #ef4444'
+                    : showTitleInlineError && !title.trim()
+                      ? '1px solid #ef4444'
+                      : '1px solid #d1d5db',
+                background:
+                  highlightMissing && missingRequirements.missingBasics.includes('Title') ? '#fff7f7' : 'white',
+                outline: 'none',
+              }}
+              maxLength={80}
+            />
+            <button
+              type="button"
+              className="results-rebuild-btn"
+              onClick={() => {
+                setRebuildNotice('');
+                setRebuildSuccess('');
+                setShowRebuildConfirm(false);
+                setRebuildTargets({ title: true, description: true, specifics: false });
+                setShowRebuildModal(true);
+              }}
+              disabled={rebuildLoading}
+            >
+              Rebuild Listing
+            </button>
+          </div>
           {showTitleInlineError && !title.trim() ? (
             <div style={{ marginTop: 6, fontSize: 12, color: '#b91c1c' }}>Title is required.</div>
           ) : null}
           <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
+          {rebuildSuccess ? <div className="results-rebuild-success">{rebuildSuccess}</div> : null}
         </section>
 
         <section style={{ marginTop: 24 }}>
@@ -2808,15 +2931,15 @@ export default function ResultsPage() {
           <div className="results-action-bar" style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={handleManualSaveDraft}
-              disabled={disableActions || publishing || preflightLoading || savingDraft}
+              disabled={disableActions || publishing || preflightLoading || savingDraft || rebuildLoading}
               className="results-action-btn"
               style={{
                 padding: '8px 12px',
-                background: disableActions || publishing || preflightLoading || savingDraft ? '#999' : '#10b981',
+                background: disableActions || publishing || preflightLoading || savingDraft || rebuildLoading ? '#999' : '#10b981',
                 color: 'white',
                 border: 'none',
                 borderRadius: '4px',
-                cursor: disableActions || publishing || preflightLoading || savingDraft ? 'default' : 'pointer',
+                cursor: disableActions || publishing || preflightLoading || savingDraft || rebuildLoading ? 'default' : 'pointer',
                 fontSize: 12,
                 fontWeight: 600,
                 width: '35%',
@@ -2829,15 +2952,15 @@ export default function ResultsPage() {
             <button
               type="button"
               onClick={handlePublish}
-              disabled={publishing || preflightLoading || savingDraft || disableActions}
+              disabled={publishing || preflightLoading || savingDraft || disableActions || rebuildLoading}
               className="results-action-btn"
               style={{
                 padding: '8px 12px',
-                background: publishing || preflightLoading || savingDraft || disableActions ? '#999' : '#0064d2',
+                background: publishing || preflightLoading || savingDraft || disableActions || rebuildLoading ? '#999' : '#0064d2',
                 color: 'white',
                 border: 'none',
                 borderRadius: 4,
-                cursor: publishing || preflightLoading || savingDraft || disableActions ? 'default' : 'pointer',
+                cursor: publishing || preflightLoading || savingDraft || disableActions || rebuildLoading ? 'default' : 'pointer',
                 fontSize: 12,
                 fontWeight: 600,
                 width: '35%',
@@ -2853,9 +2976,10 @@ export default function ResultsPage() {
                 type="button"
                 onClick={() => navigate('/dashboard')}
                 className="results-action-btn"
+                disabled={rebuildLoading}
                 style={{
                   padding: '8px 12px',
-                  background: '#3b82f6',
+                  background: rebuildLoading ? '#999' : '#3b82f6',
                   color: 'white',
                   border: 'none',
                   borderRadius: 4,
@@ -2874,13 +2998,14 @@ export default function ResultsPage() {
                type="button"
                onClick={() => navigate('/create-listing')}
                className="results-action-btn"
+               disabled={rebuildLoading}
                style={{
                  padding: '8px 12px',
-                 background: '#f0f0f0',
+                 background: rebuildLoading ? '#f3f4f6' : '#f0f0f0',
                  color: '#333',
                  border: '1px solid #ddd',
                  borderRadius: 4,
-                 cursor: 'pointer',
+                 cursor: rebuildLoading ? 'default' : 'pointer',
                  fontSize: 12,
                  width: '35%',
                  flex: '0 0 35%',
@@ -3044,6 +3169,128 @@ export default function ResultsPage() {
                 <li key={idx}>{e}</li>
               ))}
             </ul>
+          </div>
+        ) : null}
+
+        {showRebuildModal && (
+          <div className="results-modal-backdrop">
+            <div className="results-rebuild-modal">
+              <div className="results-rebuild-header">
+                <h3 style={{ margin: 0 }}>Rebuild Listing</h3>
+                <button
+                  type="button"
+                  className="results-rebuild-close"
+                  onClick={() => !rebuildLoading && setShowRebuildModal(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+
+              <label className="results-rebuild-label" htmlFor="rebuild-feedback">
+                Feedback
+              </label>
+              <textarea
+                id="rebuild-feedback"
+                className="results-rebuild-textarea"
+                placeholder="Tell us what to change..."
+                value={rebuildFeedback}
+                onChange={(e) => setRebuildFeedback(e.target.value)}
+                rows={4}
+                disabled={rebuildLoading}
+              />
+              <div className="results-rebuild-helper">
+                <div>Examples:</div>
+                <div>“Make title shorter and keyword-optimized”</div>
+                <div>“Description should be more formal and include measurements”</div>
+                <div>“Fill missing item specifics like material, style, color”</div>
+              </div>
+
+              <div className="results-rebuild-targets">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={rebuildTargets.title}
+                    onChange={(e) => setRebuildTargets((prev) => ({ ...prev, title: e.target.checked }))}
+                    disabled={rebuildLoading}
+                  />
+                  Rebuild title
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={rebuildTargets.description}
+                    onChange={(e) => setRebuildTargets((prev) => ({ ...prev, description: e.target.checked }))}
+                    disabled={rebuildLoading}
+                  />
+                  Rebuild description
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={rebuildTargets.specifics}
+                    onChange={(e) => setRebuildTargets((prev) => ({ ...prev, specifics: e.target.checked }))}
+                    disabled={rebuildLoading}
+                  />
+                  Rebuild item specifics
+                </label>
+              </div>
+
+              {showRebuildConfirm ? (
+                <div className="results-rebuild-confirm">
+                  <div>You have unsaved changes. Rebuild will overwrite selected fields. Continue?</div>
+                  <div className="results-rebuild-actions">
+                    <button
+                      type="button"
+                      className="results-rebuild-secondary"
+                      onClick={() => setShowRebuildConfirm(false)}
+                      disabled={rebuildLoading}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="results-rebuild-primary"
+                      onClick={handleRebuildListing}
+                      disabled={rebuildLoading}
+                    >
+                      Continue
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {rebuildNotice ? <div className="results-rebuild-notice">{rebuildNotice}</div> : null}
+
+              <div className="results-rebuild-footer">
+                <button
+                  type="button"
+                  className="results-rebuild-secondary"
+                  onClick={() => setShowRebuildModal(false)}
+                  disabled={rebuildLoading}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="results-rebuild-primary"
+                  onClick={() => {
+                    if (isDirty) {
+                      setShowRebuildConfirm(true);
+                      return;
+                    }
+                    handleRebuildListing();
+                  }}
+                  disabled={
+                    rebuildLoading ||
+                    rebuildFeedback.trim().length < 10 ||
+                    (!rebuildTargets.title && !rebuildTargets.description && !rebuildTargets.specifics)
+                  }
+                >
+                  {rebuildLoading ? 'Rebuilding…' : 'Rebuild'}
+                </button>
+              </div>
+            </div>
           </div>
         ) : null}
 
