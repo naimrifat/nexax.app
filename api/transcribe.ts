@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import formidable from 'formidable';
-import FormData from 'form-data';
 import fs from 'fs';
 
 export const config = {
@@ -120,21 +119,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       mimeType,
     });
 
+    const buffer = fs.readFileSync(filePath);
+    const blob = new Blob([buffer], { type: mimeType });
     const formData = new FormData();
     formData.append('model', 'whisper-1');
     formData.append('response_format', 'json');
-    formData.append('file', fs.createReadStream(filePath), {
-      filename: audioFile.originalFilename || 'dictation',
-      contentType: mimeType,
-    } as any);
+    formData.append('file', blob, audioFile.originalFilename || 'dictation.webm');
 
     const resp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        ...formData.getHeaders(),
-      },
-      body: formData as any,
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: formData,
     });
 
     if (!resp.ok) {
