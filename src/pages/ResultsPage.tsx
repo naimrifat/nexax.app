@@ -1,6 +1,6 @@
 // src/pages/ResultsPage.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Mic, Square } from 'lucide-react';
+import { Mic, Square, RefreshCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import './ResultsPage.css';
 import CategorySelector from '../components/CategorySelector';
@@ -2455,8 +2455,9 @@ export default function ResultsPage() {
                 setShowRebuildModal(true);
               }}
               disabled={rebuildLoading}
+              aria-label="Rebuild Listing"
             >
-              Rebuild Listing
+              <RefreshCcw size={16} />
             </button>
           </div>
           {showTitleInlineError && !title.trim() && (
