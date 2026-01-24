@@ -39,6 +39,7 @@ type OptimizeOutput = {
 
 const GENERIC_COLORS = new Set(['multi', 'multicolor', 'assorted', 'various', 'mixed']);
 const PREMIUM_MATERIALS = ['cashmere', 'silk', 'linen', 'merino', 'mohair', 'angora', 'leather', 'suede', 'wool'];
+const LENGTH_HINT_BLOCKLIST = new Set(['hip', 'regular', 'standard', 'waist']);
 const FASHION_KEYWORDS = [
   'clothing',
   'shoes',
@@ -156,11 +157,60 @@ const cleanRawTitle = (rawTitle: string) => {
   const deduped: string[] = [];
   for (const t of tokens) {
     const key = normalizeToken(t);
+    if (LENGTH_HINT_BLOCKLIST.has(key)) continue;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     deduped.push(t);
   }
   return deduped.join(' ').trim();
+};
+
+const allowedLengthHint = (typeValue: string, hintValue: string) => {
+  const type = normalizeToken(typeValue);
+  const hint = normalizeToken(hintValue);
+  if (!type || !hint) return '';
+
+  if (LENGTH_HINT_BLOCKLIST.has(hint)) return '';
+
+  const isDressOrSkirt = type.includes('dress') || type.includes('skirt');
+  if (isDressOrSkirt) {
+    if (['mini', 'midi', 'maxi'].some((k) => hint.includes(k))) return hintValue;
+    return '';
+  }
+
+  const isCoatOrJacket = type.includes('coat') || type.includes('jacket');
+  if (isCoatOrJacket) {
+    if (['long', 'knee', 'thigh'].some((k) => hint.includes(k))) return hintValue;
+    return '';
+  }
+
+  const isPantsOrShorts = type.includes('pant') || type.includes('pants') || type.includes('short');
+  if (isPantsOrShorts) {
+    if (['cropped', 'ankle'].some((k) => hint.includes(k))) return hintValue;
+    return '';
+  }
+
+  const isJumpsuit = type.includes('jumpsuit');
+  const isRomper = type.includes('romper');
+  if (isJumpsuit || isRomper) {
+    return '';
+  }
+
+  const isTop =
+    type.includes('t-shirt') ||
+    type.includes('tee') ||
+    type.includes('shirt') ||
+    type.includes('blouse') ||
+    type.includes('sweater') ||
+    type.includes('hoodie') ||
+    type.includes('sweatshirt') ||
+    type.includes('top') ||
+    type.includes('tank') ||
+    type.includes('polo');
+
+  if (isTop) return '';
+
+  return '';
 };
 
 export function optimizeEbayTitle({ rawTitle = '', categoryPath = '', detected = {} }: OptimizeInput): OptimizeOutput {
@@ -194,7 +244,7 @@ export function optimizeEbayTitle({ rawTitle = '', categoryPath = '', detected =
     addToken(brand);
     addToken(department);
     addToken(type);
-    addToken(lengthHint);
+    addToken(allowedLengthHint(type, lengthHint));
     if (sizeTypeHint) addToken(sizeTypeHint);
     addToken(size);
     addToken(color);
