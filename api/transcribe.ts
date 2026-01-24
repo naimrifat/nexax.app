@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { IncomingForm } from 'formidable';
+import formidable from 'formidable';
 import fs from 'fs';
 
 export const config = {
@@ -23,7 +23,7 @@ function getEnv(name: string): string {
 
 function parseForm(req: VercelRequest): Promise<{ fields: any; files: any }> {
   return new Promise((resolve, reject) => {
-    const form = new IncomingForm({
+    const form = formidable({
       maxFileSize: MAX_BYTES,
       multiples: false,
       allowEmptyFiles: false,
@@ -48,6 +48,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const authHeader = String(req.headers.authorization || '').trim();
     if (!authHeader) return res.status(401).json({ error: 'Unauthorized', requestId });
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'Transcription unavailable', requestId });
+    }
 
     const SUPABASE_URL = getEnv('SUPABASE_URL');
     const SUPABASE_ANON_KEY = getEnv('SUPABASE_ANON_KEY');
@@ -86,13 +90,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Invalid field', requestId });
     }
 
-    const audioFile = files?.audio?.[0] ?? files?.audio;
+    const audioFile = Array.isArray(files?.audio) ? files.audio[0] : files?.audio;
     if (!audioFile) {
       return res.status(400).json({ error: 'Missing audio', requestId });
     }
 
     const mimeType = String(audioFile.mimetype || '').toLowerCase();
     const size = Number(audioFile.size || 0);
+    const filePath = String(audioFile.filepath || audioFile.filePath || audioFile.path || '').trim();
+    if (!filePath) {
+      return res.status(400).json({ error: 'Invalid audio upload', requestId });
+    }
 
     if (!ALLOWED_TYPES.has(mimeType)) {
       return res.status(415).json({ error: 'Unsupported audio type', requestId });
@@ -114,7 +122,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const formData = new FormData();
     formData.append('model', 'whisper-1');
     formData.append('response_format', 'json');
-    formData.append('file', fs.createReadStream(audioFile.filepath), {
+    formData.append('file', fs.createReadStream(filePath), {
       filename: audioFile.originalFilename || 'dictation',
       contentType: mimeType,
     } as any);
