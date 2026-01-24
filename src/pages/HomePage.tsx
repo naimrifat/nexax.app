@@ -928,14 +928,17 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col">
-      <section className="py-16 md:py-24 bg-white">
+      <section className="py-16 md:py-24 bg-gradient-to-b from-slate-50 via-white to-white">
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
-            <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+            <div className="text-center mb-12 space-y-4">
+              <div className="inline-flex items-center gap-2 rounded-full border border-teal-200/70 bg-teal-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-teal-700">
+                Live Demo
+              </div>
+              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 tracking-tight">
                 Try It Now - Free Demo
               </h2>
-              <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+              <p className="text-base md:text-lg text-gray-600 max-w-2xl mx-auto">
                 Upload up to 23 photos and see how our AI creates professional listings instantly
               </p>
             </div>
@@ -994,7 +997,7 @@ export default function HomePage() {
             {!listingData ? (
               <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Upload */}
-                <div className="card p-6">
+                <div className="card p-6 bg-white/90 border border-slate-200/70 rounded-2xl shadow-lg">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
                     <ImageIcon className="w-5 h-5 mr-2 text-teal-600" />
                     Upload Product Photos
@@ -1057,7 +1060,7 @@ export default function HomePage() {
                 </div>
 
                 {/* AI Generation */}
-                <div className="card p-6 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
+                <div className="card p-6 bg-gradient-to-br from-teal-600 via-teal-500 to-emerald-500 text-white rounded-2xl shadow-lg">
                   <h3 className="text-xl font-semibold mb-4 flex items-center">
                     <Sparkles className="w-5 h-5 mr-2" /> AI-Powered Generation
                   </h3>
@@ -1091,7 +1094,7 @@ export default function HomePage() {
                         !workspaceId ||
                         !internalUserId
                       }
-                      className="btn bg-white text-teal-700 hover:bg-teal-50 w-full py-3 flex items-center justify-center"
+                      className="btn bg-white text-teal-700 hover:bg-teal-50 w-full py-3 flex items-center justify-center rounded-full"
                     >
                     <Sparkles className="w-5 h-5 mr-2" />
                     {isLoading ? 'Generating...' : 'Generate Listings'}
