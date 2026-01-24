@@ -1418,7 +1418,14 @@ export default function ResultsPage() {
             setIsDirty(true);
             const formatted = formatTitleTranscript(transcript);
             if (!formatted) return;
-            setTitle((prev) => (prev.trim().length ? `${prev.trim()} ${formatted}` : formatted));
+            setTitle((prev) => {
+              const current = prev.trim();
+              const remaining = Math.max(0, 80 - current.length - (current ? 1 : 0));
+              if (remaining <= 0) return current;
+              const nextChunk = formatted.slice(0, remaining).trim();
+              if (!nextChunk) return current;
+              return current ? `${current} ${nextChunk}` : nextChunk;
+            });
           } else {
             setIsDirty(true);
             setDescription((prev) => (prev.trim().length ? `${prev.trim()}\n\n${transcript}` : transcript));
