@@ -2631,6 +2631,7 @@ export default function ResultsPage() {
                           setConditionDescription(e.target.value);
                         }}
                         rows={2}
+                        maxLength={1000}
                         style={{
                           width: '100%',
                           maxWidth: 520,
@@ -2640,6 +2641,9 @@ export default function ResultsPage() {
                           fontSize: 14,
                         }}
                       />
+                      <div style={{ marginTop: 4, fontSize: 11, color: '#6b7280', textAlign: 'right' }}>
+                        {conditionDescription.length}/1000 characters
+                      </div>
                     </div>
                   )}
                 </div>
