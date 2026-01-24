@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import formidable from 'formidable';
+import FormData from 'form-data';
 import fs from 'fs';
 
 export const config = {
@@ -129,7 +130,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const resp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        ...formData.getHeaders(),
+      },
       body: formData as any,
     });
 
