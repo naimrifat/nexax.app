@@ -444,6 +444,9 @@ export default function ResultsPage() {
   const [rebuildNotice, setRebuildNotice] = useState('');
   const [rebuildSuccess, setRebuildSuccess] = useState('');
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
+  const [recordingField, setRecordingField] = useState<'title' | 'description' | null>(null);
+  const [transcribingField, setTranscribingField] = useState<'title' | 'description' | null>(null);
+  const [transcribeError, setTranscribeError] = useState<{ title?: string; description?: string }>({});
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -527,6 +530,9 @@ export default function ResultsPage() {
   const priceSectionRef = useRef<HTMLElement | null>(null);
   const policiesSectionRef = useRef<HTMLElement | null>(null);
   const keywordInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaChunksRef = useRef<Blob[]>([]);
 
   // ----------------------------
   // Tenancy guard
@@ -1315,6 +1321,104 @@ export default function ResultsPage() {
       setRebuildNotice(err?.message || 'Failed to rebuild listing.');
     } finally {
       setRebuildLoading(false);
+    }
+  };
+
+  const getSupportedAudioType = () => {
+    if (typeof MediaRecorder === 'undefined') return '';
+    const candidates = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav'];
+    return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+  };
+
+  const startRecording = async (field: 'title' | 'description') => {
+    if (recordingField) return;
+    setTranscribeError((prev) => ({ ...prev, [field]: '' }));
+
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setTranscribeError((prev) => ({ ...prev, [field]: 'Microphone not supported in this browser.' }));
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const mimeType = getSupportedAudioType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      mediaChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          mediaChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const chunks = mediaChunksRef.current;
+        mediaChunksRef.current = [];
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        setRecordingField(null);
+
+        const blobType = mimeType || (chunks[0]?.type || 'audio/webm');
+        const blob = new Blob(chunks, { type: blobType });
+        if (!blob.size) return;
+
+        try {
+          setTranscribingField(field);
+          const {
+            data: { session },
+            error: sessionErr,
+          } = await supabase.auth.getSession();
+
+          if (sessionErr || !session?.access_token) {
+            setTranscribeError((prev) => ({ ...prev, [field]: 'Please sign in again to use dictation.' }));
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append('audio', blob, 'dictation.webm');
+          formData.append('field', field);
+          if (listingId) formData.append('listing_id', listingId);
+
+          const resp = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${session.access_token}` },
+            body: formData,
+          });
+
+          const json = await resp.json().catch(() => ({}));
+          if (!resp.ok) {
+            setTranscribeError((prev) => ({ ...prev, [field]: json?.error || 'Transcription failed.' }));
+            return;
+          }
+
+          const transcript = String(json?.text || '').trim();
+          if (!transcript) return;
+
+          if (field === 'title') {
+            setIsDirty(true);
+            setTitle((prev) => (prev.trim().length ? `${prev.trim()} ${transcript}` : transcript));
+          } else {
+            setIsDirty(true);
+            setDescription((prev) => (prev.trim().length ? `${prev.trim()}\n\n${transcript}` : transcript));
+          }
+        } catch (err: any) {
+          setTranscribeError((prev) => ({ ...prev, [field]: err?.message || 'Transcription failed.' }));
+        } finally {
+          setTranscribingField(null);
+        }
+      };
+
+      recorder.start();
+      setRecordingField(field);
+    } catch (err: any) {
+      setTranscribeError((prev) => ({ ...prev, [field]: err?.message || 'Microphone access failed.' }));
+      setRecordingField(null);
     }
   };
   // ----------------------------
@@ -2311,6 +2415,14 @@ export default function ResultsPage() {
             />
             <button
               type="button"
+              className="results-mic-btn"
+              onClick={() => (recordingField === 'title' ? stopRecording() : startRecording('title'))}
+              disabled={transcribingField === 'title'}
+            >
+              {recordingField === 'title' ? 'Stop' : 'Mic'}
+            </button>
+            <button
+              type="button"
               className="results-rebuild-btn"
               onClick={() => {
                 setRebuildNotice('');
@@ -2326,6 +2438,9 @@ export default function ResultsPage() {
           {showTitleInlineError && !title.trim() && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#b91c1c' }}>Title is required.</div>
           )}
+          {recordingField === 'title' ? <div className="results-mic-status">Listening...</div> : null}
+          {transcribingField === 'title' ? <div className="results-mic-status">Transcribing...</div> : null}
+          {transcribeError.title ? <div className="results-mic-error">{transcribeError.title}</div> : null}
           <div style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'right' }}>{title.length}/80 characters</div>
           {rebuildSuccess ? <div className="results-rebuild-success">{rebuildSuccess}</div> : null}
         </section>
@@ -2551,19 +2666,32 @@ export default function ResultsPage() {
             boxShadow: highlightMissing && missingRequirements.missingBasics.includes('Description') ? '0 0 0 2px #ef4444' : undefined,
           }}
         >
-          <h3>Description</h3>
-<textarea
-  ref={descriptionInputRef}
-  placeholder="Enter description..."
-  className="results-description-textarea"
-  value={description}
-  onChange={(e) => {
-    setIsDirty(true);
-    setDescription(e.target.value);
-  }}
-  rows={2}
+          <div className="results-section-row">
+            <h3>Description</h3>
+            <button
+              type="button"
+              className="results-mic-btn"
+              onClick={() => (recordingField === 'description' ? stopRecording() : startRecording('description'))}
+              disabled={transcribingField === 'description'}
+            >
+              {recordingField === 'description' ? 'Stop' : 'Mic'}
+            </button>
+          </div>
+          <textarea
+            ref={descriptionInputRef}
+            placeholder="Enter description..."
+            className="results-description-textarea"
+            value={description}
+            onChange={(e) => {
+              setIsDirty(true);
+              setDescription(e.target.value);
+            }}
+            rows={2}
             style={{ width: '100%', padding: 12, marginTop: 8, fontSize: 14 }}
           />
+          {recordingField === 'description' ? <div className="results-mic-status">Listening...</div> : null}
+          {transcribingField === 'description' ? <div className="results-mic-status">Transcribing...</div> : null}
+          {transcribeError.description ? <div className="results-mic-error">{transcribeError.description}</div> : null}
         </section>
 
         <section style={{ marginTop: 24 }}>
