@@ -1,5 +1,6 @@
 // src/pages/ResultsPage.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { Mic, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import './ResultsPage.css';
 import CategorySelector from '../components/CategorySelector';
@@ -2433,8 +2434,9 @@ export default function ResultsPage() {
               className="results-mic-btn"
               onClick={() => (recordingField === 'title' ? stopRecording() : startRecording('title'))}
               disabled={transcribingField === 'title'}
+              aria-label={recordingField === 'title' ? 'Stop dictation' : 'Start dictation'}
             >
-              {recordingField === 'title' ? 'Stop' : 'Mic'}
+              {recordingField === 'title' ? <Square size={16} /> : <Mic size={16} />}
             </button>
             <button
               type="button"
@@ -2688,8 +2690,9 @@ export default function ResultsPage() {
               className="results-mic-btn"
               onClick={() => (recordingField === 'description' ? stopRecording() : startRecording('description'))}
               disabled={transcribingField === 'description'}
+              aria-label={recordingField === 'description' ? 'Stop dictation' : 'Start dictation'}
             >
-              {recordingField === 'description' ? 'Stop' : 'Mic'}
+              {recordingField === 'description' ? <Square size={16} /> : <Mic size={16} />}
             </button>
           </div>
           <textarea
