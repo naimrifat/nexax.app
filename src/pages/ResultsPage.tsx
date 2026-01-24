@@ -1400,9 +1400,24 @@ export default function ResultsPage() {
           const transcript = String(json?.text || '').trim();
           if (!transcript) return;
 
+          const formatTitleTranscript = (text: string) => {
+            const cleaned = text
+              .replace(/[^a-zA-Z0-9\s-]+/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            if (!cleaned) return '';
+            return cleaned
+              .split(' ')
+              .map((word) => (word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : ''))
+              .join(' ')
+              .trim();
+          };
+
           if (field === 'title') {
             setIsDirty(true);
-            setTitle((prev) => (prev.trim().length ? `${prev.trim()} ${transcript}` : transcript));
+            const formatted = formatTitleTranscript(transcript);
+            if (!formatted) return;
+            setTitle((prev) => (prev.trim().length ? `${prev.trim()} ${formatted}` : formatted));
           } else {
             setIsDirty(true);
             setDescription((prev) => (prev.trim().length ? `${prev.trim()}\n\n${transcript}` : transcript));
