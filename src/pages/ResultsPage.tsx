@@ -2622,27 +2622,38 @@ export default function ResultsPage() {
                   {needsDescription && (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Condition description</div>
-                      <textarea
-                        ref={conditionDescriptionRef}
-                        id="condition_description"
-                        value={conditionDescription}
-                        onChange={(e) => {
-                          setIsDirty(true);
-                          setConditionDescription(e.target.value);
-                        }}
-                        rows={2}
-                        maxLength={1000}
-                        style={{
-                          width: '100%',
-                          maxWidth: 520,
-                          padding: 10,
-                          borderRadius: 6,
-                          border: '1px solid #d1d5db',
-                          fontSize: 14,
-                        }}
-                      />
-                      <div style={{ marginTop: 4, fontSize: 11, color: '#6b7280', textAlign: 'right' }}>
-                        {conditionDescription.length}/1000 characters
+                      <div style={{ position: 'relative', maxWidth: 520 }}>
+                        <textarea
+                          ref={conditionDescriptionRef}
+                          id="condition_description"
+                          value={conditionDescription}
+                          onChange={(e) => {
+                            setIsDirty(true);
+                            setConditionDescription(e.target.value);
+                          }}
+                          rows={2}
+                          maxLength={1000}
+                          style={{
+                            width: '100%',
+                            padding: 10,
+                            paddingBottom: 22,
+                            borderRadius: 6,
+                            border: '1px solid #d1d5db',
+                            fontSize: 14,
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                        <div
+                          style={{
+                            position: 'absolute',
+                            right: 8,
+                            bottom: 6,
+                            fontSize: 11,
+                            color: '#6b7280',
+                          }}
+                        >
+                          {conditionDescription.length}/1000 characters
+                        </div>
                       </div>
                     </div>
                   )}
