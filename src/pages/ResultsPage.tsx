@@ -211,6 +211,35 @@ function buildRotatedCloudinaryUrl(
   return query ? `${transformed}?${query}` : transformed;
 }
 
+function getCloudinarySourceUrl(originalUrl: string): string {
+  const baseUrl = String(originalUrl || '').trim();
+  if (!baseUrl) return baseUrl;
+  if (!/res\.cloudinary\.com/i.test(baseUrl)) return baseUrl;
+
+  const [withoutQuery, query] = baseUrl.split('?');
+  const marker = '/upload/';
+  const idx = withoutQuery.indexOf(marker);
+  if (idx === -1) return baseUrl;
+
+  const prefix = withoutQuery.slice(0, idx + marker.length);
+  const rest = withoutQuery.slice(idx + marker.length);
+  const firstSlash = rest.indexOf('/');
+  if (firstSlash === -1) return baseUrl;
+
+  const firstSegment = rest.slice(0, firstSlash);
+  const remainder = rest.slice(firstSlash + 1);
+  const safeTransform = 'c_limit,w_2000';
+
+  let transformed = '';
+  if (/^v\d+/.test(firstSegment)) {
+    transformed = `${prefix}${safeTransform}/${rest}`;
+  } else {
+    transformed = `${prefix}${safeTransform}/${remainder}`;
+  }
+
+  return query ? `${transformed}?${query}` : transformed;
+}
+
 function getOrderedImageItems(images: ImageItem[], mainIndex: number): ImageItem[] {
   if (!images.length) return [];
   return [images[mainIndex], ...images.filter((_, idx) => idx !== mainIndex)].filter(Boolean);
@@ -3721,7 +3750,7 @@ export default function ResultsPage() {
                 </button>
               </div>
 
-           <div className="results-edit-body">
+              <div className={`results-edit-body ${activeMode === 'crop' ? 'is-crop' : ''}`}>
                 {images.length > 1 && (
                   <>
                     <button
@@ -3754,7 +3783,7 @@ export default function ResultsPage() {
                     >
                       <img
                         ref={activeCropImageRef}
-                        src={buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate)}
+                        src={buildRotatedCloudinaryUrl(getCloudinarySourceUrl(activeImage.url), activeImage.rotate)}
                         alt="Crop"
                         onLoad={(e) => {
                           const img = e.currentTarget;
