@@ -709,8 +709,12 @@
   flex-wrap: wrap;
   width: 100%;
   box-sizing: border-box;
-  padding: 16px;
-  margin-top: auto;
+  padding: 8px 16px 16px;
+  margin-top: 0;
+}
+
+.results-edit-crop-status {
+  margin-bottom: 4px;
 }
 
 .results-edit-crop-buttons {
