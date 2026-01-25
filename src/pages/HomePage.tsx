@@ -621,7 +621,7 @@ export default function HomePage() {
     setListingData(null);
     setCloudinaryUrls([]);
     setValidationErrors([]);
-    setStatus('Preparing images...');
+    setStatus('Photos are uploading...');
 
     try {
       // 1) Compress + upload all images to Cloudinary (sequential for better status + fewer spikes)
@@ -633,7 +633,7 @@ export default function HomePage() {
       for (let i = 0; i < photos.length; i++) {
         const file = photos[i];
 
-        setStatus(`Compressing image ${i + 1}/${photos.length}...`);
+        setStatus('Photos are uploading...');
         const { file: compressed, meta } = await compressForUpload(file);
 
         // Hard guard: do not proceed with an oversized file
@@ -656,7 +656,7 @@ export default function HomePage() {
           outputType: meta.outputType,
         });
 
-        setStatus(`Uploading image ${i + 1}/${photos.length} to Cloudinary...`);
+        setStatus('Photos are uploading...');
 
         const formData = new FormData();
         formData.append('file', compressed);
@@ -678,7 +678,7 @@ export default function HomePage() {
       // Persist hosted URLs for publishing
       setCloudinaryUrls(uploadedUrls);
 
-      setStatus('Images uploaded! Analyzing with AI...');
+      setStatus('Photos are uploading...');
 
       const analyzePayload: any = {
         session_id: Date.now().toString(),
