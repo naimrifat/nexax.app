@@ -997,6 +997,50 @@ export default function ResultsPage() {
     ? buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate, activeImage.crop)
     : '';
 
+  const hasPendingCropChanges = useCallback(() => {
+    if (activeMode !== 'crop') return false;
+    if (activeImageIndex == null) return false;
+    if (!cropAreaPixels || cropAreaPixels.width <= 0 || cropAreaPixels.height <= 0) return false;
+
+    const applied = images[activeImageIndex]?.crop || null;
+    if (!applied) return true;
+
+    const closeEnough = (a: number, b: number, tol = 1) => Math.abs(a - b) <= tol;
+    return !(
+      closeEnough(applied.x, cropAreaPixels.x) &&
+      closeEnough(applied.y, cropAreaPixels.y) &&
+      closeEnough(applied.width, cropAreaPixels.width) &&
+      closeEnough(applied.height, cropAreaPixels.height)
+    );
+  }, [activeMode, activeImageIndex, cropAreaPixels, images]);
+
+  const resetCropUi = useCallback(() => {
+    setActiveMode('view');
+    setCropPosition({ x: 0, y: 0 });
+    setZoom(1);
+    setCropAreaPixels(null);
+    setCropWarning('');
+    setCropError('');
+  }, []);
+
+  const navigateEditPhoto = useCallback(
+    (direction: -1 | 1) => {
+      if (images.length <= 1) return;
+      if (activeImageIndex == null) return;
+
+      if (hasPendingCropChanges()) {
+        const ok = window.confirm('Discard crop changes and move to another photo?');
+        if (!ok) return;
+      }
+
+      resetCropUi();
+
+      const nextIndex = (activeImageIndex + direction + images.length) % images.length;
+      setActiveImageIndex(nextIndex);
+    },
+    [activeImageIndex, hasPendingCropChanges, images.length, resetCropUi]
+  );
+
   const preflightInputKey = useMemo(
     () =>
       JSON.stringify({
@@ -1217,15 +1261,21 @@ export default function ResultsPage() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsEditModalOpen(false);
-        setActiveMode('view');
-        setCropWarning('');
-        setCropError('');
+        resetCropUi();
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        navigateEditPhoto(-1);
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        navigateEditPhoto(1);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isEditModalOpen]);
+  }, [isEditModalOpen, navigateEditPhoto, resetCropUi]);
 
   useEffect(() => {
     if (preflightPassed !== true) return;
@@ -3502,9 +3552,7 @@ export default function ResultsPage() {
                   className="results-edit-close"
                   onClick={() => {
                     setIsEditModalOpen(false);
-                    setActiveMode('view');
-                    setCropWarning('');
-                    setCropError('');
+                    resetCropUi();
                   }}
                   aria-label="Close"
                 >
@@ -3513,6 +3561,26 @@ export default function ResultsPage() {
               </div>
 
               <div className="results-edit-body">
+                {images.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      className="results-edit-nav results-edit-nav-prev"
+                      onClick={() => navigateEditPhoto(-1)}
+                      aria-label="Previous photo"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      type="button"
+                      className="results-edit-nav results-edit-nav-next"
+                      onClick={() => navigateEditPhoto(1)}
+                      aria-label="Next photo"
+                    >
+                      ›
+                    </button>
+                  </>
+                )}
                 {activeMode === 'crop' ? (
                   <div className="results-edit-cropper">
                     <Cropper
@@ -3602,12 +3670,7 @@ export default function ResultsPage() {
                       type="button"
                       className="results-edit-cancel"
                       onClick={() => {
-                        setActiveMode('view');
-                        setCropPosition({ x: 0, y: 0 });
-                        setZoom(1);
-                        setCropAreaPixels(null);
-                        setCropWarning('');
-                        setCropError('');
+                        resetCropUi();
                       }}
                     >
                       Cancel
@@ -3637,9 +3700,7 @@ export default function ResultsPage() {
                               : item
                           )
                         );
-                        setActiveMode('view');
-                        setCropWarning('');
-                        setCropError('');
+                        resetCropUi();
                       }}
                     >
                       Apply
