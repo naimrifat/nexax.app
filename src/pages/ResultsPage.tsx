@@ -1050,6 +1050,15 @@ export default function ResultsPage() {
     ? buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate, activeImage.crop, imageDims[activeImage.url])
     : '';
 
+  const hasActiveEdits = useMemo(() => {
+    if (!activeImage || !originalImageSnapshot) return false;
+    const currentRotate = activeImage.rotate ?? 0;
+    const originalRotate = originalImageSnapshot.rotate ?? 0;
+    const currentCrop = activeImage.crop ?? null;
+    const originalCrop = originalImageSnapshot.crop ?? null;
+    return currentRotate !== originalRotate || JSON.stringify(currentCrop) !== JSON.stringify(originalCrop);
+  }, [activeImage, originalImageSnapshot]);
+
   const getActivePixelCrop = useCallback(() => {
     if (!activeImage || !cropSelection) return null;
     if (!activeCropImageRef.current) return null;
@@ -3875,22 +3884,24 @@ export default function ResultsPage() {
                 >
                   Crop
                 </button>
-                <button
-                  type="button"
-                  className="results-edit-tool"
-                  onClick={() => {
-                    if (activeImageIndex == null) return;
-                    if (!originalImageSnapshot) return;
-                    setIsDirty(true);
-                    setImages((prev) =>
-                      prev.map((item, i) => (i === activeImageIndex ? originalImageSnapshot : item))
-                    );
-                    resetCropUi();
-                  }}
-                  aria-label="Undo edits"
-                >
-                  Undo
-                </button>
+                {hasActiveEdits && (
+                  <button
+                    type="button"
+                    className="results-edit-tool"
+                    onClick={() => {
+                      if (activeImageIndex == null) return;
+                      if (!originalImageSnapshot) return;
+                      setIsDirty(true);
+                      setImages((prev) =>
+                        prev.map((item, i) => (i === activeImageIndex ? originalImageSnapshot : item))
+                      );
+                      resetCropUi();
+                    }}
+                    aria-label="Undo edits"
+                  >
+                    Undo
+                  </button>
+                )}
               </div>
 
               {activeMode === 'crop' && (
