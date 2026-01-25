@@ -1,6 +1,7 @@
 // src/pages/ResultsPage.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import Cropper from 'react-easy-crop';
+import ReactCrop, { type Crop } from 'react-image-crop';
+import 'react-image-crop/dist/ReactCrop.css';
 import { Mic, Square, RefreshCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import './ResultsPage.css';
@@ -65,6 +66,8 @@ type ImageItem = {
   rotate: 0 | 90 | 180 | 270;
   crop?: { x: number; y: number; width: number; height: number } | null;
 };
+
+type ImageDims = { width: number; height: number };
 
 type PolicyOption = { id: string; name: string };
 
@@ -156,7 +159,8 @@ function normalizeImageItems(arr: any): ImageItem[] {
 function buildRotatedCloudinaryUrl(
   originalUrl: string,
   rotate: number,
-  crop?: { x: number; y: number; width: number; height: number } | null
+  crop?: { x: number; y: number; width: number; height: number } | null,
+  originalDims?: ImageDims | null
 ): string {
   const baseUrl = String(originalUrl || '').trim();
   if (!baseUrl) return baseUrl;
@@ -165,7 +169,20 @@ function buildRotatedCloudinaryUrl(
   const transforms: string[] = [];
   if (rotate && rotate !== 0) transforms.push(`a_${rotate}`);
   if (crop && crop.width > 0 && crop.height > 0) {
-    transforms.push(`c_crop,w_${Math.round(crop.width)},h_${Math.round(crop.height)},x_${Math.round(crop.x)},y_${Math.round(crop.y)}`);
+    const isNormalized = crop.width <= 1 && crop.height <= 1 && crop.x <= 1 && crop.y <= 1;
+    if (isNormalized) {
+      if (originalDims?.width && originalDims?.height) {
+        const px = {
+          x: Math.round(crop.x * originalDims.width),
+          y: Math.round(crop.y * originalDims.height),
+          width: Math.round(crop.width * originalDims.width),
+          height: Math.round(crop.height * originalDims.height),
+        };
+        transforms.push(`c_crop,w_${px.width},h_${px.height},x_${px.x},y_${px.y}`);
+      }
+    } else {
+      transforms.push(`c_crop,w_${Math.round(crop.width)},h_${Math.round(crop.height)},x_${Math.round(crop.x)},y_${Math.round(crop.y)}`);
+    }
   }
 
   if (!transforms.length) return baseUrl;
@@ -533,11 +550,10 @@ export default function ResultsPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
   const [activeMode, setActiveMode] = useState<'view' | 'crop'>('view');
-  const [cropPosition, setCropPosition] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [cropAreaPixels, setCropAreaPixels] = useState<{ width: number; height: number; x: number; y: number } | null>(null);
+  const [cropSelection, setCropSelection] = useState<Crop | null>(null);
   const [cropWarning, setCropWarning] = useState('');
   const [cropError, setCropError] = useState('');
+  const [imageDims, setImageDims] = useState<Record<string, ImageDims>>({});
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -617,6 +633,8 @@ export default function ResultsPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaChunksRef = useRef<Blob[]>([]);
+  const activeCropImageRef = useRef<HTMLImageElement | null>(null);
+  const lastCropInitKeyRef = useRef<string>('');
 
   // ----------------------------
   // Tenancy guard
@@ -989,38 +1007,94 @@ export default function ResultsPage() {
   }, [listingId, category?.id, conditionsLoading, conditionOptions, conditionId]);
 
   const mainImageUrl = images[mainImageIndex]
-    ? buildRotatedCloudinaryUrl(images[mainImageIndex].url, images[mainImageIndex].rotate)
+    ? buildRotatedCloudinaryUrl(
+        images[mainImageIndex].url,
+        images[mainImageIndex].rotate,
+        images[mainImageIndex].crop,
+        imageDims[images[mainImageIndex].url]
+      )
     : '';
 
   const activeImage = activeImageIndex != null ? images[activeImageIndex] : null;
   const activeImageUrl = activeImage
-    ? buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate, activeImage.crop)
+    ? buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate, activeImage.crop, imageDims[activeImage.url])
     : '';
+
+  const getActivePixelCrop = useCallback(() => {
+    if (!activeImage || !cropSelection) return null;
+    if (!activeCropImageRef.current) return null;
+    const dims = imageDims[activeImage.url];
+    if (!dims) return null;
+
+    const displayWidth = activeCropImageRef.current.clientWidth;
+    const displayHeight = activeCropImageRef.current.clientHeight;
+    if (!displayWidth || !displayHeight) return null;
+
+    const scaleX = dims.width / displayWidth;
+    const scaleY = dims.height / displayHeight;
+
+    const width = cropSelection.width ?? 0;
+    const height = cropSelection.height ?? 0;
+    const x = cropSelection.x ?? 0;
+    const y = cropSelection.y ?? 0;
+
+    if (width <= 0 || height <= 0) return null;
+
+    return {
+      x: x * scaleX,
+      y: y * scaleY,
+      width: width * scaleX,
+      height: height * scaleY,
+    };
+  }, [activeImage, cropSelection, imageDims]);
+
+  const getActiveNormalizedCrop = useCallback(() => {
+    if (!activeImage) return null;
+    const dims = imageDims[activeImage.url];
+    const px = getActivePixelCrop();
+    if (!dims || !px) return null;
+    return {
+      x: px.x / dims.width,
+      y: px.y / dims.height,
+      width: px.width / dims.width,
+      height: px.height / dims.height,
+    };
+  }, [activeImage, imageDims, getActivePixelCrop]);
+
+  const cropShortestSide = useMemo(() => {
+    const px = getActivePixelCrop();
+    if (!px) return null;
+    return Math.min(px.width, px.height);
+  }, [getActivePixelCrop]);
+
+  const isCropTooSmall = cropShortestSide != null && cropShortestSide < 500;
+  const isCropUnderZoom = cropShortestSide != null && cropShortestSide >= 500 && cropShortestSide < 1600;
 
   const hasPendingCropChanges = useCallback(() => {
     if (activeMode !== 'crop') return false;
     if (activeImageIndex == null) return false;
-    if (!cropAreaPixels || cropAreaPixels.width <= 0 || cropAreaPixels.height <= 0) return false;
+
+    const normalized = getActiveNormalizedCrop();
+    if (!normalized || normalized.width <= 0 || normalized.height <= 0) return false;
 
     const applied = images[activeImageIndex]?.crop || null;
     if (!applied) return true;
 
-    const closeEnough = (a: number, b: number, tol = 1) => Math.abs(a - b) <= tol;
+    const closeEnough = (a: number, b: number, tol = 0.002) => Math.abs(a - b) <= tol;
     return !(
-      closeEnough(applied.x, cropAreaPixels.x) &&
-      closeEnough(applied.y, cropAreaPixels.y) &&
-      closeEnough(applied.width, cropAreaPixels.width) &&
-      closeEnough(applied.height, cropAreaPixels.height)
+      closeEnough(applied.x, normalized.x) &&
+      closeEnough(applied.y, normalized.y) &&
+      closeEnough(applied.width, normalized.width) &&
+      closeEnough(applied.height, normalized.height)
     );
-  }, [activeMode, activeImageIndex, cropAreaPixels, images]);
+  }, [activeMode, activeImageIndex, getActiveNormalizedCrop, images]);
 
   const resetCropUi = useCallback(() => {
     setActiveMode('view');
-    setCropPosition({ x: 0, y: 0 });
-    setZoom(1);
-    setCropAreaPixels(null);
+    setCropSelection(null);
     setCropWarning('');
     setCropError('');
+    lastCropInitKeyRef.current = '';
   }, []);
 
   const navigateEditPhoto = useCallback(
@@ -1040,6 +1114,57 @@ export default function ResultsPage() {
     },
     [activeImageIndex, hasPendingCropChanges, images.length, resetCropUi]
   );
+
+  useEffect(() => {
+    if (activeMode !== 'crop') return;
+    if (!activeImage) return;
+    const dims = imageDims[activeImage.url];
+    if (!dims) return;
+    const key = `${activeImage.url}|${activeImage.rotate}`;
+    if (lastCropInitKeyRef.current === key) return;
+
+    if (!activeCropImageRef.current) return;
+    const displayWidth = activeCropImageRef.current.clientWidth;
+    const displayHeight = activeCropImageRef.current.clientHeight;
+    if (!displayWidth || !displayHeight) return;
+
+    const scaleX = displayWidth / dims.width;
+    const scaleY = displayHeight / dims.height;
+
+    if (activeImage.crop && activeImage.crop.width > 0 && activeImage.crop.height > 0) {
+      const isNormalized =
+        activeImage.crop.width <= 1 &&
+        activeImage.crop.height <= 1 &&
+        activeImage.crop.x <= 1 &&
+        activeImage.crop.y <= 1;
+      const pixelCrop = isNormalized
+        ? {
+            x: activeImage.crop.x * dims.width,
+            y: activeImage.crop.y * dims.height,
+            width: activeImage.crop.width * dims.width,
+            height: activeImage.crop.height * dims.height,
+          }
+        : activeImage.crop;
+
+      setCropSelection({
+        unit: 'px',
+        x: pixelCrop.x * scaleX,
+        y: pixelCrop.y * scaleY,
+        width: pixelCrop.width * scaleX,
+        height: pixelCrop.height * scaleY,
+      });
+    } else {
+      setCropSelection({
+        unit: 'px',
+        x: 0,
+        y: 0,
+        width: displayWidth,
+        height: displayHeight,
+      });
+    }
+
+    lastCropInitKeyRef.current = key;
+  }, [activeMode, activeImage, imageDims]);
 
   const preflightInputKey = useMemo(
     () =>
@@ -1256,6 +1381,30 @@ export default function ResultsPage() {
   }, [isDirty]);
 
   useEffect(() => {
+    if (!images.length) return;
+    let cancelled = false;
+
+    images.forEach((img) => {
+      const url = img.url;
+      if (!url || imageDims[url]) return;
+
+      const probe = new Image();
+      probe.onload = () => {
+        if (cancelled) return;
+        setImageDims((prev) => {
+          if (prev[url]) return prev;
+          return { ...prev, [url]: { width: probe.naturalWidth, height: probe.naturalHeight } };
+        });
+      };
+      probe.src = url;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [images, imageDims]);
+
+  useEffect(() => {
     if (!isEditModalOpen) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1290,7 +1439,9 @@ export default function ResultsPage() {
   const buildListingJson = useCallback(() => {
     const categoryPath = getCategoryPathString(category);
     const orderedImages = getOrderedImageItems(images, mainImageIndex);
-    const orderedImageUrls = orderedImages.map((img) => buildRotatedCloudinaryUrl(img.url, img.rotate));
+    const orderedImageUrls = orderedImages.map((img) =>
+      buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, imageDims[img.url])
+    );
 
     return {
       title: title.trim(),
@@ -1967,7 +2118,7 @@ export default function ResultsPage() {
 
     try {
       const orderedImages = getOrderedImageItems(images, mainImageIndex).map((img) =>
-        buildRotatedCloudinaryUrl(img.url, img.rotate)
+        buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, imageDims[img.url])
       );
       assertHostedImagesOrThrow(orderedImages);
     } catch (err: any) {
@@ -2451,9 +2602,7 @@ export default function ResultsPage() {
                     setActiveImageIndex(idx);
                     setIsEditModalOpen(true);
                     setActiveMode('view');
-                    setCropPosition({ x: 0, y: 0 });
-                    setZoom(1);
-                    setCropAreaPixels(null);
+                    setCropSelection(null);
                     setCropWarning('');
                     setCropError('');
                   }}
@@ -2522,11 +2671,11 @@ export default function ResultsPage() {
                   >
                     ×
                   </button>
-                  <img
-                    src={buildRotatedCloudinaryUrl(img.url, img.rotate)}
-                    alt={`thumb-${idx}`}
-                    style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
-                  />
+                    <img
+                      src={buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, imageDims[img.url])}
+                      alt={`thumb-${idx}`}
+                      style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
+                    />
                 </div>
               ))}
             </div>
@@ -3560,7 +3709,7 @@ export default function ResultsPage() {
                 </button>
               </div>
 
-              <div className="results-edit-body">
+           <div className="results-edit-body">
                 {images.length > 1 && (
                   <>
                     <button
@@ -3583,14 +3732,34 @@ export default function ResultsPage() {
                 )}
                 {activeMode === 'crop' ? (
                   <div className="results-edit-cropper">
-                    <Cropper
-                      image={buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate)}
-                      crop={cropPosition}
-                      zoom={zoom}
-                      onCropChange={setCropPosition}
-                      onZoomChange={setZoom}
-                      onCropComplete={(_, pixels) => setCropAreaPixels(pixels)}
-                    />
+                    <ReactCrop
+                      crop={cropSelection ?? undefined}
+                      onChange={(next) => {
+                        setCropSelection(next);
+                        setCropError('');
+                      }}
+                      keepSelection
+                    >
+                      <img
+                        ref={activeCropImageRef}
+                        src={buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate)}
+                        alt="Crop"
+                        onLoad={(e) => {
+                          const img = e.currentTarget;
+                          const naturalWidth = img.naturalWidth || 0;
+                          const naturalHeight = img.naturalHeight || 0;
+                          if (naturalWidth > 0 && naturalHeight > 0) {
+                            setImageDims((prev) => ({
+                              ...prev,
+                              [activeImage.url]: { width: naturalWidth, height: naturalHeight },
+                            }));
+                          }
+                          if (activeMode === 'crop') {
+                            lastCropInitKeyRef.current = '';
+                          }
+                        }}
+                      />
+                    </ReactCrop>
                   </div>
                 ) : activeImageUrl ? (
                   <img src={activeImageUrl} alt="Edit" className="results-edit-image" />
@@ -3647,9 +3816,7 @@ export default function ResultsPage() {
                   className={`results-edit-tool ${activeMode === 'crop' ? 'is-active' : ''}`}
                   onClick={() => {
                     setActiveMode('crop');
-                    setCropPosition({ x: 0, y: 0 });
-                    setZoom(1);
-                    setCropAreaPixels(null);
+                    setCropSelection(null);
                     setCropWarning('');
                     setCropError('');
                   }}
@@ -3663,6 +3830,11 @@ export default function ResultsPage() {
                 <div className="results-edit-crop-actions">
                   <div className="results-edit-crop-status">
                     {cropError ? <div className="results-edit-crop-error">{cropError}</div> : null}
+                    {isCropTooSmall ? (
+                      <div className="results-edit-crop-warning is-danger">eBay requires at least 500px on the shortest side.</div>
+                    ) : isCropUnderZoom ? (
+                      <div className="results-edit-crop-warning">Under 1600px: eBay zoom may not be available.</div>
+                    ) : null}
                     {cropWarning ? <div className="results-edit-crop-warning">{cropWarning}</div> : null}
                   </div>
                   <div className="results-edit-crop-buttons">
@@ -3678,9 +3850,15 @@ export default function ResultsPage() {
                     <button
                       type="button"
                       className="results-edit-apply"
+                      disabled={isCropTooSmall}
                       onClick={() => {
                         if (activeImageIndex == null) return;
-                        if (!cropAreaPixels || cropAreaPixels.width <= 0 || cropAreaPixels.height <= 0) {
+                        if (isCropTooSmall) {
+                          setCropError('Crop must be at least 500px on the shortest side.');
+                          return;
+                        }
+                        const normalized = getActiveNormalizedCrop();
+                        if (!normalized || normalized.width <= 0 || normalized.height <= 0) {
                           setCropError('Select a valid crop area.');
                           return;
                         }
@@ -3690,12 +3868,7 @@ export default function ResultsPage() {
                             i === activeImageIndex
                               ? {
                                   ...item,
-                                  crop: {
-                                    x: cropAreaPixels.x,
-                                    y: cropAreaPixels.y,
-                                    width: cropAreaPixels.width,
-                                    height: cropAreaPixels.height,
-                                  },
+                                  crop: normalized,
                                 }
                               : item
                           )
@@ -3838,7 +4011,7 @@ export default function ResultsPage() {
                (() => {
                  try {
                     const orderedImages = getOrderedImageItems(images, mainImageIndex).map((img) =>
-                      buildRotatedCloudinaryUrl(img.url, img.rotate)
+                      buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, imageDims[img.url])
                     );
                     assertHostedImagesOrThrow(orderedImages);
                    return true;
@@ -3928,11 +4101,11 @@ export default function ResultsPage() {
                borderRadius: 4,
              }}
            >
-             {mainImageUrl ? (
-               <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
-             ) : (
-               <div style={{ color: '#999' }}>No image</div>
-             )}
+              {mainImageUrl ? (
+                <img src={mainImageUrl} alt="preview" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 4, objectFit: 'contain' }} />
+              ) : (
+                <div style={{ color: '#999' }}>No image</div>
+              )}
            </div>
            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{title || 'Your Product Title'}</div>
            <div style={{ color: '#c93', fontWeight: 700, fontSize: 20 }}>US ${price || '0.00'}</div>
