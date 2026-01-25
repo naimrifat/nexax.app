@@ -1104,7 +1104,6 @@ export default function ResultsPage() {
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (!isDirty) return;
-      if (publishing || preflightLoading || savingDraft) return;
 
       e.preventDefault();
       e.returnValue = '';
@@ -1113,7 +1112,7 @@ export default function ResultsPage() {
 
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [isDirty, publishing, preflightLoading, savingDraft]);
+  }, [isDirty]);
 
   useEffect(() => {
     if (preflightPassed !== true) return;
