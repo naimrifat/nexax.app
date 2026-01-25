@@ -584,6 +584,7 @@
   flex-direction: column;
   gap: 12px;
   max-height: 90vh;
+  box-sizing: border-box;
 }
 
 .results-edit-header {
@@ -609,6 +610,7 @@
   border-radius: 8px;
   min-height: 360px;
   overflow: hidden;
+  flex: 1 1 auto;
 }
 
 .results-edit-body.is-crop {
@@ -703,6 +705,9 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 0 4px;
 }
 
 .results-edit-crop-buttons {
