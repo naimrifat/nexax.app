@@ -1,5 +1,6 @@
 // src/pages/ResultsPage.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import Cropper from 'react-easy-crop';
 import { Mic, Square, RefreshCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import './ResultsPage.css';
@@ -62,6 +63,7 @@ type AiData = {
 type ImageItem = {
   url: string;
   rotate: 0 | 90 | 180 | 270;
+  crop?: { x: number; y: number; width: number; height: number } | null;
 };
 
 type PolicyOption = { id: string; name: string };
@@ -133,20 +135,40 @@ function normalizeImageItems(arr: any): ImageItem[] {
   return arr
     .map((item) => {
       if (typeof item === 'string') {
-        return { url: item.trim(), rotate: 0 as const };
+        return { url: item.trim(), rotate: 0 as const, crop: null };
       }
       if (item && typeof item === 'object' && typeof item.url === 'string') {
-        return { url: item.url.trim(), rotate: normalizeRotate(item.rotate) };
+        const crop = item.crop && typeof item.crop === 'object'
+          ? {
+              x: Number(item.crop.x) || 0,
+              y: Number(item.crop.y) || 0,
+              width: Math.max(0, Number(item.crop.width) || 0),
+              height: Math.max(0, Number(item.crop.height) || 0),
+            }
+          : null;
+        return { url: item.url.trim(), rotate: normalizeRotate(item.rotate), crop };
       }
       return null;
     })
     .filter((item): item is ImageItem => !!item && isHostedImageUrl(item.url));
 }
 
-function buildRotatedCloudinaryUrl(originalUrl: string, rotate: number): string {
+function buildRotatedCloudinaryUrl(
+  originalUrl: string,
+  rotate: number,
+  crop?: { x: number; y: number; width: number; height: number } | null
+): string {
   const baseUrl = String(originalUrl || '').trim();
-  if (!baseUrl || rotate === 0) return baseUrl;
+  if (!baseUrl) return baseUrl;
   if (!/res\.cloudinary\.com/i.test(baseUrl)) return baseUrl;
+
+  const transforms: string[] = [];
+  if (rotate && rotate !== 0) transforms.push(`a_${rotate}`);
+  if (crop && crop.width > 0 && crop.height > 0) {
+    transforms.push(`c_crop,w_${Math.round(crop.width)},h_${Math.round(crop.height)},x_${Math.round(crop.x)},y_${Math.round(crop.y)}`);
+  }
+
+  if (!transforms.length) return baseUrl;
 
   const [withoutQuery, query] = baseUrl.split('?');
   const marker = '/upload/';
@@ -160,13 +182,13 @@ function buildRotatedCloudinaryUrl(originalUrl: string, rotate: number): string 
 
   const firstSegment = rest.slice(0, firstSlash);
   const remainder = rest.slice(firstSlash + 1);
-  const angle = `a_${rotate}`;
+  const transformStr = transforms.join(',');
 
   let transformed = '';
   if (/^v\d+/.test(firstSegment)) {
-    transformed = `${prefix}${angle}/${rest}`;
+    transformed = `${prefix}${transformStr}/${rest}`;
   } else {
-    transformed = `${prefix}${angle},${firstSegment}/${remainder}`;
+    transformed = `${prefix}${transformStr},${firstSegment}/${remainder}`;
   }
 
   return query ? `${transformed}?${query}` : transformed;
@@ -508,6 +530,14 @@ export default function ResultsPage() {
   const [recordingField, setRecordingField] = useState<'title' | 'description' | null>(null);
   const [transcribingField, setTranscribingField] = useState<'title' | 'description' | null>(null);
   const [transcribeError, setTranscribeError] = useState<{ title?: string; description?: string }>({});
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
+  const [editMode, setEditMode] = useState<'view' | 'crop'>('view');
+  const [cropPosition, setCropPosition] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [cropAreaPixels, setCropAreaPixels] = useState<{ width: number; height: number; x: number; y: number } | null>(null);
+  const [cropWarning, setCropWarning] = useState('');
+  const [cropError, setCropError] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2412,48 +2442,6 @@ export default function ResultsPage() {
                     aria-label="Remove photo"
                   >
                     ×
-                  </button>
-                  <button
-                    type="button"
-                    className="results-thumb-rotate results-thumb-rotate-left"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsDirty(true);
-                      setImages((prev) =>
-                        prev.map((item, i) =>
-                          i === idx
-                            ? {
-                                ...item,
-                                rotate: (((item.rotate + 270) % 360) as 0 | 90 | 180 | 270),
-                              }
-                            : item
-                        )
-                      );
-                    }}
-                    aria-label="Rotate left"
-                  >
-                    ↺
-                  </button>
-                  <button
-                    type="button"
-                    className="results-thumb-rotate results-thumb-rotate-right"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsDirty(true);
-                      setImages((prev) =>
-                        prev.map((item, i) =>
-                          i === idx
-                            ? {
-                                ...item,
-                                rotate: (((item.rotate + 90) % 360) as 0 | 90 | 180 | 270),
-                              }
-                            : item
-                        )
-                      );
-                    }}
-                    aria-label="Rotate right"
-                  >
-                    ↻
                   </button>
                   <img
                     src={buildRotatedCloudinaryUrl(img.url, img.rotate)}
