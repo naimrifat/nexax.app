@@ -573,6 +573,121 @@
   padding: 16px;
 }
 
+.results-edit-modal {
+  width: 100%;
+  max-width: 900px;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 90vh;
+}
+
+.results-edit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.results-edit-close {
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  cursor: pointer;
+  color: #6b7280;
+}
+
+.results-edit-body {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f5f5;
+  border-radius: 8px;
+  min-height: 360px;
+  overflow: hidden;
+}
+
+.results-edit-image {
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+}
+
+.results-edit-cropper {
+  position: relative;
+  width: 100%;
+  height: 60vh;
+  min-height: 360px;
+}
+
+.results-edit-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.results-edit-tool {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.results-edit-tool.is-active {
+  border-color: #0f766e;
+  background: #ecfdf5;
+  color: #0f766e;
+}
+
+.results-edit-crop-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.results-edit-crop-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.results-edit-cancel {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.results-edit-apply {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #0f766e;
+  background: #14b8a6;
+  color: #ffffff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.results-edit-crop-error {
+  font-size: 12px;
+  color: #b91c1c;
+}
+
+.results-edit-crop-warning {
+  font-size: 12px;
+  color: #b45309;
+}
+
 .results-rebuild-modal {
   width: 100%;
   max-width: 560px;
