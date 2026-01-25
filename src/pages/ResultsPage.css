@@ -611,6 +611,7 @@
   min-height: 360px;
   overflow: hidden;
   flex: 1 1 auto;
+  overflow: auto;
 }
 
 .results-edit-body.is-crop {
@@ -707,7 +708,8 @@
   flex-wrap: wrap;
   width: 100%;
   box-sizing: border-box;
-  padding: 12px 0 4px;
+  padding: 16px;
+  margin-top: auto;
 }
 
 .results-edit-crop-buttons {
