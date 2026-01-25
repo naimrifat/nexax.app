@@ -40,6 +40,18 @@ type OptimizeOutput = {
 const GENERIC_COLORS = new Set(['multi', 'multicolor', 'assorted', 'various', 'mixed']);
 const PREMIUM_MATERIALS = ['cashmere', 'silk', 'linen', 'merino', 'mohair', 'angora', 'leather', 'suede', 'wool'];
 const LENGTH_HINT_BLOCKLIST = new Set(['hip', 'regular', 'standard', 'waist']);
+const DEPARTMENT_TOKENS = new Set([
+  'unisex',
+  'adult',
+  'men',
+  'mens',
+  'women',
+  'womens',
+  'boys',
+  'girls',
+  'kids',
+  'youth',
+]);
 const FASHION_KEYWORDS = [
   'clothing',
   'shoes',
@@ -118,6 +130,64 @@ const isFashionCategory = (categoryPath: string) => {
   return FASHION_KEYWORDS.some((k) => text.includes(k));
 };
 
+const isFashionContext = (categoryPath: string, typeValue: string) => {
+  const cat = String(categoryPath || '').toLowerCase();
+  const type = normalizeToken(typeValue);
+  const categoryMatch = [
+    'clothing',
+    'shoes',
+    'footwear',
+    'accessories',
+    'bags',
+    'handbags',
+    'jewelry',
+    'watches',
+  ].some((k) => cat.includes(k.toLowerCase()));
+
+  const typeMatch = [
+    'shirt',
+    't-shirt',
+    'tee',
+    'blouse',
+    'sweater',
+    'hoodie',
+    'jacket',
+    'coat',
+    'dress',
+    'skirt',
+    'pants',
+    'jeans',
+    'shorts',
+    'shoes',
+    'boots',
+    'sneakers',
+    'sandals',
+    'bag',
+    'handbag',
+    'purse',
+    'wallet',
+    'belt',
+    'hat',
+    'cap',
+  ].some((k) => type.includes(normalizeToken(k)));
+
+  if (categoryMatch || typeMatch) return true;
+  return false;
+};
+
+const stripDepartmentTokens = (value: string) => {
+  const tokens = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ');
+  const filtered = tokens.filter((t) => {
+    const key = normalizeToken(t);
+    if (!key) return false;
+    return !DEPARTMENT_TOKENS.has(key);
+  });
+  return filtered.join(' ').trim();
+};
+
 const dedupeTokens = (tokens: string[]) => {
   const seen = new Set<string>();
   const kept: string[] = [];
@@ -149,7 +219,7 @@ const buildTitleFromTokens = (tokens: string[], maxLen: number, removed: string[
   return { title, tokens: copy };
 };
 
-const cleanRawTitle = (rawTitle: string) => {
+const cleanRawTitle = (rawTitle: string, stripDepartments: boolean) => {
   const cleaned = cleanToken(rawTitle);
   if (!cleaned) return '';
   const tokens = cleaned.split(' ').filter(Boolean);
@@ -158,6 +228,7 @@ const cleanRawTitle = (rawTitle: string) => {
   for (const t of tokens) {
     const key = normalizeToken(t);
     if (LENGTH_HINT_BLOCKLIST.has(key)) continue;
+    if (stripDepartments && DEPARTMENT_TOKENS.has(key)) continue;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     deduped.push(t);
@@ -240,9 +311,11 @@ export function optimizeEbayTitle({ rawTitle = '', categoryPath = '', detected =
   const feature = pickFeature(detected.features);
   const model = firstString(detected.model);
 
+  const includeDepartment = isFashionContext(categoryPath, type);
+
   if (mode === 'fashion') {
     addToken(brand);
-    addToken(department);
+    if (includeDepartment) addToken(department);
     addToken(type);
     addToken(allowedLengthHint(type, lengthHint));
     if (sizeTypeHint) addToken(sizeTypeHint);
@@ -264,13 +337,17 @@ export function optimizeEbayTitle({ rawTitle = '', categoryPath = '', detected =
   removedTokens.push(...removed);
 
   const { title: builtTitle, tokens: finalTokens } = buildTitleFromTokens(kept, 80, removedTokens);
-  const cleanedRaw = cleanRawTitle(rawTitle);
+  const cleanedRaw = cleanRawTitle(rawTitle, !includeDepartment);
 
   let finalTitle = builtTitle;
   if (finalTokens.length < 2 && cleanedRaw) {
     finalTitle = cleanedRaw.slice(0, 80).trim();
   } else if (finalTitle.length < 40 && cleanedRaw && cleanedRaw.length > finalTitle.length) {
     finalTitle = cleanedRaw.slice(0, 80).trim();
+  }
+
+  if (!includeDepartment && finalTitle) {
+    finalTitle = stripDepartmentTokens(finalTitle);
   }
 
   return {
