@@ -709,6 +709,11 @@
   cursor: pointer;
 }
 
+.results-edit-apply:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .results-edit-crop-error {
   font-size: 12px;
   color: #b91c1c;
@@ -717,6 +722,10 @@
 .results-edit-crop-warning {
   font-size: 12px;
   color: #b45309;
+}
+
+.results-edit-crop-warning.is-danger {
+  color: #b91c1c;
 }
 
 .results-rebuild-modal {
