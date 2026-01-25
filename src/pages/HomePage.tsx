@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, startTransition } from 'react';
+import React, { useState, useRef, useEffect, useCallback, startTransition } from 'react';
 import { Upload, X, Image as ImageIcon, Sparkles, CheckCircle } from 'lucide-react';
 import CategorySelector from '../components/CategorySelector';
 import { useNavigate } from 'react-router-dom';
@@ -291,6 +291,46 @@ export default function HomePage() {
 
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState('');
+  const uploadStatusTimeoutRef = useRef<number | null>(null);
+  const statusRef = useRef(status);
+  const isLoadingRef = useRef(isLoading);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
+
+  useEffect(() => {
+    if (!isLoading || status !== 'Photos are uploading...') {
+      if (uploadStatusTimeoutRef.current) {
+        window.clearTimeout(uploadStatusTimeoutRef.current);
+        uploadStatusTimeoutRef.current = null;
+      }
+    }
+  }, [isLoading, status]);
+
+  useEffect(() => {
+    return () => {
+      if (uploadStatusTimeoutRef.current) {
+        window.clearTimeout(uploadStatusTimeoutRef.current);
+        uploadStatusTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  const setUploadingStatus = useCallback(() => {
+    setStatus((prev) => (prev === "Didn't freeze, your listing is being created" ? prev : 'Photos are uploading...'));
+    if (!uploadStatusTimeoutRef.current) {
+      uploadStatusTimeoutRef.current = window.setTimeout(() => {
+        if (isLoadingRef.current && statusRef.current === 'Photos are uploading...') {
+          setStatus("Didn't freeze, your listing is being created");
+        }
+      }, 25000);
+    }
+  }, []);
   const [results, setResults] = useState<any>(null);
   const [listingData, setListingData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -629,7 +669,7 @@ export default function HomePage() {
     setListingData(null);
     setCloudinaryUrls([]);
     setValidationErrors([]);
-    setStatus('Photos are uploading...');
+    setUploadingStatus();
 
     try {
       // 1) Compress + upload all images to Cloudinary (sequential for better status + fewer spikes)
@@ -641,7 +681,7 @@ export default function HomePage() {
       for (let i = 0; i < photos.length; i++) {
         const file = photos[i];
 
-        setStatus('Photos are uploading...');
+        setUploadingStatus();
         const { file: compressed, meta } = await compressForUpload(file);
 
         // Hard guard: do not proceed with an oversized file
@@ -664,7 +704,7 @@ export default function HomePage() {
           outputType: meta.outputType,
         });
 
-        setStatus('Photos are uploading...');
+        setUploadingStatus();
 
         const formData = new FormData();
         formData.append('file', compressed);
@@ -686,7 +726,7 @@ export default function HomePage() {
       // Persist hosted URLs for publishing
       setCloudinaryUrls(uploadedUrls);
 
-      setStatus('Photos are uploading...');
+      setUploadingStatus();
 
       const analyzePayload: any = {
         session_id: Date.now().toString(),
