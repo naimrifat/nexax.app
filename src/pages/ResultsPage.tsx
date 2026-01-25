@@ -580,6 +580,7 @@ export default function ResultsPage() {
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
   const [activeMode, setActiveMode] = useState<'view' | 'crop'>('view');
   const [cropSelection, setCropSelection] = useState<Crop | null>(null);
+  const [completedCrop, setCompletedCrop] = useState<Crop | null>(null);
   const [cropWarning, setCropWarning] = useState('');
   const [cropError, setCropError] = useState('');
   const [imageDims, setImageDims] = useState<Record<string, ImageDims>>({});
@@ -1060,38 +1061,28 @@ export default function ResultsPage() {
   }, [activeImage, originalImageSnapshot]);
 
   const getActivePixelCrop = useCallback(() => {
-    if (!activeImage || !cropSelection) return null;
-    if (!activeCropImageRef.current) return null;
+    if (!activeImage || !completedCrop) return null;
     const dims = imageDims[activeImage.url];
     if (!dims) return null;
 
-    const displayWidth = activeCropImageRef.current.clientWidth;
-    const displayHeight = activeCropImageRef.current.clientHeight;
-    if (!displayWidth || !displayHeight) return null;
-
-    const scaleX = dims.width / displayWidth;
-    const scaleY = dims.height / displayHeight;
-
-    const toPx = (value: number | undefined, size: number) => {
-      if (value == null) return 0;
-      if (cropSelection.unit === '%') return (value / 100) * size;
-      return value;
-    };
-
-    const width = toPx(cropSelection.width, displayWidth);
-    const height = toPx(cropSelection.height, displayHeight);
-    const x = toPx(cropSelection.x, displayWidth);
-    const y = toPx(cropSelection.y, displayHeight);
+    const width = completedCrop.width ?? 0;
+    const height = completedCrop.height ?? 0;
+    const x = completedCrop.x ?? 0;
+    const y = completedCrop.y ?? 0;
 
     if (width <= 0 || height <= 0) return null;
 
-    return {
-      x: x * scaleX,
-      y: y * scaleY,
-      width: width * scaleX,
-      height: height * scaleY,
-    };
-  }, [activeImage, cropSelection, imageDims]);
+    if (completedCrop.unit === '%') {
+      return {
+        x: Math.round((x / 100) * dims.width),
+        y: Math.round((y / 100) * dims.height),
+        width: Math.round((width / 100) * dims.width),
+        height: Math.round((height / 100) * dims.height),
+      };
+    }
+
+    return { x, y, width, height };
+  }, [activeImage, completedCrop, imageDims]);
 
   const getActiveNormalizedCrop = useCallback(() => {
     if (!activeImage) return null;
@@ -1137,6 +1128,7 @@ export default function ResultsPage() {
   const resetCropUi = useCallback(() => {
     setActiveMode('view');
     setCropSelection(null);
+    setCompletedCrop(null);
     setCropWarning('');
     setCropError('');
     lastCropInitKeyRef.current = '';
@@ -1144,6 +1136,7 @@ export default function ResultsPage() {
 
   const resetCropSelectionFull = useCallback(() => {
     setCropSelection({ unit: '%', x: 0, y: 0, width: 100, height: 100 });
+    setCompletedCrop({ unit: '%', x: 0, y: 0, width: 100, height: 100 });
     setCropWarning('');
     setCropError('');
   }, []);
@@ -1174,43 +1167,44 @@ export default function ResultsPage() {
     const key = `${activeImage.url}|${activeImage.rotate}`;
     if (lastCropInitKeyRef.current === key) return;
 
-    if (!activeCropImageRef.current) return;
-    const displayWidth = activeCropImageRef.current.clientWidth;
-    const displayHeight = activeCropImageRef.current.clientHeight;
-    if (!displayWidth || !displayHeight) return;
-
-    const scaleX = displayWidth / dims.width;
-    const scaleY = displayHeight / dims.height;
-
     if (activeImage.crop && activeImage.crop.width > 0 && activeImage.crop.height > 0) {
       const isNormalized =
         activeImage.crop.width <= 1 &&
         activeImage.crop.height <= 1 &&
         activeImage.crop.x <= 1 &&
         activeImage.crop.y <= 1;
-      const pixelCrop = isNormalized
+      const percentCrop = isNormalized
         ? {
-            x: activeImage.crop.x * dims.width,
-            y: activeImage.crop.y * dims.height,
-            width: activeImage.crop.width * dims.width,
-            height: activeImage.crop.height * dims.height,
+            unit: '%',
+            x: activeImage.crop.x * 100,
+            y: activeImage.crop.y * 100,
+            width: activeImage.crop.width * 100,
+            height: activeImage.crop.height * 100,
           }
-        : activeImage.crop;
+        : {
+            unit: '%',
+            x: (activeImage.crop.x / dims.width) * 100,
+            y: (activeImage.crop.y / dims.height) * 100,
+            width: (activeImage.crop.width / dims.width) * 100,
+            height: (activeImage.crop.height / dims.height) * 100,
+          };
 
-      setCropSelection({
-        unit: 'px',
-        x: pixelCrop.x * scaleX,
-        y: pixelCrop.y * scaleY,
-        width: pixelCrop.width * scaleX,
-        height: pixelCrop.height * scaleY,
-      });
+      setCropSelection(percentCrop);
+      setCompletedCrop(percentCrop);
     } else {
       setCropSelection({
-        unit: 'px',
+        unit: '%',
         x: 0,
         y: 0,
-        width: displayWidth,
-        height: displayHeight,
+        width: 100,
+        height: 100,
+      });
+      setCompletedCrop({
+        unit: '%',
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
       });
     }
 
@@ -3797,6 +3791,7 @@ export default function ResultsPage() {
                         setCropSelection(next);
                         setCropError('');
                       }}
+                      onComplete={(c) => setCompletedCrop(c)}
                       keepSelection
                     >
                       <img
@@ -3945,11 +3940,18 @@ export default function ResultsPage() {
                           setCropError('Crop must be at least 500px on the shortest side.');
                           return;
                         }
-                        const normalized = getActiveNormalizedCrop();
-                        if (!normalized || normalized.width <= 0 || normalized.height <= 0) {
+                        const dims = activeImage ? imageDims[activeImage.url] : null;
+                        const px = getActivePixelCrop();
+                        if (!dims || !px || px.width <= 0 || px.height <= 0) {
                           setCropError('Select a valid crop area.');
                           return;
                         }
+                        const normalized = {
+                          x: px.x / dims.width,
+                          y: px.y / dims.height,
+                          width: px.width / dims.width,
+                          height: px.height / dims.height,
+                        };
                         setIsDirty(true);
                         setImages((prev) =>
                           prev.map((item, i) =>
