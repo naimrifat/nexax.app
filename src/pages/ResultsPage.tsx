@@ -483,14 +483,7 @@ export default function ResultsPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
 
-  const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
-  const [autosaveErrorMessage, setAutosaveErrorMessage] = useState<string | null>(null);
-  const autosaveTimerRef = useRef<any>(null);
-  const lastAutosaveResultKeyRef = useRef<string>('');
-
-  const [saveIndicator, setSaveIndicator] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const saveIndicatorTimeoutRef = useRef<number | null>(null);
+  const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>('');
 
   // DB listing id
   const [listingId, setListingId] = useState<string | null>(null);
@@ -941,13 +934,24 @@ export default function ResultsPage() {
 
   const lastPreflightInputKeyRef = useRef<string>('');
 
-  const autosaveKey = useMemo(
+  const currentSnapshot = useMemo(
     () =>
       JSON.stringify({
-        preflightInputKey,
+        title: title.trim(),
         sku: sku.trim(),
-        keywords,
+        description: description.trim(),
+        categoryId: category?.id || null,
+        price,
+        images,
         mainImageIndex,
+        keywords,
+        conditionId,
+        conditionName,
+        conditionDescription,
+        specifics: (specifics || []).map((s) => ({ name: s?.name, value: s?.value })),
+        ebayPaymentPolicyId,
+        ebayReturnPolicyId,
+        ebayFulfillmentPolicyId,
         packageWeightLb,
         packageWeightOz,
         packageLengthIn,
@@ -956,10 +960,21 @@ export default function ResultsPage() {
         irregularPackage,
       }),
     [
-      preflightInputKey,
+      title,
       sku,
-      keywords,
+      description,
+      category?.id,
+      price,
+      images,
       mainImageIndex,
+      keywords,
+      conditionId,
+      conditionName,
+      conditionDescription,
+      specifics,
+      ebayPaymentPolicyId,
+      ebayReturnPolicyId,
+      ebayFulfillmentPolicyId,
       packageWeightLb,
       packageWeightOz,
       packageLengthIn,
@@ -980,6 +995,18 @@ export default function ResultsPage() {
     });
     return missing.map((spec) => spec.name).filter(Boolean);
   }, [specifics]);
+
+  useEffect(() => {
+    if (!lastSavedSnapshot) return;
+    setIsDirty(currentSnapshot !== lastSavedSnapshot);
+  }, [currentSnapshot, lastSavedSnapshot]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!listingId) return;
+    if (lastSavedSnapshot) return;
+    setLastSavedSnapshot(currentSnapshot);
+  }, [loading, listingId, lastSavedSnapshot, currentSnapshot]);
 
   useEffect(() => {
     const parsed = keywords
@@ -1150,46 +1177,8 @@ export default function ResultsPage() {
 
   const disableActions = authLoading || !user?.id || !workspaceId || !internalUserId;
 
-  useEffect(() => {
-    return () => {
-      if (saveIndicatorTimeoutRef.current != null) {
-        clearTimeout(saveIndicatorTimeoutRef.current);
-        saveIndicatorTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isDirty) return;
-
-    if (saveIndicatorTimeoutRef.current != null) {
-      clearTimeout(saveIndicatorTimeoutRef.current);
-      saveIndicatorTimeoutRef.current = null;
-    }
-
-    if (saveIndicator !== 'idle') {
-      setSaveIndicator('idle');
-    }
-  }, [isDirty, saveIndicator]);
-
   const handleManualSaveDraft = async () => {
-    if (saveIndicatorTimeoutRef.current != null) {
-      clearTimeout(saveIndicatorTimeoutRef.current);
-      saveIndicatorTimeoutRef.current = null;
-    }
-
-    setSaveIndicator('saving');
     const res = await handleSaveDraft();
-
-    if (res.ok) {
-      setSaveIndicator('saved');
-      saveIndicatorTimeoutRef.current = window.setTimeout(() => {
-        setSaveIndicator('idle');
-        saveIndicatorTimeoutRef.current = null;
-      }, 2000);
-    } else {
-      setSaveIndicator('idle');
-    }
   };
 
   const inferRebuildTargets = (feedback: string) => {
@@ -1734,10 +1723,7 @@ export default function ResultsPage() {
       }
 
       setIsDirty(false);
-      setAutosaveStatus('saved');
-      setLastSavedAt(Date.now());
-      setAutosaveErrorMessage(null);
-      lastAutosaveResultKeyRef.current = autosaveKey;
+      setLastSavedSnapshot(currentSnapshot);
 
       const url = new URL(window.location.href);
       url.searchParams.set('mode', 'edit');
@@ -1769,16 +1755,6 @@ export default function ResultsPage() {
         setDraftStatus('');
       }
 
-      if (silent) {
-        setAutosaveStatus('error');
-        setAutosaveErrorMessage(
-          isNetworkLikeError(err)
-            ? 'Failed to reach server. Check connection and try again.'
-            : String(err?.message || '').trim() || 'Failed to save draft. Please try again.'
-        );
-        lastAutosaveResultKeyRef.current = autosaveKey;
-      }
-
       const msg = isNetworkLikeError(err)
         ? 'Failed to reach server. Check connection and try again.'
         : String(err?.message || '').trim() || 'Failed to save draft. Please try again.';
@@ -1789,64 +1765,7 @@ export default function ResultsPage() {
     }
   };
 
-  useEffect(() => {
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-      autosaveTimerRef.current = null;
-    }
-
-    if (!isDirty) return;
-    if (publishing || preflightLoading || savingDraft) return;
-    if (disableActions) return;
-
-    // New meaningful change: clear previous autosave result.
-    if (lastAutosaveResultKeyRef.current && lastAutosaveResultKeyRef.current !== autosaveKey) {
-      if (autosaveStatus === 'saved' || autosaveStatus === 'error') {
-        setAutosaveStatus('idle');
-      }
-    }
-
-    autosaveTimerRef.current = setTimeout(async () => {
-      if (!isDirty) return;
-      if (publishing || preflightLoading || savingDraft) return;
-      if (disableActions) return;
-
-      setAutosaveStatus('saving');
-
-      if (saveIndicatorTimeoutRef.current != null) {
-        clearTimeout(saveIndicatorTimeoutRef.current);
-        saveIndicatorTimeoutRef.current = null;
-      }
-      setSaveIndicator('saving');
-
-      const keyAtRun = autosaveKey;
-      const res = await handleSaveDraft({ silent: true });
-      if (res.ok) {
-        setAutosaveStatus('saved');
-        setLastSavedAt(Date.now());
-        setAutosaveErrorMessage(null);
-
-        setSaveIndicator('saved');
-        saveIndicatorTimeoutRef.current = window.setTimeout(() => {
-          setSaveIndicator('idle');
-          saveIndicatorTimeoutRef.current = null;
-        }, 2000);
-      } else {
-        setAutosaveStatus('error');
-        setAutosaveErrorMessage(res.errorMessage || 'Autosave failed');
-        setSaveIndicator('idle');
-      }
-
-      lastAutosaveResultKeyRef.current = keyAtRun;
-    }, 3000);
-
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
-    };
-  }, [autosaveKey, isDirty, publishing, preflightLoading, savingDraft, disableActions, autosaveStatus]);
+  
  
   // ----------------------------
   // Publish
@@ -2091,6 +2010,16 @@ export default function ResultsPage() {
     setEbayReconnectError(null);
     setUiError(null);
  
+    if (!listingId) {
+      setPublishErrors(['Please Save Draft before publishing.']);
+      return;
+    }
+
+    if (isDirty) {
+      setPublishErrors(['You have unsaved changes. Save Draft before publishing.']);
+      return;
+    }
+ 
     const clientErrors = validateBeforePublish();
     if (clientErrors.length) {
       setUiError(null);
@@ -2113,29 +2042,7 @@ export default function ResultsPage() {
       return;
     }
 
-    const saveRes = await handleSaveDraft({ silent: true });
-    if (!saveRes.ok) {
-      setUiError({
-        title: 'Save failed',
-        message: saveRes.errorMessage || 'Failed to save draft. Please try again.',
-      });
-      return;
-    }
-
-    const savedListingId = String(saveRes.listingId || '').trim();
-    if (!savedListingId) {
-      setUiError({
-        title: 'Save failed',
-        message: 'Draft saved but no id was returned. Please try again.',
-      });
-      return;
-    }
-
-    if (savedListingId !== listingId) {
-      setListingId(savedListingId);
-    }
-
-    const preflightOk = await runEbayPreflight(savedListingId);
+    const preflightOk = await runEbayPreflight(listingId);
     if (!preflightOk) return;
  
     setPublishing(true);
@@ -3261,12 +3168,12 @@ export default function ResultsPage() {
               style={{
                 minWidth: 80,
                 fontSize: 13,
-                color: saveIndicator === 'saved' ? '#166534' : '#6b7280',
-                fontWeight: saveIndicator === 'saved' ? 600 : 400,
+                color: isDirty ? '#b45309' : '#166534',
+                fontWeight: isDirty ? 600 : 500,
                 whiteSpace: 'nowrap',
               }}
             >
-              {saveIndicator === 'saving' ? 'Saving…' : saveIndicator === 'saved' ? '✓ Saved' : ''}
+              {isDirty ? 'Unsaved changes' : 'All changes saved'}
             </span>
  
          </div>
