@@ -291,6 +291,7 @@ export default function HomePage() {
 
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const uploadStatusTimeoutRef = useRef<number | null>(null);
   const statusRef = useRef(status);
   const isLoadingRef = useRef(isLoading);
@@ -333,7 +334,6 @@ export default function HomePage() {
   }, []);
   const [results, setResults] = useState<any>(null);
   const [listingData, setListingData] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showCategorySelector, setShowCategorySelector] = useState(false);
