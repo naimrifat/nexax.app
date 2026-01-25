@@ -59,6 +59,11 @@ type AiData = {
   detected?: AiDetected;
 };
 
+type ImageItem = {
+  url: string;
+  rotate: 0 | 90 | 180 | 270;
+};
+
 type PolicyOption = { id: string; name: string };
 
 /* ---------- Timeout helper ---------- */
@@ -115,6 +120,61 @@ function sanitizeHostedImages(arr: any): string[] {
     .map((u) => u.trim())
     .filter(Boolean)
     .filter(isHostedImageUrl);
+}
+
+function normalizeRotate(v: any): 0 | 90 | 180 | 270 {
+  const n = Number(v);
+  if (n === 90 || n === 180 || n === 270) return n;
+  return 0;
+}
+
+function normalizeImageItems(arr: any): ImageItem[] {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { url: item.trim(), rotate: 0 as const };
+      }
+      if (item && typeof item === 'object' && typeof item.url === 'string') {
+        return { url: item.url.trim(), rotate: normalizeRotate(item.rotate) };
+      }
+      return null;
+    })
+    .filter((item): item is ImageItem => !!item && isHostedImageUrl(item.url));
+}
+
+function buildRotatedCloudinaryUrl(originalUrl: string, rotate: number): string {
+  const baseUrl = String(originalUrl || '').trim();
+  if (!baseUrl || rotate === 0) return baseUrl;
+  if (!/res\.cloudinary\.com/i.test(baseUrl)) return baseUrl;
+
+  const [withoutQuery, query] = baseUrl.split('?');
+  const marker = '/upload/';
+  const idx = withoutQuery.indexOf(marker);
+  if (idx === -1) return baseUrl;
+
+  const prefix = withoutQuery.slice(0, idx + marker.length);
+  const rest = withoutQuery.slice(idx + marker.length);
+  const firstSlash = rest.indexOf('/');
+  if (firstSlash === -1) return baseUrl;
+
+  const firstSegment = rest.slice(0, firstSlash);
+  const remainder = rest.slice(firstSlash + 1);
+  const angle = `a_${rotate}`;
+
+  let transformed = '';
+  if (/^v\d+/.test(firstSegment)) {
+    transformed = `${prefix}${angle}/${rest}`;
+  } else {
+    transformed = `${prefix}${angle},${firstSegment}/${remainder}`;
+  }
+
+  return query ? `${transformed}?${query}` : transformed;
+}
+
+function getOrderedImageItems(images: ImageItem[], mainIndex: number): ImageItem[] {
+  if (!images.length) return [];
+  return [images[mainIndex], ...images.filter((_, idx) => idx !== mainIndex)].filter(Boolean);
 }
 
 function toIntOrNull(v: string): number | null {
@@ -419,7 +479,7 @@ export default function ResultsPage() {
   const [category, setCategory] = useState<CategoryWithPath | null>(null);
   const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
-  const [images, setImages] = useState<string[]>([]);
+  const [images, setImages] = useState<ImageItem[]>([]);
 
   const [conditionOptions, setConditionOptions] = useState<{ conditionId: number; conditionName: string }[]>([]);
   const [conditionRequired, setConditionRequired] = useState(false);
@@ -898,7 +958,9 @@ export default function ResultsPage() {
     // Do not auto-fill conditionDescription.
   }, [listingId, category?.id, conditionsLoading, conditionOptions, conditionId]);
 
-  const mainImageUrl = images[mainImageIndex] || '';
+  const mainImageUrl = images[mainImageIndex]
+    ? buildRotatedCloudinaryUrl(images[mainImageIndex].url, images[mainImageIndex].rotate)
+    : '';
 
   const preflightInputKey = useMemo(
     () =>
@@ -1126,9 +1188,8 @@ export default function ResultsPage() {
 
   const buildListingJson = useCallback(() => {
     const categoryPath = getCategoryPathString(category);
-    const orderedImages = images.length
-      ? [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean)
-      : [];
+    const orderedImages = getOrderedImageItems(images, mainImageIndex);
+    const orderedImageUrls = orderedImages.map((img) => buildRotatedCloudinaryUrl(img.url, img.rotate));
 
     return {
       title: title.trim(),
@@ -1165,6 +1226,7 @@ export default function ResultsPage() {
         .filter(Boolean),
       price_suggestion: { optimal: parseFloat(price || '0') || 0 },
       images: orderedImages,
+      image_urls: orderedImageUrls,
       mainImageIndex: 0,
     };
   }, [category, images, mainImageIndex, price, specifics, keywords, title, sku, description, conditionId, conditionName, conditionDescription]);
@@ -1508,8 +1570,11 @@ export default function ResultsPage() {
                 : String(lj?.price_suggestion?.optimal ?? '0.00');
           setPrice(priceVal);
 
-          const imgsRaw: string[] = Array.isArray(row.images) ? row.images : Array.isArray(lj.images) ? lj.images : [];
-          setImages(sanitizeHostedImages(imgsRaw));
+          const ljImages = Array.isArray(lj.images) ? lj.images : [];
+          const hasImageObjects = ljImages.some((img: any) => img && typeof img === 'object' && typeof img.url === 'string');
+          const imgsRaw: any[] = hasImageObjects ? ljImages : Array.isArray(row.images) ? row.images : ljImages;
+          const normalizedImages = normalizeImageItems(imgsRaw);
+          setImages(normalizedImages);
           setMainImageIndex(0);
 
           const kws =
@@ -1648,7 +1713,9 @@ export default function ResultsPage() {
       const t = await ensureTenancy();
       const listingData = buildListingJson();
 
-      const orderedImages: string[] = Array.isArray((listingData as any).images) ? (listingData as any).images : [];
+      const orderedImages: string[] = Array.isArray((listingData as any).image_urls)
+        ? (listingData as any).image_urls
+        : [];
       assertHostedImagesOrThrow(orderedImages);
 
       const categoryPath = listingData.category_path || '';
@@ -1668,6 +1735,7 @@ export default function ResultsPage() {
         listing_json: {
           ...listingData,
           internal_user_id: t.internalUserId,
+          image_urls: orderedImages,
         },
 
         // Per-listing Shipping & Policies columns
@@ -1797,7 +1865,9 @@ export default function ResultsPage() {
 
 
     try {
-      const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
+      const orderedImages = getOrderedImageItems(images, mainImageIndex).map((img) =>
+        buildRotatedCloudinaryUrl(img.url, img.rotate)
+      );
       assertHostedImagesOrThrow(orderedImages);
     } catch (err: any) {
       errors.push(err?.message || 'Images must be hosted http(s) URLs.');
@@ -2079,7 +2149,7 @@ export default function ResultsPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ listing_id: savedListingId }),
+        body: JSON.stringify({ listing_id: publishListingId }),
       });
 
       let body: any = {};
@@ -2268,7 +2338,7 @@ export default function ResultsPage() {
             )}
           </div>
 
-          {images.length > 1 && (
+          {images.length > 0 && (
             <div className="results-thumbs" style={{ marginTop: 8 }}>
               {images.map((img, idx) => (
                 <div
@@ -2298,8 +2368,9 @@ export default function ResultsPage() {
                       next.splice(idx, 0, moved);
 
                       setMainImageIndex((prevMain) => {
-                        const mainUrl = prevImages[prevMain];
-                        const newIndex = next.findIndex((url) => url === mainUrl);
+                        const mainItem = prevImages[prevMain];
+                        const mainKey = mainItem ? `${mainItem.url}|${mainItem.rotate}` : '';
+                        const newIndex = next.findIndex((item) => `${item.url}|${item.rotate}` === mainKey);
                         return newIndex >= 0 ? newIndex : 0;
                       });
 
@@ -2342,7 +2413,53 @@ export default function ResultsPage() {
                   >
                     ×
                   </button>
-                  <img src={img} alt={`thumb-${idx}`} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }} />
+                  <button
+                    type="button"
+                    className="results-thumb-rotate results-thumb-rotate-left"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsDirty(true);
+                      setImages((prev) =>
+                        prev.map((item, i) =>
+                          i === idx
+                            ? {
+                                ...item,
+                                rotate: (((item.rotate + 270) % 360) as 0 | 90 | 180 | 270),
+                              }
+                            : item
+                        )
+                      );
+                    }}
+                    aria-label="Rotate left"
+                  >
+                    ↺
+                  </button>
+                  <button
+                    type="button"
+                    className="results-thumb-rotate results-thumb-rotate-right"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsDirty(true);
+                      setImages((prev) =>
+                        prev.map((item, i) =>
+                          i === idx
+                            ? {
+                                ...item,
+                                rotate: (((item.rotate + 90) % 360) as 0 | 90 | 180 | 270),
+                              }
+                            : item
+                        )
+                      );
+                    }}
+                    aria-label="Rotate right"
+                  >
+                    ↻
+                  </button>
+                  <img
+                    src={buildRotatedCloudinaryUrl(img.url, img.rotate)}
+                    alt={`thumb-${idx}`}
+                    style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
+                  />
                 </div>
               ))}
             </div>
@@ -3483,8 +3600,10 @@ export default function ResultsPage() {
                images.length > 0 &&
                (() => {
                  try {
-                   const orderedImages = [images[mainImageIndex], ...images.filter((_, idx) => idx !== mainImageIndex)].filter(Boolean);
-                   assertHostedImagesOrThrow(orderedImages);
+                    const orderedImages = getOrderedImageItems(images, mainImageIndex).map((img) =>
+                      buildRotatedCloudinaryUrl(img.url, img.rotate)
+                    );
+                    assertHostedImagesOrThrow(orderedImages);
                    return true;
                  } catch {
                    return false;
