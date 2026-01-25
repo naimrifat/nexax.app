@@ -2009,16 +2009,6 @@ export default function ResultsPage() {
     setEbayReconnectError(null);
     setUiError(null);
  
-    if (!listingId) {
-      setPublishErrors(['Please Save Draft before publishing.']);
-      return;
-    }
-
-    if (isDirty) {
-      setPublishErrors(['You have unsaved changes. Save Draft before publishing.']);
-      return;
-    }
- 
     const clientErrors = validateBeforePublish();
     if (clientErrors.length) {
       setUiError(null);
@@ -2041,7 +2031,33 @@ export default function ResultsPage() {
       return;
     }
 
-    const preflightOk = await runEbayPreflight(listingId);
+    let publishListingId = listingId;
+
+    if (!publishListingId || isDirty) {
+      const saveRes = await handleSaveDraft({ silent: true });
+      if (!saveRes.ok) {
+        setUiError({
+          title: 'Save failed',
+          message: saveRes.errorMessage || 'Failed to save draft. Please try again.',
+        });
+        return;
+      }
+
+      publishListingId = String(saveRes.listingId || '').trim();
+      if (!publishListingId) {
+        setUiError({
+          title: 'Save failed',
+          message: 'Draft saved but no id was returned. Please try again.',
+        });
+        return;
+      }
+
+      if (publishListingId !== listingId) {
+        setListingId(publishListingId);
+      }
+    }
+
+    const preflightOk = await runEbayPreflight(publishListingId);
     if (!preflightOk) return;
  
     setPublishing(true);
