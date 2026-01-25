@@ -59,6 +59,14 @@ function chooseOptionValue(
   return selectionOnly ? '' : raw;
 }
 
+function mapUserFriendlyError(message: string): string {
+  const msg = String(message || '').toLowerCase();
+  if (msg.includes('openai api error') || msg.includes('invalid_image_url') || msg.includes('timeout while downloading')) {
+    return 'We had trouble analyzing one of the photos. Click Generate Listings to try again. If it keeps happening, re-upload the images.';
+  }
+  return String(message || 'Unknown error');
+}
+
 /* -------------------------------------------------------
    Compact, searchable token selector for item specifics
 ------------------------------------------------------- */
@@ -812,7 +820,7 @@ export default function HomePage() {
       navigate(`/results?mode=edit&listingId=${encodeURIComponent(newId)}`);
     } catch (error: any) {
       console.error('Error:', error);
-      const msg = error?.message ?? 'Unknown error';
+      const msg = mapUserFriendlyError(error?.message ?? 'Unknown error');
       setStatus(`Error: ${msg}`);
       setValidationErrors([msg]);
       window.scrollTo({ top: 0, behavior: 'smooth' });
