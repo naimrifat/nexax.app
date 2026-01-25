@@ -2302,8 +2302,30 @@ export default function ResultsPage() {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    position: 'relative',
                   }}
                 >
+                  <button
+                    type="button"
+                    className="results-thumb-remove"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsDirty(true);
+                      setImages((prevImages) => {
+                        const next = prevImages.filter((_, i) => i !== idx);
+                        setMainImageIndex((prevMain) => {
+                          if (next.length === 0) return 0;
+                          if (prevMain === idx) return 0;
+                          if (prevMain > idx) return prevMain - 1;
+                          return prevMain;
+                        });
+                        return next;
+                      });
+                    }}
+                    aria-label="Remove photo"
+                  >
+                    ×
+                  </button>
                   <img src={img} alt={`thumb-${idx}`} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }} />
                 </div>
               ))}
