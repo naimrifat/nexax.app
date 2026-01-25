@@ -1033,10 +1033,16 @@ export default function ResultsPage() {
     const scaleX = dims.width / displayWidth;
     const scaleY = dims.height / displayHeight;
 
-    const width = cropSelection.width ?? 0;
-    const height = cropSelection.height ?? 0;
-    const x = cropSelection.x ?? 0;
-    const y = cropSelection.y ?? 0;
+    const toPx = (value: number | undefined, size: number) => {
+      if (value == null) return 0;
+      if (cropSelection.unit === '%') return (value / 100) * size;
+      return value;
+    };
+
+    const width = toPx(cropSelection.width, displayWidth);
+    const height = toPx(cropSelection.height, displayHeight);
+    const x = toPx(cropSelection.x, displayWidth);
+    const y = toPx(cropSelection.y, displayHeight);
 
     if (width <= 0 || height <= 0) return null;
 
@@ -1095,6 +1101,12 @@ export default function ResultsPage() {
     setCropWarning('');
     setCropError('');
     lastCropInitKeyRef.current = '';
+  }, []);
+
+  const resetCropSelectionFull = useCallback(() => {
+    setCropSelection({ unit: '%', x: 0, y: 0, width: 100, height: 100 });
+    setCropWarning('');
+    setCropError('');
   }, []);
 
   const navigateEditPhoto = useCallback(
@@ -3816,7 +3828,8 @@ export default function ResultsPage() {
                   className={`results-edit-tool ${activeMode === 'crop' ? 'is-active' : ''}`}
                   onClick={() => {
                     setActiveMode('crop');
-                    setCropSelection(null);
+                    resetCropSelectionFull();
+                    lastCropInitKeyRef.current = '';
                     setCropWarning('');
                     setCropError('');
                   }}
@@ -3846,6 +3859,16 @@ export default function ResultsPage() {
                       }}
                     >
                       Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="results-edit-cancel"
+                      onClick={() => {
+                        resetCropSelectionFull();
+                        lastCropInitKeyRef.current = '';
+                      }}
+                    >
+                      Fit
                     </button>
                     <button
                       type="button"
