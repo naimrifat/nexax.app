@@ -532,7 +532,7 @@ export default function ResultsPage() {
   const [transcribeError, setTranscribeError] = useState<{ title?: string; description?: string }>({});
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
-  const [editMode, setEditMode] = useState<'view' | 'crop'>('view');
+  const [activeMode, setActiveMode] = useState<'view' | 'crop'>('view');
   const [cropPosition, setCropPosition] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [cropAreaPixels, setCropAreaPixels] = useState<{ width: number; height: number; x: number; y: number } | null>(null);
@@ -992,6 +992,11 @@ export default function ResultsPage() {
     ? buildRotatedCloudinaryUrl(images[mainImageIndex].url, images[mainImageIndex].rotate)
     : '';
 
+  const activeImage = activeImageIndex != null ? images[activeImageIndex] : null;
+  const activeImageUrl = activeImage
+    ? buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate, activeImage.crop)
+    : '';
+
   const preflightInputKey = useMemo(
     () =>
       JSON.stringify({
@@ -1205,6 +1210,22 @@ export default function ResultsPage() {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
+
+  useEffect(() => {
+    if (!isEditModalOpen) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsEditModalOpen(false);
+        setActiveMode('view');
+        setCropWarning('');
+        setCropError('');
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isEditModalOpen]);
 
   useEffect(() => {
     if (preflightPassed !== true) return;
@@ -2377,6 +2398,14 @@ export default function ResultsPage() {
                   onClick={() => {
                     setIsDirty(true);
                     setMainImageIndex(idx);
+                    setActiveImageIndex(idx);
+                    setIsEditModalOpen(true);
+                    setActiveMode('view');
+                    setCropPosition({ x: 0, y: 0 });
+                    setZoom(1);
+                    setCropAreaPixels(null);
+                    setCropWarning('');
+                    setCropError('');
                   }}
                   onDragStart={(e) => {
                     setDragIndex(idx);
@@ -3460,6 +3489,165 @@ export default function ResultsPage() {
                 <li key={idx}>{e}</li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {isEditModalOpen && activeImage && (
+          <div className="results-modal-backdrop">
+            <div className="results-edit-modal" role="dialog" aria-modal="true">
+              <div className="results-edit-header">
+                <h3 style={{ margin: 0 }}>Edit Photo</h3>
+                <button
+                  type="button"
+                  className="results-edit-close"
+                  onClick={() => {
+                    setIsEditModalOpen(false);
+                    setActiveMode('view');
+                    setCropWarning('');
+                    setCropError('');
+                  }}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="results-edit-body">
+                {activeMode === 'crop' ? (
+                  <div className="results-edit-cropper">
+                    <Cropper
+                      image={buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate)}
+                      crop={cropPosition}
+                      zoom={zoom}
+                      onCropChange={setCropPosition}
+                      onZoomChange={setZoom}
+                      onCropComplete={(_, pixels) => setCropAreaPixels(pixels)}
+                    />
+                  </div>
+                ) : activeImageUrl ? (
+                  <img src={activeImageUrl} alt="Edit" className="results-edit-image" />
+                ) : (
+                  <div style={{ color: '#999' }}>No image</div>
+                )}
+              </div>
+
+              <div className="results-edit-toolbar">
+                <button
+                  type="button"
+                  className="results-edit-tool"
+                  onClick={() => {
+                    if (activeImageIndex == null) return;
+                    setIsDirty(true);
+                    setImages((prev) =>
+                      prev.map((item, i) =>
+                        i === activeImageIndex
+                          ? {
+                              ...item,
+                              rotate: (((item.rotate + 270) % 360) as 0 | 90 | 180 | 270),
+                            }
+                          : item
+                      )
+                    );
+                  }}
+                  aria-label="Rotate left"
+                >
+                  Rotate Left
+                </button>
+                <button
+                  type="button"
+                  className="results-edit-tool"
+                  onClick={() => {
+                    if (activeImageIndex == null) return;
+                    setIsDirty(true);
+                    setImages((prev) =>
+                      prev.map((item, i) =>
+                        i === activeImageIndex
+                          ? {
+                              ...item,
+                              rotate: (((item.rotate + 90) % 360) as 0 | 90 | 180 | 270),
+                            }
+                          : item
+                      )
+                    );
+                  }}
+                  aria-label="Rotate right"
+                >
+                  Rotate Right
+                </button>
+                <button
+                  type="button"
+                  className={`results-edit-tool ${activeMode === 'crop' ? 'is-active' : ''}`}
+                  onClick={() => {
+                    setActiveMode('crop');
+                    setCropPosition({ x: 0, y: 0 });
+                    setZoom(1);
+                    setCropAreaPixels(null);
+                    setCropWarning('');
+                    setCropError('');
+                  }}
+                  aria-label="Crop"
+                >
+                  Crop
+                </button>
+              </div>
+
+              {activeMode === 'crop' && (
+                <div className="results-edit-crop-actions">
+                  <div className="results-edit-crop-status">
+                    {cropError ? <div className="results-edit-crop-error">{cropError}</div> : null}
+                    {cropWarning ? <div className="results-edit-crop-warning">{cropWarning}</div> : null}
+                  </div>
+                  <div className="results-edit-crop-buttons">
+                    <button
+                      type="button"
+                      className="results-edit-cancel"
+                      onClick={() => {
+                        setActiveMode('view');
+                        setCropPosition({ x: 0, y: 0 });
+                        setZoom(1);
+                        setCropAreaPixels(null);
+                        setCropWarning('');
+                        setCropError('');
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="results-edit-apply"
+                      onClick={() => {
+                        if (activeImageIndex == null) return;
+                        if (!cropAreaPixels || cropAreaPixels.width <= 0 || cropAreaPixels.height <= 0) {
+                          setCropError('Select a valid crop area.');
+                          return;
+                        }
+                        setIsDirty(true);
+                        setImages((prev) =>
+                          prev.map((item, i) =>
+                            i === activeImageIndex
+                              ? {
+                                  ...item,
+                                  crop: {
+                                    x: cropAreaPixels.x,
+                                    y: cropAreaPixels.y,
+                                    width: cropAreaPixels.width,
+                                    height: cropAreaPixels.height,
+                                  },
+                                }
+                              : item
+                          )
+                        );
+                        setActiveMode('view');
+                        setCropWarning('');
+                        setCropError('');
+                      }}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
