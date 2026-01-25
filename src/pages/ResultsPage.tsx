@@ -583,6 +583,7 @@ export default function ResultsPage() {
   const [cropWarning, setCropWarning] = useState('');
   const [cropError, setCropError] = useState('');
   const [imageDims, setImageDims] = useState<Record<string, ImageDims>>({});
+  const [originalImageSnapshot, setOriginalImageSnapshot] = useState<ImageItem | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1466,6 +1467,14 @@ export default function ResultsPage() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isEditModalOpen, navigateEditPhoto, resetCropUi]);
+
+  useEffect(() => {
+    if (!isEditModalOpen) return;
+    if (activeImageIndex == null) return;
+    const img = images[activeImageIndex];
+    if (!img) return;
+    setOriginalImageSnapshot({ ...img, crop: img.crop ? { ...img.crop } : null });
+  }, [isEditModalOpen, activeImageIndex]);
 
   useEffect(() => {
     if (preflightPassed !== true) return;
@@ -3865,6 +3874,22 @@ export default function ResultsPage() {
                   aria-label="Crop"
                 >
                   Crop
+                </button>
+                <button
+                  type="button"
+                  className="results-edit-tool"
+                  onClick={() => {
+                    if (activeImageIndex == null) return;
+                    if (!originalImageSnapshot) return;
+                    setIsDirty(true);
+                    setImages((prev) =>
+                      prev.map((item, i) => (i === activeImageIndex ? originalImageSnapshot : item))
+                    );
+                    resetCropUi();
+                  }}
+                  aria-label="Undo edits"
+                >
+                  Undo
                 </button>
               </div>
 
