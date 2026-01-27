@@ -3823,9 +3823,13 @@ export default function ResultsPage() {
                 )}
                 {activeMode === 'crop' ? (
                   <div className="results-edit-cropper">
-                    {cropPixelSize && (
+                    {cropPixelSize && cropSelection && (
                       <div
                         className={`results-edit-crop-size ${isCropTooSmall ? 'is-danger' : ''}`}
+                        style={{
+                          left: `${cropSelection.x ?? 0}%`,
+                          top: `${cropSelection.y ?? 0}%`,
+                        }}
                         aria-live="polite"
                       >
                         Crop: {cropPixelSize.width} × {cropPixelSize.height} px
