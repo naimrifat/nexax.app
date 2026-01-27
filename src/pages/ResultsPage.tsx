@@ -1102,6 +1102,12 @@ export default function ResultsPage() {
     return Math.min(px.width, px.height);
   }, [getActivePixelCrop]);
 
+  const cropPixelSize = useMemo(() => {
+    const px = getActivePixelCrop();
+    if (!px) return null;
+    return { width: Math.max(0, Math.round(px.width)), height: Math.max(0, Math.round(px.height)) };
+  }, [getActivePixelCrop]);
+
   const isCropTooSmall = cropShortestSide != null && cropShortestSide < 500;
   const isCropUnderZoom = cropShortestSide != null && cropShortestSide >= 500 && cropShortestSide < 1600;
 
@@ -3783,6 +3789,15 @@ export default function ResultsPage() {
                 )}
                 {activeMode === 'crop' ? (
                   <div className="results-edit-cropper">
+                    {cropPixelSize && (
+                      <div
+                        className={`results-edit-crop-size ${isCropTooSmall ? 'is-danger' : ''}`}
+                        aria-live="polite"
+                      >
+                        Crop: {cropPixelSize.width} × {cropPixelSize.height} px
+                        {isCropUnderZoom ? ' • Zoom off (<1600px)' : ''}
+                      </div>
+                    )}
                     <ReactCrop
                       crop={cropSelection ?? undefined}
                       onChange={(next) => {
