@@ -1044,16 +1044,6 @@ export default function ResultsPage() {
     // Do not auto-fill conditionDescription.
   }, [listingId, category?.id, conditionsLoading, conditionOptions, conditionId]);
 
-  const mainImageUrl = images[mainImageIndex]
-    ? buildRotatedCloudinaryUrl(
-        images[mainImageIndex].url,
-        images[mainImageIndex].rotate,
-        images[mainImageIndex].crop,
-        getDimsForImage(images[mainImageIndex])
-      )
-    : '';
-
-  const activeImage = activeImageIndex != null ? images[activeImageIndex] : null;
   const getDimsForImage = useCallback(
     (img: ImageItem | null): ImageDims | null => {
       if (!img) return null;
@@ -1064,6 +1054,16 @@ export default function ResultsPage() {
     },
     [imageDims]
   );
+  const mainImageUrl = images[mainImageIndex]
+    ? buildRotatedCloudinaryUrl(
+        images[mainImageIndex].url,
+        images[mainImageIndex].rotate,
+        images[mainImageIndex].crop,
+        getDimsForImage(images[mainImageIndex])
+      )
+    : '';
+
+  const activeImage = activeImageIndex != null ? images[activeImageIndex] : null;
   const activeImageUrl = activeImage
     ? buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate, activeImage.crop, getDimsForImage(activeImage))
     : '';
