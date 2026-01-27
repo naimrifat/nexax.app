@@ -614,6 +614,31 @@
   overflow: auto;
 }
 
+.results-edit-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(245, 245, 245, 0.7);
+  z-index: 3;
+}
+
+.results-edit-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 3px solid rgba(148, 163, 184, 0.6);
+  border-top-color: #0f766e;
+  animation: results-spin 0.9s linear infinite;
+}
+
+@keyframes results-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .results-edit-image-wrap {
   width: 100%;
   height: 100%;
