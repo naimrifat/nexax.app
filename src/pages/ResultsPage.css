@@ -628,6 +628,10 @@
   cursor: grab;
 }
 
+.results-edit-image-wrap.is-zoom-out {
+  cursor: zoom-out;
+}
+
 .results-edit-image-wrap.is-panning {
   cursor: grabbing;
 }
