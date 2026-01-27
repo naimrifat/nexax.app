@@ -2671,7 +2671,19 @@ export default function ResultsPage() {
               alignItems: 'center',
               justifyContent: 'center',
               background: '#f5f5f5',
+              cursor: mainImageUrl ? 'pointer' : 'default',
             }}
+            onClick={() => {
+              if (!mainImageUrl) return;
+              setActiveImageIndex(mainImageIndex);
+              setIsEditModalOpen(true);
+              setActiveMode('view');
+              setCropSelection(null);
+              setCropWarning('');
+              setCropError('');
+            }}
+            role={mainImageUrl ? 'button' : undefined}
+            aria-label={mainImageUrl ? 'Edit main photo' : undefined}
           >
             {mainImageUrl ? (
               <img src={mainImageUrl} alt="Main" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />
@@ -2689,12 +2701,6 @@ export default function ResultsPage() {
                   onClick={() => {
                     setIsDirty(true);
                     setMainImageIndex(idx);
-                    setActiveImageIndex(idx);
-                    setIsEditModalOpen(true);
-                    setActiveMode('view');
-                    setCropSelection(null);
-                    setCropWarning('');
-                    setCropError('');
                   }}
                   onDragStart={(e) => {
                     setDragIndex(idx);
