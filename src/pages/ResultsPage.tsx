@@ -3544,23 +3544,23 @@ export default function ResultsPage() {
 
         </section>
 
-          <div className="results-action-bar" style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'nowrap' }}>
+          <div className="results-action-bar" style={{ marginTop: 32, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'nowrap' }}>
             <button
               onClick={handleManualSaveDraft}
               disabled={disableActions || publishing || preflightLoading || savingDraft || rebuildLoading}
               className="results-action-btn"
               style={{
-                padding: '10px 16px',
+                padding: '6px 10px',
                 background: disableActions || publishing || preflightLoading || savingDraft || rebuildLoading ? '#999' : '#10b981',
                 color: 'white',
                 border: 'none',
-                borderRadius: '8px',
+                borderRadius: '4px',
                 cursor: disableActions || publishing || preflightLoading || savingDraft || rebuildLoading ? 'default' : 'pointer',
                 fontSize: 12,
                 fontWeight: 600,
                 width: 'auto',
-                minWidth: 140,
-                flex: '0 0 auto',
+                minWidth: 120,
+                flex: '0 1 auto',
               }}
             >
               Save Draft
@@ -3572,17 +3572,17 @@ export default function ResultsPage() {
               disabled={publishing || preflightLoading || savingDraft || disableActions || rebuildLoading}
               className="results-action-btn"
               style={{
-                padding: '10px 16px',
+                padding: '6px 10px',
                 background: publishing || preflightLoading || savingDraft || disableActions || rebuildLoading ? '#999' : '#0064d2',
                 color: 'white',
                 border: 'none',
-                borderRadius: 8,
+                borderRadius: 4,
                 cursor: publishing || preflightLoading || savingDraft || disableActions || rebuildLoading ? 'default' : 'pointer',
                 fontSize: 12,
                 fontWeight: 600,
                 width: 'auto',
-                minWidth: 140,
-                flex: '0 0 auto',
+                minWidth: 120,
+                flex: '0 1 auto',
               }}
             >
               {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
@@ -3596,17 +3596,17 @@ export default function ResultsPage() {
                 className="results-action-btn"
                 disabled={rebuildLoading}
                 style={{
-                  padding: '10px 16px',
+                  padding: '6px 10px',
                   background: rebuildLoading ? '#999' : '#3b82f6',
                   color: 'white',
                   border: 'none',
-                  borderRadius: 8,
+                  borderRadius: 4,
                   cursor: 'pointer',
                   fontSize: 12,
                   fontWeight: 600,
                   width: 'auto',
-                  minWidth: 140,
-                  flex: '0 0 auto',
+                  minWidth: 120,
+                  flex: '0 1 auto',
                 }}
               >
                 Go to Dashboard
@@ -3619,16 +3619,16 @@ export default function ResultsPage() {
                className="results-action-btn"
                disabled={rebuildLoading}
                style={{
-                  padding: '10px 16px',
+                  padding: '6px 10px',
                   background: rebuildLoading ? '#f3f4f6' : '#f0f0f0',
                   color: '#333',
                   border: '1px solid #ddd',
-                  borderRadius: 8,
+                  borderRadius: 4,
                   cursor: rebuildLoading ? 'default' : 'pointer',
                   fontSize: 12,
                   width: 'auto',
-                  minWidth: 140,
-                  flex: '0 0 auto',
+                  minWidth: 120,
+                  flex: '0 1 auto',
                 }}
               >
                 Cancel
