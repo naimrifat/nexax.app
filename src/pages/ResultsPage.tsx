@@ -3873,7 +3873,7 @@ export default function ResultsPage() {
                   </div>
                 ) : activeImageUrl ? (
                   <div
-                    className={`results-edit-image-wrap ${zoomLevel > 1 ? 'is-zoomed' : ''} ${isPanning ? 'is-panning' : ''}`}
+                    className={`results-edit-image-wrap ${zoomLevel > 1 ? 'is-zoomed' : ''} ${zoomLevel > 1 ? 'is-zoom-out' : 'is-zoom-in'} ${isPanning ? 'is-panning' : ''}`}
                     onMouseDown={(e) => {
                       if (zoomLevel <= 1) return;
                       e.preventDefault();
@@ -3901,6 +3901,26 @@ export default function ResultsPage() {
                       setIsPanning(false);
                       panStartRef.current = null;
                     }}
+                    onClick={() => {
+                      if (activeMode === 'crop') return;
+                      setZoomLevel((prev) => {
+                        if (prev >= 1.8) {
+                          setPanOffset({ x: 0, y: 0 });
+                          return 1;
+                        }
+                        return Math.min(3, Math.round((prev + 0.6) * 10) / 10);
+                      });
+                    }}
+                    onWheel={(e) => {
+                      if (activeMode === 'crop') return;
+                      e.preventDefault();
+                      const direction = e.deltaY > 0 ? -1 : 1;
+                      setZoomLevel((prev) => {
+                        const next = Math.min(3, Math.max(1, Math.round((prev + direction * 0.2) * 10) / 10));
+                        if (next === 1) setPanOffset({ x: 0, y: 0 });
+                        return next;
+                      });
+                    }}
                   >
                     <img
                       src={activeImageUrl}
@@ -3918,34 +3938,6 @@ export default function ResultsPage() {
               </div>
 
               <div className="results-edit-toolbar">
-                <button
-                  type="button"
-                  className="results-edit-tool"
-                  disabled={activeMode === 'crop' || zoomLevel >= 3}
-                  onClick={() => {
-                    if (activeMode === 'crop') return;
-                    setZoomLevel((prev) => Math.min(3, Math.round((prev + 0.2) * 10) / 10));
-                  }}
-                  aria-label="Zoom in"
-                >
-                  Zoom In +
-                </button>
-                <button
-                  type="button"
-                  className="results-edit-tool"
-                  disabled={activeMode === 'crop' || zoomLevel <= 1}
-                  onClick={() => {
-                    if (activeMode === 'crop') return;
-                    setZoomLevel((prev) => {
-                      const next = Math.max(1, Math.round((prev - 0.2) * 10) / 10);
-                      if (next === 1) setPanOffset({ x: 0, y: 0 });
-                      return next;
-                    });
-                  }}
-                  aria-label="Zoom out"
-                >
-                  Zoom Out −
-                </button>
                 <button
                   type="button"
                   className="results-edit-tool"
