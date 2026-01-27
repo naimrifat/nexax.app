@@ -588,6 +588,10 @@ export default function ResultsPage() {
   const [cropError, setCropError] = useState('');
   const [imageDims, setImageDims] = useState<Record<string, ImageDims>>({});
   const [originalImageSnapshot, setOriginalImageSnapshot] = useState<ImageItem | null>(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1475,6 +1479,8 @@ export default function ResultsPage() {
       if (e.key === 'Escape') {
         setIsEditModalOpen(false);
         resetCropUi();
+        setZoomLevel(1);
+        setPanOffset({ x: 0, y: 0 });
       }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
@@ -1489,6 +1495,18 @@ export default function ResultsPage() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isEditModalOpen, navigateEditPhoto, resetCropUi]);
+
+  useEffect(() => {
+    if (!isEditModalOpen) return;
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
+  }, [isEditModalOpen, activeImageIndex]);
+
+  useEffect(() => {
+    if (activeMode !== 'crop') return;
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
+  }, [activeMode]);
 
   useEffect(() => {
     if (!isEditModalOpen) return;
@@ -3773,6 +3791,8 @@ export default function ResultsPage() {
                   onClick={() => {
                     setIsEditModalOpen(false);
                     resetCropUi();
+                    setZoomLevel(1);
+                    setPanOffset({ x: 0, y: 0 });
                   }}
                   aria-label="Close"
                 >
@@ -3852,13 +3872,80 @@ export default function ResultsPage() {
                     </ReactCrop>
                   </div>
                 ) : activeImageUrl ? (
-                  <img src={activeImageUrl} alt="Edit" className="results-edit-image" />
+                  <div
+                    className={`results-edit-image-wrap ${zoomLevel > 1 ? 'is-zoomed' : ''} ${isPanning ? 'is-panning' : ''}`}
+                    onMouseDown={(e) => {
+                      if (zoomLevel <= 1) return;
+                      e.preventDefault();
+                      setIsPanning(true);
+                      panStartRef.current = {
+                        x: e.clientX,
+                        y: e.clientY,
+                        originX: panOffset.x,
+                        originY: panOffset.y,
+                      };
+                    }}
+                    onMouseMove={(e) => {
+                      if (!isPanning || zoomLevel <= 1) return;
+                      const start = panStartRef.current;
+                      if (!start) return;
+                      const dx = e.clientX - start.x;
+                      const dy = e.clientY - start.y;
+                      setPanOffset({ x: start.originX + dx, y: start.originY + dy });
+                    }}
+                    onMouseUp={() => {
+                      setIsPanning(false);
+                      panStartRef.current = null;
+                    }}
+                    onMouseLeave={() => {
+                      setIsPanning(false);
+                      panStartRef.current = null;
+                    }}
+                  >
+                    <img
+                      src={activeImageUrl}
+                      alt="Edit"
+                      className="results-edit-image"
+                      style={{
+                        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`,
+                        transformOrigin: 'center center',
+                      }}
+                    />
+                  </div>
                 ) : (
                   <div style={{ color: '#999' }}>No image</div>
                 )}
               </div>
 
               <div className="results-edit-toolbar">
+                <button
+                  type="button"
+                  className="results-edit-tool"
+                  disabled={activeMode === 'crop' || zoomLevel >= 3}
+                  onClick={() => {
+                    if (activeMode === 'crop') return;
+                    setZoomLevel((prev) => Math.min(3, Math.round((prev + 0.2) * 10) / 10));
+                  }}
+                  aria-label="Zoom in"
+                >
+                  Zoom In +
+                </button>
+                <button
+                  type="button"
+                  className="results-edit-tool"
+                  disabled={activeMode === 'crop' || zoomLevel <= 1}
+                  onClick={() => {
+                    if (activeMode === 'crop') return;
+                    setZoomLevel((prev) => {
+                      const next = Math.max(1, Math.round((prev - 0.2) * 10) / 10);
+                      if (next === 1) setPanOffset({ x: 0, y: 0 });
+                      return next;
+                    });
+                  }}
+                  aria-label="Zoom out"
+                >
+                  Zoom Out −
+                </button>
                 <button
                   type="button"
                   className="results-edit-tool"
