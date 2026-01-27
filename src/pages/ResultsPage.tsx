@@ -572,7 +572,6 @@ export default function ResultsPage() {
   const [rebuildLoading, setRebuildLoading] = useState(false);
   const [rebuildNotice, setRebuildNotice] = useState('');
   const [rebuildSuccess, setRebuildSuccess] = useState('');
-  const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [recordingField, setRecordingField] = useState<'title' | 'description' | null>(null);
   const [transcribingField, setTranscribingField] = useState<'title' | 'description' | null>(null);
   const [transcribeError, setTranscribeError] = useState<{ title?: string; description?: string }>({});
@@ -2781,7 +2780,6 @@ export default function ResultsPage() {
               onClick={() => {
                 setRebuildNotice('');
                 setRebuildSuccess('');
-                setShowRebuildConfirm(false);
                 setShowRebuildModal(true);
               }}
               disabled={rebuildLoading}
@@ -4009,29 +4007,6 @@ export default function ResultsPage() {
                 <div>“Fill missing item specifics like material, style, color”</div>
               </div>
 
-              {showRebuildConfirm && (
-                <div className="results-rebuild-confirm">
-                  <div>You have unsaved changes. Rebuild will overwrite selected fields. Continue?</div>
-                  <div className="results-rebuild-actions">
-                    <button
-                      type="button"
-                      className="results-rebuild-secondary"
-                      onClick={() => setShowRebuildConfirm(false)}
-                      disabled={rebuildLoading}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="results-rebuild-primary"
-                      onClick={handleRebuildListing}
-                      disabled={rebuildLoading}
-                    >
-                      Continue
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {rebuildNotice ? <div className="results-rebuild-notice">{rebuildNotice}</div> : null}
 
@@ -4047,13 +4022,7 @@ export default function ResultsPage() {
                 <button
                   type="button"
                   className="results-rebuild-primary"
-                  onClick={() => {
-                    if (isDirty) {
-                      setShowRebuildConfirm(true);
-                      return;
-                    }
-                    handleRebuildListing();
-                  }}
+                  onClick={handleRebuildListing}
                   disabled={rebuildLoading || rebuildFeedback.trim().length < 10}
                 >
                   {rebuildLoading ? 'Rebuilding…' : 'Rebuild'}
