@@ -3544,22 +3544,23 @@ export default function ResultsPage() {
 
         </section>
 
-          <div className="results-action-bar" style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="results-action-bar" style={{ marginTop: 32, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'nowrap' }}>
             <button
               onClick={handleManualSaveDraft}
               disabled={disableActions || publishing || preflightLoading || savingDraft || rebuildLoading}
               className="results-action-btn"
               style={{
-                padding: '8px 12px',
+                padding: '10px 16px',
                 background: disableActions || publishing || preflightLoading || savingDraft || rebuildLoading ? '#999' : '#10b981',
                 color: 'white',
                 border: 'none',
-                borderRadius: '4px',
+                borderRadius: '8px',
                 cursor: disableActions || publishing || preflightLoading || savingDraft || rebuildLoading ? 'default' : 'pointer',
                 fontSize: 12,
                 fontWeight: 600,
-                width: '35%',
-                flex: '0 0 35%',
+                width: 'auto',
+                minWidth: 140,
+                flex: '0 0 auto',
               }}
             >
               Save Draft
@@ -3571,16 +3572,17 @@ export default function ResultsPage() {
               disabled={publishing || preflightLoading || savingDraft || disableActions || rebuildLoading}
               className="results-action-btn"
               style={{
-                padding: '8px 12px',
+                padding: '10px 16px',
                 background: publishing || preflightLoading || savingDraft || disableActions || rebuildLoading ? '#999' : '#0064d2',
                 color: 'white',
                 border: 'none',
-                borderRadius: 4,
+                borderRadius: 8,
                 cursor: publishing || preflightLoading || savingDraft || disableActions || rebuildLoading ? 'default' : 'pointer',
                 fontSize: 12,
                 fontWeight: 600,
-                width: '35%',
-                flex: '0 0 35%',
+                width: 'auto',
+                minWidth: 140,
+                flex: '0 0 auto',
               }}
             >
               {publishing || preflightLoading ? 'Publishing…' : 'Publish'}
@@ -3594,16 +3596,17 @@ export default function ResultsPage() {
                 className="results-action-btn"
                 disabled={rebuildLoading}
                 style={{
-                  padding: '8px 12px',
+                  padding: '10px 16px',
                   background: rebuildLoading ? '#999' : '#3b82f6',
                   color: 'white',
                   border: 'none',
-                  borderRadius: 4,
+                  borderRadius: 8,
                   cursor: 'pointer',
                   fontSize: 12,
                   fontWeight: 600,
-                  width: '35%',
-                  flex: '0 0 35%',
+                  width: 'auto',
+                  minWidth: 140,
+                  flex: '0 0 auto',
                 }}
               >
                 Go to Dashboard
@@ -3616,19 +3619,20 @@ export default function ResultsPage() {
                className="results-action-btn"
                disabled={rebuildLoading}
                style={{
-                 padding: '8px 12px',
-                 background: rebuildLoading ? '#f3f4f6' : '#f0f0f0',
-                 color: '#333',
-                 border: '1px solid #ddd',
-                 borderRadius: 4,
-                 cursor: rebuildLoading ? 'default' : 'pointer',
-                 fontSize: 12,
-                 width: '35%',
-                 flex: '0 0 35%',
-               }}
-             >
-               Cancel
-             </button>
+                  padding: '10px 16px',
+                  background: rebuildLoading ? '#f3f4f6' : '#f0f0f0',
+                  color: '#333',
+                  border: '1px solid #ddd',
+                  borderRadius: 8,
+                  cursor: rebuildLoading ? 'default' : 'pointer',
+                  fontSize: 12,
+                  width: 'auto',
+                  minWidth: 140,
+                  flex: '0 0 auto',
+                }}
+              >
+                Cancel
+              </button>
 
             <span
               className="results-action-status"
@@ -3638,6 +3642,7 @@ export default function ResultsPage() {
                 color: isDirty ? '#b45309' : '#166534',
                 fontWeight: isDirty ? 600 : 500,
                 whiteSpace: 'nowrap',
+                marginLeft: 'auto',
               }}
             >
               {isDirty ? 'Unsaved changes' : 'All changes saved'}
