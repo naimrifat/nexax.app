@@ -592,6 +592,7 @@ export default function ResultsPage() {
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
+  const [isEditImageLoading, setIsEditImageLoading] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1500,6 +1501,7 @@ export default function ResultsPage() {
     if (!isEditModalOpen) return;
     setZoomLevel(1);
     setPanOffset({ x: 0, y: 0 });
+    setIsEditImageLoading(false);
   }, [isEditModalOpen, activeImageIndex]);
 
   useEffect(() => {
@@ -3807,6 +3809,11 @@ export default function ResultsPage() {
               </div>
 
               <div className={`results-edit-body ${activeMode === 'crop' ? 'is-crop' : ''}`}>
+                {isEditImageLoading && activeMode === 'view' && (
+                  <div className="results-edit-loading" aria-live="polite">
+                    <div className="results-edit-spinner" />
+                  </div>
+                )}
                 {images.length > 1 && (
                   <>
                     <button
@@ -3936,6 +3943,8 @@ export default function ResultsPage() {
                       src={activeImageUrl}
                       alt="Edit"
                       className="results-edit-image"
+                      onLoad={() => setIsEditImageLoading(false)}
+                      onError={() => setIsEditImageLoading(false)}
                       style={{
                         transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`,
                         transformOrigin: 'center center',
@@ -4092,6 +4101,7 @@ export default function ResultsPage() {
                               : item
                           )
                         );
+                        setIsEditImageLoading(true);
                         resetCropUi();
                       }}
                     >
