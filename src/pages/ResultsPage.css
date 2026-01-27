@@ -555,11 +555,13 @@
 }
 
 .results-action-bar .results-action-btn {
-  padding: 8px 12px;
+  padding: 6px 10px;
   font-size: 12px;
-  flex: 0 0 35%;
-  width: 35%;
-  max-width: 35%;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: none;
+  min-width: 120px;
+  border-radius: 4px;
 }
 
 .results-modal-backdrop {
@@ -960,7 +962,7 @@
 }
 
 .results-action-bar .results-action-btn {
-  flex: 1 1 180px;
+  flex: 0 1 auto;
 }
 
 @media (max-width: 900px) {
