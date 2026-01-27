@@ -1,6 +1,6 @@
 // src/pages/ResultsPage.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import ReactCrop, { type Crop } from 'react-image-crop';
+import ReactCrop, { type Crop, type PercentCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { Mic, Square, RefreshCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -583,7 +583,7 @@ export default function ResultsPage() {
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
   const [activeMode, setActiveMode] = useState<'view' | 'crop'>('view');
   const [cropSelection, setCropSelection] = useState<Crop | null>(null);
-  const [completedCrop, setCompletedCrop] = useState<Crop | null>(null);
+  const [completedCrop, setCompletedCrop] = useState<PercentCrop | null>(null);
   const [cropWarning, setCropWarning] = useState('');
   const [cropError, setCropError] = useState('');
   const [imageDims, setImageDims] = useState<Record<string, ImageDims>>({});
@@ -3838,7 +3838,7 @@ export default function ResultsPage() {
                         setCropSelection(next);
                         setCropError('');
                       }}
-                      onComplete={(c) => setCompletedCrop(c)}
+                      onComplete={(_, percentCrop) => setCompletedCrop(percentCrop)}
                       keepSelection
                     >
                       <img
