@@ -65,6 +65,8 @@ type ImageItem = {
   url: string;
   rotate: 0 | 90 | 180 | 270;
   crop?: { x: number; y: number; width: number; height: number } | null;
+  originalWidthPx?: number;
+  originalHeightPx?: number;
 };
 
 type ImageDims = { width: number; height: number };
@@ -149,11 +151,41 @@ function normalizeImageItems(arr: any): ImageItem[] {
               height: Math.max(0, Number(item.crop.height) || 0),
             }
           : null;
-        return { url: item.url.trim(), rotate: normalizeRotate(item.rotate), crop };
+        const originalWidthPx = Number(item.originalWidthPx ?? item.original_width_px ?? 0) || undefined;
+        const originalHeightPx = Number(item.originalHeightPx ?? item.original_height_px ?? 0) || undefined;
+        return { url: item.url.trim(), rotate: normalizeRotate(item.rotate), crop, originalWidthPx, originalHeightPx };
       }
       return null;
     })
     .filter((item): item is ImageItem => !!item && isHostedImageUrl(item.url));
+}
+
+function getCloudinarySourceUrl(originalUrl: string): string {
+  const baseUrl = String(originalUrl || '').trim();
+  if (!baseUrl) return baseUrl;
+  if (!/res\.cloudinary\.com/i.test(baseUrl)) return baseUrl;
+
+  const [withoutQuery, query] = baseUrl.split('?');
+  const marker = '/upload/';
+  const idx = withoutQuery.indexOf(marker);
+  if (idx === -1) return baseUrl;
+
+  const prefix = withoutQuery.slice(0, idx + marker.length);
+  const rest = withoutQuery.slice(idx + marker.length);
+  const firstSlash = rest.indexOf('/');
+  if (firstSlash === -1) return baseUrl;
+
+  const firstSegment = rest.slice(0, firstSlash);
+  const remainder = rest.slice(firstSlash + 1);
+
+  let transformed = '';
+  if (/^v\d+/.test(firstSegment)) {
+    transformed = `${prefix}${rest}`;
+  } else {
+    transformed = `${prefix}${remainder}`;
+  }
+
+  return query ? `${transformed}?${query}` : transformed;
 }
 
 function buildRotatedCloudinaryUrl(
@@ -162,11 +194,12 @@ function buildRotatedCloudinaryUrl(
   crop?: { x: number; y: number; width: number; height: number } | null,
   originalDims?: ImageDims | null
 ): string {
-  const baseUrl = String(originalUrl || '').trim();
+  const baseUrl = String(getCloudinarySourceUrl(originalUrl) || '').trim();
   if (!baseUrl) return baseUrl;
   if (!/res\.cloudinary\.com/i.test(baseUrl)) return baseUrl;
 
   const transforms: string[] = [];
+  transforms.push('c_limit,w_9000,h_9000');
   if (rotate && rotate !== 0) transforms.push(`a_${rotate}`);
   if (crop && crop.width > 0 && crop.height > 0) {
     const isNormalized = crop.width <= 1 && crop.height <= 1 && crop.x <= 1 && crop.y <= 1;
@@ -206,35 +239,6 @@ function buildRotatedCloudinaryUrl(
     transformed = `${prefix}${transformStr}/${rest}`;
   } else {
     transformed = `${prefix}${transformStr},${firstSegment}/${remainder}`;
-  }
-
-  return query ? `${transformed}?${query}` : transformed;
-}
-
-function getCloudinarySourceUrl(originalUrl: string): string {
-  const baseUrl = String(originalUrl || '').trim();
-  if (!baseUrl) return baseUrl;
-  if (!/res\.cloudinary\.com/i.test(baseUrl)) return baseUrl;
-
-  const [withoutQuery, query] = baseUrl.split('?');
-  const marker = '/upload/';
-  const idx = withoutQuery.indexOf(marker);
-  if (idx === -1) return baseUrl;
-
-  const prefix = withoutQuery.slice(0, idx + marker.length);
-  const rest = withoutQuery.slice(idx + marker.length);
-  const firstSlash = rest.indexOf('/');
-  if (firstSlash === -1) return baseUrl;
-
-  const firstSegment = rest.slice(0, firstSlash);
-  const remainder = rest.slice(firstSlash + 1);
-  const safeTransform = 'c_limit,w_2000';
-
-  let transformed = '';
-  if (/^v\d+/.test(firstSegment)) {
-    transformed = `${prefix}${safeTransform}/${rest}`;
-  } else {
-    transformed = `${prefix}${safeTransform}/${remainder}`;
   }
 
   return query ? `${transformed}?${query}` : transformed;
@@ -1041,13 +1045,23 @@ export default function ResultsPage() {
         images[mainImageIndex].url,
         images[mainImageIndex].rotate,
         images[mainImageIndex].crop,
-        imageDims[images[mainImageIndex].url]
+        getDimsForImage(images[mainImageIndex])
       )
     : '';
 
   const activeImage = activeImageIndex != null ? images[activeImageIndex] : null;
+  const getDimsForImage = useCallback(
+    (img: ImageItem | null): ImageDims | null => {
+      if (!img) return null;
+      if (img.originalWidthPx && img.originalHeightPx) {
+        return { width: img.originalWidthPx, height: img.originalHeightPx };
+      }
+      return imageDims[img.url] || null;
+    },
+    [imageDims]
+  );
   const activeImageUrl = activeImage
-    ? buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate, activeImage.crop, imageDims[activeImage.url])
+    ? buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate, activeImage.crop, getDimsForImage(activeImage))
     : '';
 
   const hasActiveEdits = useMemo(() => {
@@ -1061,7 +1075,7 @@ export default function ResultsPage() {
 
   const getActivePixelCrop = useCallback(() => {
     if (!activeImage || !completedCrop) return null;
-    const dims = imageDims[activeImage.url];
+    const dims = getDimsForImage(activeImage);
     if (!dims) return null;
 
     const width = completedCrop.width ?? 0;
@@ -1085,7 +1099,7 @@ export default function ResultsPage() {
 
   const getActiveNormalizedCrop = useCallback(() => {
     if (!activeImage) return null;
-    const dims = imageDims[activeImage.url];
+    const dims = getDimsForImage(activeImage);
     const px = getActivePixelCrop();
     if (!dims || !px) return null;
     return {
@@ -1167,7 +1181,7 @@ export default function ResultsPage() {
   useEffect(() => {
     if (activeMode !== 'crop') return;
     if (!activeImage) return;
-    const dims = imageDims[activeImage.url];
+    const dims = getDimsForImage(activeImage);
     if (!dims) return;
     const key = `${activeImage.url}|${activeImage.rotate}`;
     if (lastCropInitKeyRef.current === key) return;
@@ -1214,7 +1228,7 @@ export default function ResultsPage() {
     }
 
     lastCropInitKeyRef.current = key;
-  }, [activeMode, activeImage, imageDims]);
+  }, [activeMode, activeImage, getDimsForImage]);
 
   const preflightInputKey = useMemo(
     () =>
@@ -1498,7 +1512,7 @@ export default function ResultsPage() {
     const categoryPath = getCategoryPathString(category);
     const orderedImages = getOrderedImageItems(images, mainImageIndex);
     const orderedImageUrls = orderedImages.map((img) =>
-      buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, imageDims[img.url])
+      buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, getDimsForImage(img))
     );
 
     return {
@@ -1539,7 +1553,7 @@ export default function ResultsPage() {
       image_urls: orderedImageUrls,
       mainImageIndex: 0,
     };
-  }, [category, images, mainImageIndex, price, specifics, keywords, title, sku, description, conditionId, conditionName, conditionDescription]);
+  }, [category, images, mainImageIndex, price, specifics, keywords, title, sku, description, conditionId, conditionName, conditionDescription, getDimsForImage]);
 
   const assertHostedImagesOrThrow = (arr: string[]) => {
     const bad = (arr || []).filter((u) => !isHostedImageUrl(u));
@@ -2176,7 +2190,7 @@ export default function ResultsPage() {
 
     try {
       const orderedImages = getOrderedImageItems(images, mainImageIndex).map((img) =>
-        buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, imageDims[img.url])
+        buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, getDimsForImage(img))
       );
       assertHostedImagesOrThrow(orderedImages);
     } catch (err: any) {
@@ -2730,7 +2744,7 @@ export default function ResultsPage() {
                     ×
                   </button>
                     <img
-                      src={buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, imageDims[img.url])}
+                      src={buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, getDimsForImage(img))}
                       alt={`thumb-${idx}`}
                       style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'cover' }}
                     />
@@ -3809,13 +3823,22 @@ export default function ResultsPage() {
                     >
                       <img
                         ref={activeCropImageRef}
-                        src={buildRotatedCloudinaryUrl(getCloudinarySourceUrl(activeImage.url), activeImage.rotate)}
+                        src={buildRotatedCloudinaryUrl(activeImage.url, activeImage.rotate)}
                         alt="Crop"
                         onLoad={(e) => {
                           const img = e.currentTarget;
                           const naturalWidth = img.naturalWidth || 0;
                           const naturalHeight = img.naturalHeight || 0;
                           if (naturalWidth > 0 && naturalHeight > 0) {
+                            if (activeImageIndex != null) {
+                              setImages((prev) =>
+                                prev.map((item, i) =>
+                                  i === activeImageIndex
+                                    ? { ...item, originalWidthPx: naturalWidth, originalHeightPx: naturalHeight }
+                                    : item
+                                )
+                              );
+                            }
                             setImageDims((prev) => ({
                               ...prev,
                               [activeImage.url]: { width: naturalWidth, height: naturalHeight },
@@ -3953,9 +3976,13 @@ export default function ResultsPage() {
                           setCropError('Crop must be at least 500px on the shortest side.');
                           return;
                         }
-                        const dims = activeImage ? imageDims[activeImage.url] : null;
+                        const dims = getDimsForImage(activeImage);
                         const px = getActivePixelCrop();
-                        if (!dims || !px || px.width <= 0 || px.height <= 0) {
+                        if (!dims) {
+                          setCropError('Image size not ready yet, please wait 1 second and try again.');
+                          return;
+                        }
+                        if (!px || px.width <= 0 || px.height <= 0) {
                           setCropError('Select a valid crop area.');
                           return;
                         }
@@ -4085,7 +4112,7 @@ export default function ResultsPage() {
                (() => {
                  try {
                     const orderedImages = getOrderedImageItems(images, mainImageIndex).map((img) =>
-                      buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, imageDims[img.url])
+                      buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, getDimsForImage(img))
                     );
                     assertHostedImagesOrThrow(orderedImages);
                    return true;
