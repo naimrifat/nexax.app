@@ -2,6 +2,7 @@ import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from "../lib/prompt
 import { optimizeEbayTitle } from "../lib/seo/titleOptimizer.js";
 import { buildFallbackTitle } from "../lib/titleBuilder.js";
 import { validateTitle } from "../lib/titleValidator.js";
+import { sanitizeTitleTokens } from "../lib/titleSanitizer.js";
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -803,24 +804,6 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
     const optimized = optimizeEbayTitle({ rawTitle: title, categoryPath: category.path, detected });
     const aiTitle = optimized.title || title;
 
-    const brand = detected.brand || null;
-    const productName = String(detected.type || detected.style || detected.model || aiTitle || '').trim();
-    const identifiers = detected.model ? [String(detected.model).trim()] : [];
-    const colors = normalizeStringArray(Array.isArray(detected.colors) ? detected.colors : detected.colors ? [detected.colors] : []);
-    const size = String(detected.size || '').trim();
-    const materials = normalizeStringArray(Array.isArray(detected.materials) ? detected.materials : detected.materials ? [detected.materials] : []);
-    const condition = null;
-
-    const facts = {
-      brand,
-      product_name: productName,
-      identifiers,
-      attributes: [...colors, ...(size ? [size] : []), ...materials],
-      condition,
-    };
-
-    title = validateTitle(aiTitle, { brand, product_name: productName }) ? aiTitle : buildFallbackTitle(facts);
-
     // Pull aspects for the chosen category
     let aspects: AspectSchema[] = [];
     try {
@@ -844,6 +827,55 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
     } catch {
       aspects = [];
     }
+
+    const brand = detected.brand || null;
+    const productName = String(detected.type || detected.style || detected.model || aiTitle || '').trim();
+    const identifiers = detected.model ? [String(detected.model).trim()] : [];
+    const colors = normalizeStringArray(Array.isArray(detected.colors) ? detected.colors : detected.colors ? [detected.colors] : []);
+    const size = String(detected.size || '').trim();
+    const materials = normalizeStringArray(Array.isArray(detected.materials) ? detected.materials : detected.materials ? [detected.materials] : []);
+    const condition = null;
+
+    const facts = {
+      brand,
+      product_name: productName,
+      identifiers,
+      attributes: [...identifiers, ...colors, ...(size ? [size] : [])],
+      condition,
+    };
+
+    const fashionPath = norm(category.path);
+    const isFashionCategory = ['clothing', 'shoes', 'bags', 'accessories'].some((k) => fashionPath.includes(k));
+    const styleAspect = aspects.find((a) => norm(a.name) === 'style');
+    const styleOptions = styleAspect?.values ?? [];
+    const selectedStyleOption =
+      detected.style && styleOptions.some((o) => norm(o) === norm(detected.style))
+        ? styleOptions.find((o) => norm(o) === norm(detected.style)) || null
+        : null;
+
+    const aiTokens = sanitizeTitleTokens(aiTitle.split(/\s+/).filter(Boolean), materials);
+    let sanitizedTitle = aiTokens.join(' ').trim();
+    if (isFashionCategory && selectedStyleOption) {
+      const currentLower = norm(sanitizedTitle);
+      if (!currentLower.includes(norm(selectedStyleOption))) {
+        const next = sanitizedTitle ? `${sanitizedTitle} ${selectedStyleOption}` : selectedStyleOption;
+        sanitizedTitle = next.slice(0, 80).replace(/\s+/g, ' ').trim();
+      }
+    }
+
+    const finalTitle = validateTitle(sanitizedTitle, { brand, product_name: productName })
+      ? sanitizedTitle
+      : (() => {
+          const fallback = buildFallbackTitle(facts);
+          const sanitizedFallback = sanitizeTitleTokens(fallback.split(/\s+/).filter(Boolean), materials).join(' ').trim();
+          if (isFashionCategory && selectedStyleOption && !norm(sanitizedFallback).includes(norm(selectedStyleOption))) {
+            const next = sanitizedFallback ? `${sanitizedFallback} ${selectedStyleOption}` : selectedStyleOption;
+            return next.slice(0, 80).replace(/\s+/g, ' ').trim();
+          }
+          return sanitizedFallback;
+        })();
+
+    title = finalTitle;
 
     // Build fast lookup maps for schema enforcement
     const { byName, optionSets, canonicalValue } = buildSchemaMaps(aspects);
