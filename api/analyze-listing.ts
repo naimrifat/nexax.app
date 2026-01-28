@@ -3,6 +3,7 @@ import { optimizeEbayTitle } from "../lib/seo/titleOptimizer.js";
 import { buildFallbackTitle } from "../lib/titleBuilder.js";
 import { validateTitle } from "../lib/titleValidator.js";
 import { sanitizeTitleTokens } from "../lib/titleSanitizer.js";
+import { buildPromotedTitle } from "../lib/titlePromotion.js";
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -370,6 +371,7 @@ type VisionJSON = {
   };
   title?: string;
   description?: string;
+  meaning_tokens?: string[];
   keywords?: any;
   confidence_score?: number;
   [k: string]: any;
@@ -683,6 +685,7 @@ ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must ret
 {
   "title": "... (<=80 chars, follow seller rules if provided)",
   "description": "... (follow seller rules if provided)",
+  "meaning_tokens": ["... only if clearly readable text/logo/team/band/franchise on item"],
   "condition_intent": "NEW_WITH_TAGS|NEW_WITH_BOX|NEW_OTHER|USED_EXCELLENT|USED_GOOD|USED_FAIR|UNKNOWN",
   "condition_reason": "... short reason (for server logs only)",
   "detected": {
@@ -836,6 +839,66 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
     const materials = normalizeStringArray(Array.isArray(detected.materials) ? detected.materials : detected.materials ? [detected.materials] : []);
     const condition = null;
 
+    const meaningTokens = (() => {
+      const v = (visionJSON as any)?.meaning_tokens;
+      const fromVision = normalizeStringArray(Array.isArray(v) ? v : v ? [v] : []);
+      const extraFields = [
+        (detected as any).graphicText,
+        (detected as any).printText,
+        (detected as any).detectedText,
+        (detected as any).logoText,
+        (detected as any).teamName,
+        (detected as any).bandName,
+        (detected as any).franchiseName,
+        (detected as any).brandText,
+      ];
+      const fromDetected = normalizeStringArray(
+        extraFields.flatMap((val) => (Array.isArray(val) ? val : val ? [val] : []))
+      );
+      return dedupeArray([...fromVision, ...fromDetected]);
+    })();
+
+    const fashionPath = norm(category.path);
+    const isFashionCategory = ['clothing', 'shoes', 'bags', 'accessories', 'apparel'].some((k) => fashionPath.includes(k));
+    const styleAspect = aspects.find((a) => norm(a.name) === 'style');
+    const themeAspect = aspects.find((a) => norm(a.name) === 'theme');
+    const occasionAspect = aspects.find((a) => norm(a.name) === 'occasion');
+    const styleOptions = styleAspect?.values ?? [];
+    const themeOptions = themeAspect?.values ?? [];
+    const occasionOptions = occasionAspect?.values ?? [];
+    const themeValues = Array.isArray(detected.theme) ? detected.theme : detected.theme ? [detected.theme] : [];
+    const occasionValue = (detected as any).occasion;
+
+    const pickAllowed = (value: any, options: string[]): string | null => {
+      if (!value) return null;
+      const val = String(value).trim();
+      if (!val) return null;
+      return options.find((o) => norm(o) === norm(val)) || null;
+    };
+
+    const selectedStyleOption = isFashionCategory ? pickAllowed(detected.style, styleOptions) : null;
+    const selectedThemeOption = isFashionCategory
+      ? themeValues.map((v) => pickAllowed(v, themeOptions)).find(Boolean) || null
+      : null;
+    const selectedOccasionOption = isFashionCategory ? pickAllowed(occasionValue, occasionOptions) : null;
+    const styleToken = selectedStyleOption || selectedThemeOption || selectedOccasionOption || null;
+
+    const hasStretch = ['spandex', 'elastane', 'lycra'].some((m) => materials.some((x) => norm(x).includes(m)));
+
+    const promotedTitle = buildPromotedTitle({
+      brand,
+      productName,
+      identifiers,
+      meaningTokens,
+      styleToken,
+      colors,
+      sizeToken: size || null,
+      condition,
+      attributes: hasStretch ? ['Stretch'] : [],
+    });
+
+    const sanitizedTitle = sanitizeTitleTokens(promotedTitle.split(/\s+/).filter(Boolean), materials).join(' ').trim();
+
     const facts = {
       brand,
       product_name: productName,
@@ -844,36 +907,9 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
       condition,
     };
 
-    const fashionPath = norm(category.path);
-    const isFashionCategory = ['clothing', 'shoes', 'bags', 'accessories'].some((k) => fashionPath.includes(k));
-    const styleAspect = aspects.find((a) => norm(a.name) === 'style');
-    const styleOptions = styleAspect?.values ?? [];
-    const selectedStyleOption =
-      detected.style && styleOptions.some((o) => norm(o) === norm(detected.style))
-        ? styleOptions.find((o) => norm(o) === norm(detected.style)) || null
-        : null;
-
-    const aiTokens = sanitizeTitleTokens(aiTitle.split(/\s+/).filter(Boolean), materials);
-    let sanitizedTitle = aiTokens.join(' ').trim();
-    if (isFashionCategory && selectedStyleOption) {
-      const currentLower = norm(sanitizedTitle);
-      if (!currentLower.includes(norm(selectedStyleOption))) {
-        const next = sanitizedTitle ? `${sanitizedTitle} ${selectedStyleOption}` : selectedStyleOption;
-        sanitizedTitle = next.slice(0, 80).replace(/\s+/g, ' ').trim();
-      }
-    }
-
     const finalTitle = validateTitle(sanitizedTitle, { brand, product_name: productName })
       ? sanitizedTitle
-      : (() => {
-          const fallback = buildFallbackTitle(facts);
-          const sanitizedFallback = sanitizeTitleTokens(fallback.split(/\s+/).filter(Boolean), materials).join(' ').trim();
-          if (isFashionCategory && selectedStyleOption && !norm(sanitizedFallback).includes(norm(selectedStyleOption))) {
-            const next = sanitizedFallback ? `${sanitizedFallback} ${selectedStyleOption}` : selectedStyleOption;
-            return next.slice(0, 80).replace(/\s+/g, ' ').trim();
-          }
-          return sanitizedFallback;
-        })();
+      : sanitizeTitleTokens(buildFallbackTitle(facts).split(/\s+/).filter(Boolean), materials).join(' ').trim();
 
     title = finalTitle;
 
