@@ -18,9 +18,7 @@ Prefer leaving a field empty over putting in a wrong value.
 Use reasoning to map messy real-world tag text into clean eBay options.
 
 TITLE GENERATION (STRICT)
-Your job is NOT to creatively write a title.
-Your job is to assemble an accurate, buyer-readable eBay title using only verified information.
-Treat title generation as a constrained assembly task, not free-form writing.
+Your job is to creatively assemble a high-intent eBay title using only verified information and explicit visual evidence, while prioritizing buyer search intent and clarity.
 
 TITLE STRUCTURE (ORDER IS FIXED)
 
