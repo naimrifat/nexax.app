@@ -24,6 +24,8 @@ const HIGH_VALUE_MATERIALS = [
   'mohair',
 ];
 
+const FILLER_TOKENS = ['regular', 'casual', 'embroidery'];
+
 const normalize = (value: string): string => String(value || '').toLowerCase();
 
 const hasDetected = (materials: string[], target: string): boolean => {
@@ -39,6 +41,7 @@ export function sanitizeTitleTokens(tokens: string[], detectedMaterials: string[
     const raw = String(token || '').trim();
     if (!raw) continue;
     const lower = normalize(raw);
+    if (FILLER_TOKENS.includes(lower)) continue;
     if (/%/.test(raw) || /\d+\s*%/.test(raw)) continue;
     if (lower.includes('blend')) continue;
 
