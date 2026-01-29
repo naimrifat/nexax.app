@@ -755,10 +755,11 @@ export default function HomePage() {
         body: JSON.stringify(analyzePayload),
       });
 
-      if (!analysisResponse.ok) {
-        const errorData = await analysisResponse.json().catch(() => ({}));
-        throw new Error(errorData?.error ?? 'Failed to analyze images');
-      }
+       if (!analysisResponse.ok) {
+         const errorData = await analysisResponse.json().catch(() => ({}));
+         const msg = String(errorData?.error || errorData?.message || '').trim();
+         throw new Error(msg || 'Failed to analyze images');
+       }
 
       const analysisResult = await analysisResponse.json();
       const aiData = analysisResult?.data || analysisResult?.analysis || analysisResult || {};
