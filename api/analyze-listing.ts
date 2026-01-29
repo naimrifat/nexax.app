@@ -1076,6 +1076,34 @@ For pocketType/frontType/fabricType/occasion:
       }
     }
 
+    const attributeTokens: string[] = [];
+    if (isFashionCategory) {
+      const attributeAspectMatchers = [
+        'wash',
+        'cuff',
+        'hem',
+        'distressed',
+        'finish',
+        'feature',
+      ];
+      const seenAttr = new Set<string>();
+      for (const spec of finalSpecifics) {
+        const nameKey = norm(spec.name || '');
+        if (!attributeAspectMatchers.some((m) => nameKey.includes(m))) continue;
+        const value: any = (spec as any).value;
+        const values = Array.isArray(value) ? value : value ? [value] : [];
+        for (const v of values) {
+          const token = String(v || '').trim();
+          const key = norm(token);
+          if (!key || seenAttr.has(key)) continue;
+          seenAttr.add(key);
+          attributeTokens.push(token);
+          if (attributeTokens.length >= 2) break;
+        }
+        if (attributeTokens.length >= 2) break;
+      }
+    }
+
     const bestColor = (() => {
       const multi = colors.find((c) => norm(c) === 'multicolor');
       return (multi || colors[0] || '').trim();
@@ -1089,6 +1117,7 @@ For pocketType/frontType/fabricType/occasion:
       identifiers,
       meaningTokens,
       intentTokens: isFashionCategory ? intentTokens : [],
+      attributeTokens: isFashionCategory ? attributeTokens : [],
       colors,
       sizeToken: size || null,
       condition,
