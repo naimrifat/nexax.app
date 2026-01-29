@@ -805,7 +805,7 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
     }
 
     const optimized = optimizeEbayTitle({ rawTitle: title, categoryPath: category.path, detected });
-    const aiTitle = optimized.title || title;
+    title = optimized.title || title;
 
     // Pull aspects for the chosen category
     let aspects: AspectSchema[] = [];
@@ -831,14 +831,6 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
       aspects = [];
     }
 
-    const brand = detected.brand || null;
-    const productName = String(detected.type || detected.style || detected.model || aiTitle || '').trim();
-    const identifiers = detected.model ? [String(detected.model).trim()] : [];
-    const colors = normalizeStringArray(Array.isArray(detected.colors) ? detected.colors : detected.colors ? [detected.colors] : []);
-    const size = String(detected.size || '').trim();
-    const materials = normalizeStringArray(Array.isArray(detected.materials) ? detected.materials : detected.materials ? [detected.materials] : []);
-    const condition = null;
-
     const meaningTokens = (() => {
       const v = (visionJSON as any)?.meaning_tokens;
       const fromVision = normalizeStringArray(Array.isArray(v) ? v : v ? [v] : []);
@@ -857,61 +849,6 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
       );
       return dedupeArray([...fromVision, ...fromDetected]);
     })();
-
-    const fashionPath = norm(category.path);
-    const isFashionCategory = ['clothing', 'shoes', 'bags', 'accessories', 'apparel'].some((k) => fashionPath.includes(k));
-    const styleAspect = aspects.find((a) => norm(a.name) === 'style');
-    const themeAspect = aspects.find((a) => norm(a.name) === 'theme');
-    const occasionAspect = aspects.find((a) => norm(a.name) === 'occasion');
-    const styleOptions = styleAspect?.values ?? [];
-    const themeOptions = themeAspect?.values ?? [];
-    const occasionOptions = occasionAspect?.values ?? [];
-    const themeValues = Array.isArray(detected.theme) ? detected.theme : detected.theme ? [detected.theme] : [];
-    const occasionValue = (detected as any).occasion;
-
-    const pickAllowed = (value: any, options: string[]): string | null => {
-      if (!value) return null;
-      const val = String(value).trim();
-      if (!val) return null;
-      return options.find((o) => norm(o) === norm(val)) || null;
-    };
-
-    const selectedStyleOption = isFashionCategory ? pickAllowed(detected.style, styleOptions) : null;
-    const selectedThemeOption = isFashionCategory
-      ? themeValues.map((v) => pickAllowed(v, themeOptions)).find(Boolean) || null
-      : null;
-    const selectedOccasionOption = isFashionCategory ? pickAllowed(occasionValue, occasionOptions) : null;
-    const styleToken = selectedStyleOption || selectedThemeOption || selectedOccasionOption || null;
-
-    const hasStretch = ['spandex', 'elastane', 'lycra'].some((m) => materials.some((x) => norm(x).includes(m)));
-
-    const promotedTitle = buildPromotedTitle({
-      brand,
-      productName,
-      identifiers,
-      meaningTokens,
-      styleToken,
-      colors,
-      sizeToken: size || null,
-      condition,
-      attributes: hasStretch ? ['Stretch'] : [],
-    });
-
-    const sanitizedTitle = sanitizeTitleTokens(promotedTitle.split(/\s+/).filter(Boolean), materials).join(' ').trim();
-
-    const facts = {
-      brand,
-      product_name: productName,
-      identifiers,
-      attributes: [...identifiers, ...colors, ...(size ? [size] : [])],
-      condition,
-    };
-
-    const finalTitle = validateTitle(sanitizedTitle, { brand, product_name: productName })
-      ? sanitizedTitle
-      : sanitizeTitleTokens(buildFallbackTitle(facts).split(/\s+/).filter(Boolean), materials).join(' ').trim();
-
-    title = finalTitle;
 
     // Build fast lookup maps for schema enforcement
     const { byName, optionSets, canonicalValue } = buildSchemaMaps(aspects);
@@ -1058,6 +995,77 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
         finalSpecifics.push({ name: a.name, value: a.multi ? [] : '' });
       }
     }
+
+    // Final title pass (deterministic, schema-backed)
+    const brand = detected.brand || null;
+    const productName = String(detected.type || detected.style || category.name || detected.model || '').trim();
+    const identifiers = detected.model ? [String(detected.model).trim()] : [];
+    const colors = normalizeStringArray(Array.isArray(detected.colors) ? detected.colors : detected.colors ? [detected.colors] : []);
+    const size = String(detected.size || '').trim();
+    const materials = normalizeStringArray(Array.isArray(detected.materials) ? detected.materials : detected.materials ? [detected.materials] : []);
+    const condition = null;
+
+    const fashionPath = norm(category.path);
+    const isFashionCategory = ['clothing', 'shoes', 'bags', 'accessories', 'apparel'].some((k) => fashionPath.includes(k));
+
+    const intentTokens: string[] = [];
+    if (isFashionCategory) {
+      const intentAspectOrder = ['pattern', 'style', 'theme', 'occasion', 'sport', 'activity'];
+      const seen = new Set<string>();
+      const getSpecificValues = (aspectKey: string): string[] => {
+        const s = finalSpecifics.find((x) => norm(x.name) === aspectKey);
+        const v: any = s ? (s as any).value : null;
+        if (Array.isArray(v)) return v.map(String).map((x) => x.trim()).filter(Boolean);
+        if (typeof v === 'string') return [v.trim()].filter(Boolean);
+        return [];
+      };
+
+      for (const k of intentAspectOrder) {
+        for (const v of getSpecificValues(k)) {
+          const key = norm(v);
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          intentTokens.push(v);
+          if (intentTokens.length >= 3) break;
+        }
+        if (intentTokens.length >= 3) break;
+      }
+    }
+
+    const bestColor = (() => {
+      const multi = colors.find((c) => norm(c) === 'multicolor');
+      return (multi || colors[0] || '').trim();
+    })();
+
+    const hasStretch = ['spandex', 'elastane', 'lycra'].some((m) => materials.some((x) => norm(x).includes(m)));
+
+    const promotedTitle = buildPromotedTitle({
+      brand,
+      productName,
+      identifiers,
+      meaningTokens,
+      intentTokens: isFashionCategory ? intentTokens : [],
+      colors,
+      sizeToken: size || null,
+      condition,
+      attributes: hasStretch ? ['Stretch'] : [],
+    });
+
+    const sanitizedTitle = sanitizeTitleTokens(promotedTitle.split(/\s+/).filter(Boolean), materials).join(' ').trim();
+
+    const facts = {
+      brand,
+      product_name: productName,
+      identifiers,
+      attributes: [...intentTokens, ...(bestColor ? [bestColor] : []), ...(size ? [size] : []), ...(hasStretch ? ['Stretch'] : [])],
+      condition,
+    };
+
+    const sanitizedFallback = sanitizeTitleTokens(buildFallbackTitle(facts).split(/\s+/).filter(Boolean), materials)
+      .join(' ')
+      .trim();
+
+    title = validateTitle(sanitizedTitle, { brand, product_name: productName }) ? sanitizedTitle : sanitizedFallback;
 
     // Build final payload
     const payload = {
