@@ -4,6 +4,7 @@ export type TitleParts = {
   identifiers?: string[];
   meaningTokens?: string[];
   intentTokens?: string[];
+  attributeTokens?: string[];
   colors?: string[];
   sizeToken?: string | null;
   condition?: string | null;
@@ -59,6 +60,16 @@ export function buildPromotedTitle(parts: TitleParts): string {
     addToken(tokens, t, maxLen);
     const afterLen = tokens.join(' ').length;
     if (afterLen !== beforeLen) intentCount += 1;
+  }
+
+  const attributes = Array.isArray(parts.attributeTokens) ? parts.attributeTokens : [];
+  let attributeCount = 0;
+  for (const t of attributes) {
+    if (attributeCount >= 2) break;
+    const beforeLen = tokens.join(' ').length;
+    addToken(tokens, t, maxLen);
+    const afterLen = tokens.join(' ').length;
+    if (afterLen !== beforeLen) attributeCount += 1;
   }
 
   const color = pickBestColor(Array.isArray(parts.colors) ? parts.colors : []);
