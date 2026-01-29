@@ -316,6 +316,11 @@ Choose one to three relevant options only.
 
 MISSING OR UNCERTAIN INFO
 Leave fields empty when unsure.
+
+COMPLETENESS REQUIREMENT
+You must return one entry in final_specifics for EVERY aspect provided in the schema.
+- If you cannot fill an aspect safely, set its value to "" (or [] for multi-select).
+- Do not omit aspects.
 OUTPUT FORMAT
 Return exactly one object per aspect with name and value.
 Never invent, rename, or remove aspects.
