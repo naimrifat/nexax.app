@@ -685,7 +685,7 @@ ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must ret
 {
   "title": "... (<=80 chars, follow seller rules if provided)",
   "description": "... (follow seller rules if provided)",
-  "meaning_tokens": ["... only if clearly readable text/logo/team/band/franchise on item"],
+  "meaning_tokens": ["... up to 3 short phrases ONLY if clearly readable on item (team/band/school/character/brand text). Exclude sizes, colors, materials."],
   "condition_intent": "NEW_WITH_TAGS|NEW_WITH_BOX|NEW_OTHER|USED_EXCELLENT|USED_GOOD|USED_FAIR|UNKNOWN",
   "condition_reason": "... short reason (for server logs only)",
   "detected": {
@@ -714,6 +714,12 @@ ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must ret
 }
 
 Always obey the visual facts in the images and eBay-style accuracy first. Seller instructions are for *style and structure*, not for making up untrue details.
+
+For meaning_tokens:
+- Only include words/phrases that are clearly readable on the item itself (e.g., school/team names, band names, mascot text, brand text, trademark text).
+- Prefer longer exact phrases if visible (e.g., "NOTRE DAME FIGHTING IRISH").
+- Do NOT include sizes, colors, materials, prices, or generic descriptors.
+- If nothing readable is visible, return an empty array.
 
 For condition_intent:
 - Choose NEW_WITH_TAGS only if retail tags are clearly visible.
