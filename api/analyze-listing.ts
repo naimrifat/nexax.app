@@ -893,9 +893,47 @@ For pocketType/frontType/fabricType/occasion:
         n.includes('sport') ||
         n.includes('activity')
       ) {
-        return 400;
+        return 200;
       }
       return 150;
+    };
+
+    const buildOptionContext = () => {
+      const pieces: string[] = [
+        title,
+        description,
+        detected.brand,
+        detected.type,
+        detected.style,
+        detected.pattern,
+        Array.isArray(detected.theme) ? detected.theme.join(' ') : detected.theme,
+        Array.isArray(detected.features) ? detected.features.join(' ') : detected.features,
+        Array.isArray(detected.colors) ? detected.colors.join(' ') : detected.colors,
+        detected.size,
+        detected.model,
+        meaningTokens.join(' '),
+      ].filter(Boolean).map(String);
+      return pieces.join(' ').toLowerCase();
+    };
+
+    const optionContext = buildOptionContext();
+
+    const rankAndLimitOptions = (options: string[], max: number): string[] => {
+      if (!Array.isArray(options)) return [];
+      if (options.length <= max) return options;
+      const scored = options.map((opt, idx) => {
+        const clean = String(opt || '').trim();
+        const lower = clean.toLowerCase();
+        if (!clean) return { opt: clean, score: -1, idx };
+        const overlap = tokens(lower).filter((t) => optionContext.includes(t)).length;
+        const containsBonus = optionContext.includes(lower) ? 2 : 0;
+        return { opt: clean, score: overlap + containsBonus, idx };
+      });
+      scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.idx - b.idx;
+      });
+      return scored.slice(0, max).map((s) => s.opt).filter(Boolean);
     };
 
     const aspectsForModel = aspects.map((a) => ({
@@ -904,7 +942,7 @@ For pocketType/frontType/fabricType/occasion:
       selectionOnly: a.selectionOnly,
       multi: !!a.multi,
       freeTextAllowed: a.freeTextAllowed,
-      options: (a.values || []).slice(0, getAspectOptionsCap(a.name)), // cap for tokens
+      options: rankAndLimitOptions(a.values || [], getAspectOptionsCap(a.name)),
     }));
 
     const userPrompt = buildReconcileUserPrompt({
