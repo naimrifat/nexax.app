@@ -62,9 +62,9 @@ export function buildPromotedTitle(parts: TitleParts): string {
     if (afterLen !== beforeLen) intentCount += 1;
   }
 
-  const attributes = Array.isArray(parts.attributeTokens) ? parts.attributeTokens : [];
+  const attributeTokens = Array.isArray(parts.attributeTokens) ? parts.attributeTokens : [];
   let attributeCount = 0;
-  for (const t of attributes) {
+  for (const t of attributeTokens) {
     if (attributeCount >= 2) break;
     const beforeLen = tokens.join(' ').length;
     addToken(tokens, t, maxLen);
