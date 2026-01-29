@@ -367,6 +367,10 @@ type VisionJSON = {
     model?: string;
     sleeveLength?: string;
     fit?: string;
+    pocketType?: string;
+    frontType?: string;
+    fabricType?: string;
+    occasion?: string;
     [k: string]: any;
   };
   title?: string;
@@ -702,8 +706,12 @@ ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must ret
     "lengthHint": "short|knee length|midi|maxi|long|cropped|hip|thigh|knee|mid-calf|ankle",
     "closure": "Zip|Buttons|Buckle|Pullover|Hook & Eye|... (or null)",
     "features": ["Hood","Pockets","Water Resistant","Stretch", "..."],
+    "pocketType": "Cargo|Slash|Patch|Welt|... if visible",
+    "frontType": "Flat Front|Pleated|... if visible",
+    "fabricType": "Canvas|Denim|Fleece|Knit|... if visible",
     "pattern": "Solid|Floral|Plaid|Striped|Animal Print|Logo|Graphic|Quilted|... (best guess)",
     "theme": ["Outdoor","Sports","Y2K","80s","90s","Animals","Floral", ...],
+    "occasion": "Casual|Workwear|Activewear|... if visible",
     "countryOfOrigin": "... if visible",
     "model": "... if visible",
     "sleeveLength": "Short|3/4|Long|Sleeveless|... if visible",
@@ -728,6 +736,10 @@ For condition_intent:
 - Choose USED_EXCELLENT/USED_GOOD/USED_FAIR based on visible wear.
 - If unclear, choose UNKNOWN.
 condition_reason should be a short phrase like "tags visible" or "light wear".
+
+For pocketType/frontType/fabricType/occasion:
+- Only include if clearly visible or explicitly shown on labels/tags.
+- Otherwise return null or omit.
 `,
             },
           ],
@@ -862,13 +874,35 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
     /* ----------------------------------------
        Stage B: Reconcile to eBay aspects (AI guided)
     -----------------------------------------*/
+    const getAspectOptionsCap = (name: string): number => {
+      const n = norm(name);
+      if (
+        n.includes('fabric type') ||
+        n.includes('occasion') ||
+        n.includes('pocket type') ||
+        n.includes('front type') ||
+        n.includes('fit') ||
+        n.includes('rise') ||
+        n.includes('season') ||
+        n.includes('vintage') ||
+        n.includes('pattern') ||
+        n.includes('style') ||
+        n.includes('theme') ||
+        n.includes('sport') ||
+        n.includes('activity')
+      ) {
+        return 400;
+      }
+      return 150;
+    };
+
     const aspectsForModel = aspects.map((a) => ({
       name: a.name,
       required: !!a.required,
       selectionOnly: a.selectionOnly,
       multi: !!a.multi,
       freeTextAllowed: a.freeTextAllowed,
-      options: (a.values || []).slice(0, 150), // cap for tokens
+      options: (a.values || []).slice(0, getAspectOptionsCap(a.name)), // cap for tokens
     }));
 
     const userPrompt = buildReconcileUserPrompt({
@@ -965,6 +999,10 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
       else if (n === 'style') guess = detected.style || '';
       else if (n === 'type') guess = detected.type || '';
       else if (n.includes('pattern')) guess = detected.pattern || '';
+      else if (n.includes('pocket type')) guess = (detected as any).pocketType || '';
+      else if (n.includes('front type')) guess = (detected as any).frontType || '';
+      else if (n.includes('fabric type')) guess = (detected as any).fabricType || '';
+      else if (n.includes('occasion')) guess = (detected as any).occasion || '';
       else if (n.includes('length')) {
         const h = norm(detected.lengthHint || '');
         if (h.includes('maxi') || h.includes('long') || h.includes('ankle')) guess = 'Long';
