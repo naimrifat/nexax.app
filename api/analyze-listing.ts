@@ -320,6 +320,11 @@ function dedupeArray<T>(arr: T[]): T[] {
   return out;
 }
 
+function isEmptySpecificValue(v: any): boolean {
+  if (Array.isArray(v)) return v.filter((x) => String(x ?? '').trim().length > 0).length === 0;
+  return String(v ?? '').trim().length === 0;
+}
+
 /* ----------------------------------------
    Types + schema utilities
 -----------------------------------------*/
@@ -754,12 +759,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   },
   "keywords": ["... (follow seller keyword rules if provided)"]
 }
-
-function isEmptySpecificValue(v: any): boolean {
-  if (Array.isArray(v)) return v.filter((x) => String(x ?? '').trim().length > 0).length === 0;
-  return String(v ?? '').trim().length === 0;
-}
-
 Always obey the visual facts in the images and eBay-style accuracy first. Seller instructions are for *style and structure*, not for making up untrue details.
 
  For meaning_tokens:
