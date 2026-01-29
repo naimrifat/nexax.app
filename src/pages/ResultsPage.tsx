@@ -1677,7 +1677,7 @@ export default function ResultsPage() {
       const data = json?.data || json || {};
 
       if (targets.title && typeof data.title === 'string') {
-        setTitle(data.title);
+        setTitle(data.title.slice(0, 80));
       }
       if (targets.description && typeof data.description === 'string') {
         setDescription(data.description);
