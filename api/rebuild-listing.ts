@@ -219,6 +219,7 @@ Return a single JSON object with this schema:
     if (!Array.isArray(parsed.keywords)) parsed.keywords = currentKeywords;
     if (!parsed.condition_intent) parsed.condition_intent = currentIntent;
     if (!parsed.title) parsed.title = currentTitle;
+    parsed.title = String(parsed.title || '').slice(0, 80).trim();
     if (!parsed.description) parsed.description = currentDescription;
 
     return res.status(200).json({
