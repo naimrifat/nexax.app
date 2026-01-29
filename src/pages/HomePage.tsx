@@ -673,60 +673,69 @@ export default function HomePage() {
 
     try {
       // 1) Compress + upload all images to Cloudinary (sequential for better status + fewer spikes)
-      const uploadedUrls: string[] = [];
+      const uploadedUrls: string[] = new Array(photos.length);
 
       // Safety: keep under Cloudinary limits (and avoid edge payload sizes later)
       const MAX_BYTES = 9.5 * 1024 * 1024; // 9.5MB
 
-      for (let i = 0; i < photos.length; i++) {
-        const file = photos[i];
+      const maxConcurrency = Math.min(3, photos.length);
+      let nextIndex = 0;
+      let completed = 0;
 
-        setUploadingStatus();
-        const { file: compressed, meta } = await compressForUpload(file);
+      const worker = async () => {
+        while (true) {
+          const idx = nextIndex++;
+          if (idx >= photos.length) break;
+          const file = photos[idx];
 
-        // Hard guard: do not proceed with an oversized file
-        if (compressed.size > MAX_BYTES) {
-          throw new Error(
-            `Image "${file.name}" is still too large after compression (${(
-              compressed.size /
-              (1024 * 1024)
-            ).toFixed(2)}MB). Please upload a smaller image.`
-          );
+          setStatus(`Compressing ${completed + 1}/${photos.length}...`);
+          const { file: compressed, meta } = await compressForUpload(file);
+
+          if (compressed.size > MAX_BYTES) {
+            throw new Error(
+              `Image "${file.name}" is still too large after compression (${(
+                compressed.size /
+                (1024 * 1024)
+              ).toFixed(2)}MB). Please upload a smaller image.`
+            );
+          }
+
+          console.log('[compress]', {
+            index: idx,
+            name: file.name,
+            originalMB: (meta.originalBytes / (1024 * 1024)).toFixed(2),
+            finalMB: (meta.finalBytes / (1024 * 1024)).toFixed(2),
+            maxDimUsed: meta.maxDimUsed,
+            outputType: meta.outputType,
+          });
+
+          setStatus(`Uploading ${completed + 1}/${photos.length}...`);
+
+          const formData = new FormData();
+          formData.append('file', compressed);
+          formData.append('upload_preset', 'ebay_listings');
+
+          const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
+            method: 'POST',
+            body: formData,
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data?.error?.message ?? 'Image upload failed');
+          }
+
+          uploadedUrls[idx] = data.secure_url as string;
+          completed += 1;
         }
+      };
 
-        // Observability (dev)
-        console.log('[compress]', {
-          index: i,
-          name: file.name,
-          originalMB: (meta.originalBytes / (1024 * 1024)).toFixed(2),
-          finalMB: (meta.finalBytes / (1024 * 1024)).toFixed(2),
-          maxDimUsed: meta.maxDimUsed,
-          outputType: meta.outputType,
-        });
-
-        setUploadingStatus();
-
-        const formData = new FormData();
-        formData.append('file', compressed);
-        formData.append('upload_preset', 'ebay_listings');
-
-        const res = await fetch('https://api.cloudinary.com/v1_1/dvhiftzlp/image/upload', {
-          method: 'POST',
-          body: formData,
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error?.message ?? 'Image upload failed');
-        }
-
-        uploadedUrls.push(data.secure_url as string);
-      }
+      await Promise.all(Array.from({ length: maxConcurrency }, () => worker()));
 
       // Persist hosted URLs for publishing
       setCloudinaryUrls(uploadedUrls);
 
-      setUploadingStatus();
+      setStatus('Analyzing photos...');
 
       const analyzePayload: any = {
         session_id: Date.now().toString(),
