@@ -578,6 +578,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Apply Cloudinary optimizations for vision (reduces tokens / bandwidth)
     const visionImages = hostedImages.map(toOptimizedVisionUrl);
+    const visionImagesLow = visionImages.map((u) =>
+      u.replace('/upload/w_2048,h_2048,c_limit,q_auto,f_auto/', '/upload/w_1024,h_1024,c_limit,q_auto,f_auto/')
+    );
 
     // Observability
     console.log('[analyze-listing]', {
@@ -666,28 +669,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
 
-    let vision: any;
-    try {
-      vision = await callOpenAIChat({
-        model: 'gpt-5.2',
-        response_format: { type: 'json_object' },
-        temperature: 0.2,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are an expert eBay lister. Read ALL photos together. Extract concrete facts (brand, size, color, materials, construction, features, closures, themes, patterns, lengths, fits, etc.). Return structured JSON only.',
-          },
-          {
-            role: 'user',
-            content: [
-              ...visionImages.map((url) => ({
-                type: 'image_url' as const,
-                image_url: { url, detail: 'high' as const },
-              })),
-              {
-                type: 'text' as const,
-                text: `
+    const buildVisionPayload = (urls: string[], detail: 'high' | 'low') => ({
+      model: 'gpt-5.2',
+      response_format: { type: 'json_object' },
+      temperature: 0.2,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are an expert eBay lister. Read ALL photos together. Extract concrete facts (brand, size, color, materials, construction, features, closures, themes, patterns, lengths, fits, etc.). Return structured JSON only.',
+        },
+        {
+          role: 'user',
+          content: [
+            ...urls.map((url) => ({
+              type: 'image_url' as const,
+              image_url: { url, detail },
+            })),
+            {
+              type: 'text' as const,
+              text: `
 ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must return a single JSON object with this structure:
 
 {
@@ -745,17 +746,34 @@ For pocketType/frontType/fabricType/occasion:
 - Only include if clearly visible or explicitly shown on labels/tags.
 - Otherwise return null or omit.
 `,
-              },
-            ],
-          },
-        ],
-      });
+            },
+          ],
+        },
+      ],
+    });
+
+    let vision: any;
+    try {
+      vision = await callOpenAIChat(buildVisionPayload(visionImages, 'high'));
     } catch (err: any) {
-      console.error('[gen] vision call failed', { requestId, message: String(err?.message || '') });
-      return res.status(500).json({
-        error: `Vision analysis failed: ${String(err?.message || 'Unknown error')}`,
-        requestId,
-      });
+      const msg = String(err?.message || '');
+      if (msg.includes('invalid_image_url') || msg.includes('Timeout while downloading')) {
+        try {
+          vision = await callOpenAIChat(buildVisionPayload(visionImagesLow, 'low'));
+        } catch (retryErr: any) {
+          console.error('[gen] vision call failed', { requestId, message: String(retryErr?.message || '') });
+          return res.status(500).json({
+            error: `Vision analysis failed: ${String(retryErr?.message || 'Unknown error')}`,
+            requestId,
+          });
+        }
+      } else {
+        console.error('[gen] vision call failed', { requestId, message: msg });
+        return res.status(500).json({
+          error: `Vision analysis failed: ${String(err?.message || 'Unknown error')}`,
+          requestId,
+        });
+      }
     }
 
     const visionJSON = safeJSON<VisionJSON>(vision.choices?.[0]?.message?.content || '{}', {
