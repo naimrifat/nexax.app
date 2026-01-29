@@ -666,26 +666,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
 
-    const vision = await callOpenAIChat({
-      model: 'gpt-5.2',
-      response_format: { type: 'json_object' },
-      temperature: 0.2,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You are an expert eBay lister. Read ALL photos together. Extract concrete facts (brand, size, color, materials, construction, features, closures, themes, patterns, lengths, fits, etc.). Return structured JSON only.',
-        },
-        {
-          role: 'user',
-          content: [
-            ...visionImages.map((url) => ({
-              type: 'image_url' as const,
-              image_url: { url, detail: 'high' as const },
-            })),
-            {
-              type: 'text' as const,
-              text: `
+    let vision: any;
+    try {
+      vision = await callOpenAIChat({
+        model: 'gpt-5.2',
+        response_format: { type: 'json_object' },
+        temperature: 0.2,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are an expert eBay lister. Read ALL photos together. Extract concrete facts (brand, size, color, materials, construction, features, closures, themes, patterns, lengths, fits, etc.). Return structured JSON only.',
+          },
+          {
+            role: 'user',
+            content: [
+              ...visionImages.map((url) => ({
+                type: 'image_url' as const,
+                image_url: { url, detail: 'high' as const },
+              })),
+              {
+                type: 'text' as const,
+                text: `
 ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must return a single JSON object with this structure:
 
 {
@@ -743,11 +745,18 @@ For pocketType/frontType/fabricType/occasion:
 - Only include if clearly visible or explicitly shown on labels/tags.
 - Otherwise return null or omit.
 `,
-            },
-          ],
-        },
-      ],
-    });
+              },
+            ],
+          },
+        ],
+      });
+    } catch (err: any) {
+      console.error('[gen] vision call failed', { requestId, message: String(err?.message || '') });
+      return res.status(500).json({
+        error: `Vision analysis failed: ${String(err?.message || 'Unknown error')}`,
+        requestId,
+      });
+    }
 
     const visionJSON = safeJSON<VisionJSON>(vision.choices?.[0]?.message?.content || '{}', {
       detected: {},
@@ -893,9 +902,9 @@ For pocketType/frontType/fabricType/occasion:
         n.includes('sport') ||
         n.includes('activity')
       ) {
-        return 200;
+        return 120;
       }
-      return 150;
+      return 80;
     };
 
     const buildOptionContext = () => {
@@ -953,23 +962,32 @@ For pocketType/frontType/fabricType/occasion:
       aspectsForModel,
     });
 
-    const reconcile = await callOpenAIChat({
-      model: 'gpt-5.2',
-      response_format: { type: 'json_object' },
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: RECONCILE_SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: userPrompt,
-            },
-          ],
-        },
-      ],
-    });
+    let reconcile: any;
+    try {
+      reconcile = await callOpenAIChat({
+        model: 'gpt-5.2',
+        response_format: { type: 'json_object' },
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: RECONCILE_SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: userPrompt,
+              },
+            ],
+          },
+        ],
+      });
+    } catch (err: any) {
+      console.error('[gen] reconcile call failed', { requestId, message: String(err?.message || '') });
+      return res.status(500).json({
+        error: `Reconcile failed: ${String(err?.message || 'Unknown error')}`,
+        requestId,
+      });
+    }
 
     const recJSON = safeJSON<ReconcileJSON>(reconcile.choices?.[0]?.message?.content || '{}', {
       final_specifics: [],
