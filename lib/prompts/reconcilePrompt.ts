@@ -320,6 +320,13 @@ OUTPUT FORMAT
 Return exactly one object per aspect with name and value.
 Never invent, rename, or remove aspects.
 
+PROMOTION OUTPUTS (TITLE HELPERS)
+Additionally return:
+- intent_aspects: up to 3 entries for high-intent aspects (Pattern/Style/Theme/Occasion/Sport/Activity, etc.)
+- attribute_aspects: up to 2 entries for attribute aspects (Wash/Cuff/Finish/Features/etc.)
+Each entry must use an aspect name from the provided schema and a value that exists in that aspect's allowed options.
+If unsure, return empty arrays.
+
 Fallback categories (Tier 2):
 Electronics
 Home & kitchen
@@ -378,6 +385,12 @@ RETURN JSON ONLY:
 {
   "final_specifics": [
     { "name": "Aspect Name", "value": "string OR string[]" }
+  ],
+  "intent_aspects": [
+    { "name": "Aspect Name", "value": "string" }
+  ],
+  "attribute_aspects": [
+    { "name": "Aspect Name", "value": "string" }
   ],
   "notes": "short note about any assumptions or fields intentionally left blank"
 }
