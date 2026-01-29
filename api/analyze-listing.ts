@@ -105,7 +105,7 @@ function toOptimizedVisionUrl(url: string): string {
     if (!u.includes('/upload/')) return u;
 
     // c_limit avoids cropping.
-    return u.replace('/upload/', '/upload/w_1024,h_1024,c_limit,q_auto,f_auto/');
+    return u.replace('/upload/', '/upload/w_2048,h_2048,c_limit,q_auto,f_auto/');
   } catch {
     return url;
   }
@@ -675,7 +675,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           content: [
             ...visionImages.map((url) => ({
               type: 'image_url' as const,
-              image_url: { url, detail: 'low' as const },
+              image_url: { url, detail: 'high' as const },
             })),
             {
               type: 'text' as const,
