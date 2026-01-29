@@ -756,8 +756,14 @@ export default function HomePage() {
       });
 
        if (!analysisResponse.ok) {
-         const errorData = await analysisResponse.json().catch(() => ({}));
-         const msg = String(errorData?.error || errorData?.message || '').trim();
+         const raw = await analysisResponse.text().catch(() => '');
+         let errorData: any = {};
+         try {
+           errorData = raw ? JSON.parse(raw) : {};
+         } catch {
+           errorData = {};
+         }
+         const msg = String(errorData?.error || errorData?.message || raw || '').trim();
          throw new Error(msg || 'Failed to analyze images');
        }
 
