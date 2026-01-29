@@ -371,6 +371,21 @@ type VisionJSON = {
     frontType?: string;
     fabricType?: string;
     occasion?: string;
+    // Apparel/suiting construction helpers (best-effort from photos)
+    jacketCut?: string;
+    numberOfPieces?: string;
+    lapelStyle?: string;
+    frontButtonStyle?: string;
+    ventStyle?: string;
+    sleeveButtonStyle?: string;
+    lined?: string;
+    garmentCare?: string;
+    vintage?: string;
+    handmade?: string;
+    // OCR/label helpers
+    ocrText?: string;
+    tagStyleNumber?: string;
+    mpn?: string;
     [k: string]: any;
   };
   title?: string;
@@ -677,7 +692,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           role: 'system',
           content:
-            'You are an expert eBay lister. Read ALL photos together. Extract concrete facts (brand, size, color, materials, construction, features, closures, themes, patterns, lengths, fits, etc.). Return structured JSON only.',
+            'You are an expert eBay lister. Read ALL photos together. Extract concrete facts only from what is visible (including label OCR). Prefer exact option-friendly phrases (e.g., "Notch Lapel", "Single Vent", "Two-Button", "Fully Lined", "Pinstripe"). Return structured JSON only. Never guess brand/size/material if not clearly shown.',
         },
         {
           role: 'user',
@@ -688,8 +703,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             })),
             {
               type: 'text' as const,
-              text: `
-${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must return a single JSON object with this structure:
+               text: `
+ ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must return a single JSON object with this structure:
 
 {
   "title": "... (<=80 chars, follow seller rules if provided)",
@@ -720,19 +735,44 @@ ${listingStyleInstructions ? listingStyleInstructions + '\n\n' : ''}You must ret
     "countryOfOrigin": "... if visible",
     "model": "... if visible",
     "sleeveLength": "Short|3/4|Long|Sleeveless|... if visible",
-    "fit": "Regular|Slim|Relaxed|Classic|... if visible",
-    "sizeTypeHint": "Regular|Plus|Petite|Tall|Big & Tall if visible"
+   "fit": "Regular|Slim|Relaxed|Classic|... if visible",
+    "sizeTypeHint": "Regular|Plus|Petite|Tall|Big & Tall if visible",
+
+    "jacketCut": "Single-breasted|Double-breasted|... if visible",
+    "numberOfPieces": "1|2|3|... if clearly implied (jacket only vs suit set)",
+    "lapelStyle": "Notch Lapel|Peak Lapel|Shawl Lapel|... if visible",
+    "frontButtonStyle": "1-Button|2-Button|3-Button|... if visible",
+    "ventStyle": "No Vent|Single Vent|Double Vent|... if visible",
+    "sleeveButtonStyle": "0|1|2|3|4|5 buttons|... if visible",
+    "lined": "Fully Lined|Partially Lined|Unlined|... if visible",
+    "garmentCare": "Dry clean only|... if readable on label",
+    "vintage": "Yes|No|Unknown",
+    "handmade": "Yes|No|Unknown",
+    "ocrText": "All readable tag text lines, space-separated (keep short)",
+    "tagStyleNumber": "Style/PO/CA/RN numbers if readable",
+    "mpn": "MPN if explicitly labeled or clearly the style/part number"
   },
   "keywords": ["... (follow seller keyword rules if provided)"]
 }
 
+function isEmptySpecificValue(v: any): boolean {
+  if (Array.isArray(v)) return v.filter((x) => String(x ?? '').trim().length > 0).length === 0;
+  return String(v ?? '').trim().length === 0;
+}
+
 Always obey the visual facts in the images and eBay-style accuracy first. Seller instructions are for *style and structure*, not for making up untrue details.
 
-For meaning_tokens:
+ For meaning_tokens:
 - Only include words/phrases that are clearly readable on the item itself (e.g., school/team names, band names, mascot text, brand text, trademark text).
 - Prefer longer exact phrases if visible (e.g., "NOTRE DAME FIGHTING IRISH").
 - Do NOT include sizes, colors, materials, prices, or generic descriptors.
-- If nothing readable is visible, return an empty array.
+ - If nothing readable is visible, return an empty array.
+
+ For ocrText/tagStyleNumber/mpn:
+ - Only include text that is clearly readable on labels/tags.
+ - Keep ocrText concise (no more than ~30 words). Prefer the most identifying lines (brand, size, material %, care, style/PO).
+ - tagStyleNumber can include things like "PO4900020956" or "RN90736".
+ - mpn should only be set if the label explicitly indicates an MPN, or the tag clearly shows a manufacturer/style/part number used as an identifier.
 
 For condition_intent:
 - Choose NEW_WITH_TAGS only if retail tags are clearly visible.
@@ -926,20 +966,43 @@ For pocketType/frontType/fabricType/occasion:
     };
 
     const buildOptionContext = () => {
+      const flatDetected = (() => {
+        try {
+          return JSON.stringify(detected || {});
+        } catch {
+          return '';
+        }
+      })();
+
       const pieces: string[] = [
         title,
         description,
+        flatDetected,
         detected.brand,
         detected.type,
         detected.style,
         detected.pattern,
+        detected.jacketCut,
+        detected.lapelStyle,
+        detected.ventStyle,
+        detected.frontButtonStyle,
+        detected.sleeveButtonStyle,
+        detected.lined,
+        detected.garmentCare,
+        detected.ocrText,
+        detected.tagStyleNumber,
+        detected.mpn,
         Array.isArray(detected.theme) ? detected.theme.join(' ') : detected.theme,
         Array.isArray(detected.features) ? detected.features.join(' ') : detected.features,
         Array.isArray(detected.colors) ? detected.colors.join(' ') : detected.colors,
+        Array.isArray(detected.materials) ? detected.materials.join(' ') : (detected.materials as any),
         detected.size,
         detected.model,
         meaningTokens.join(' '),
-      ].filter(Boolean).map(String);
+      ]
+        .filter(Boolean)
+        .map(String);
+
       return pieces.join(' ').toLowerCase();
     };
 
@@ -1065,6 +1128,7 @@ For pocketType/frontType/fabricType/occasion:
       else if (n === 'department') guess = department;
       else if (n.includes('size type')) guess = sizeType;
       else if (n === 'size' || n.includes('waist') || n.includes('inseam')) guess = detected.size || '';
+      else if (n.includes('chest') && n.includes('size')) guess = detected.size || '';
       else if (n.includes('color') || n.includes('colour'))
         guess = (Array.isArray(detected.colors) ? detected.colors[0] : detected.colors) || '';
       else if (n.includes('outer') && n.includes('material'))
@@ -1075,10 +1139,21 @@ For pocketType/frontType/fabricType/occasion:
       else if (n === 'style') guess = detected.style || '';
       else if (n === 'type') guess = detected.type || '';
       else if (n.includes('pattern')) guess = detected.pattern || '';
+      else if (n.includes('jacket cut')) guess = (detected as any).jacketCut || '';
+      else if (n.includes('number of pieces')) guess = (detected as any).numberOfPieces || '';
+      else if (n.includes('lapel')) guess = (detected as any).lapelStyle || '';
+      else if (n.includes('front button')) guess = (detected as any).frontButtonStyle || '';
+      else if (n.includes('vent')) guess = (detected as any).ventStyle || '';
+      else if (n.includes('sleeve') && n.includes('button')) guess = (detected as any).sleeveButtonStyle || '';
+      else if (n.includes('lined') || n.includes('lining')) guess = (detected as any).lined || '';
+      else if (n.includes('garment care') || (n.includes('care') && !n.includes('california'))) guess = (detected as any).garmentCare || '';
+      else if (n === 'mpn') guess = (detected as any).mpn || '';
       else if (n.includes('pocket type')) guess = (detected as any).pocketType || '';
       else if (n.includes('front type')) guess = (detected as any).frontType || '';
       else if (n.includes('fabric type')) guess = (detected as any).fabricType || '';
       else if (n.includes('occasion')) guess = (detected as any).occasion || '';
+      else if (n.includes('vintage')) guess = (detected as any).vintage || '';
+      else if (n.includes('handmade')) guess = (detected as any).handmade || '';
       else if (n.includes('length')) {
         const h = norm(detected.lengthHint || '');
         if (h.includes('maxi') || h.includes('long') || h.includes('ankle')) guess = 'Long';
@@ -1107,6 +1182,126 @@ For pocketType/frontType/fabricType/occasion:
     }
 
     finalSpecifics = Array.from(filled.values());
+
+    /* ----------------------------------------
+       Stage C: Retry-fill missing required aspects (AI guided)
+       This is category-agnostic and works across ALL eBay categories.
+    -----------------------------------------*/
+    const requiredMissing = aspects
+      .filter((a) => a.required)
+      .filter((a) => {
+        const cur = filled.get(norm(a.name));
+        return !cur || isEmptySpecificValue(cur.value);
+      });
+
+    if (requiredMissing.length > 0) {
+      const maxRetries = 2;
+      const batchSize = 18;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        const stillMissing = aspects
+          .filter((a) => a.required)
+          .filter((a) => {
+            const cur = filled.get(norm(a.name));
+            return !cur || isEmptySpecificValue(cur.value);
+          })
+          .slice(0, batchSize);
+
+        if (!stillMissing.length) break;
+
+        const retryAspectsForModel = stillMissing.map((a) => ({
+          name: a.name,
+          required: !!a.required,
+          selectionOnly: a.selectionOnly,
+          multi: !!a.multi,
+          freeTextAllowed: a.freeTextAllowed,
+          // Provide more options for required missing fields to improve match rate.
+          options: rankAndLimitOptions(a.values || [], 250),
+        }));
+
+        const retryPrompt = `
+You are filling ONLY missing REQUIRED eBay item specifics.
+
+Rules:
+- Use ONLY the provided aspect names.
+- If an aspect has options, choose only from those options.
+- Never guess measurements, model numbers, MPN, compatibility, warnings, or origin.
+- If the value is not clearly supported by detected facts/OCR/title/description, return empty ("" or []).
+- Prefer exact matches from label OCR (numbers/letters) when present.
+
+Category Path:
+${category.path}
+
+Title:
+${title}
+
+Description:
+${description}
+
+Detected facts (JSON):
+${JSON.stringify(detected, null, 2)}
+
+Missing required aspects to fill (JSON):
+${JSON.stringify(retryAspectsForModel, null, 2)}
+
+Return JSON only:
+{
+  "final_specifics": [
+    { "name": "Aspect Name", "value": "string OR string[]" }
+  ]
+}
+        `.trim();
+
+        try {
+          const retryResp = await callOpenAIChat({
+            model: 'gpt-5.2',
+            response_format: { type: 'json_object' },
+            temperature: 0.1,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'You are an expert eBay lister. You ONLY fill missing required aspects with evidence-based values. If unsure, output empty values.',
+              },
+              { role: 'user', content: retryPrompt },
+            ],
+          });
+
+          const retryJSON = safeJSON<ReconcileJSON>(retryResp?.choices?.[0]?.message?.content || '{}', {
+            final_specifics: [],
+          });
+
+          const retrySpecifics: Array<{ name: string; value: any }> = Array.isArray(retryJSON.final_specifics)
+            ? retryJSON.final_specifics
+            : [];
+
+          for (const s of retrySpecifics) {
+            const key = norm(s.name);
+            const a = byName.get(key);
+            if (!a) continue;
+
+            const normalized = normalizeValueForAspect(a, s.value, optionSets.get(key), canonicalValue.get(key));
+            if (!normalized.length) continue;
+
+            const v = a.multi ? normalized : normalized[0];
+            const existing = filled.get(key);
+            if (!existing || isEmptySpecificValue(existing.value)) {
+              filled.set(key, { name: a.name, value: v });
+              mappingLog.push(`Retry(${attempt}) → filled "${a.name}" with ${JSON.stringify(v)}`);
+            }
+          }
+        } catch (e: any) {
+          console.error('[gen] retry-fill required aspects failed', {
+            requestId,
+            attempt,
+            message: String(e?.message || ''),
+          });
+          break;
+        }
+      }
+
+      finalSpecifics = Array.from(filled.values());
+    }
 
     // Ensure every aspect is present (even if empty) so UI can render all rows
     const finalSpecificsMap = new Map(finalSpecifics.map((s) => [norm(s.name), s]));
