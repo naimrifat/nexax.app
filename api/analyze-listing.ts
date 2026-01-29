@@ -383,6 +383,8 @@ type VisionJSON = {
 
 type ReconcileJSON = {
   final_specifics?: Array<{ name: string; value: any }>;
+  intent_aspects?: Array<{ name: string; value: any }>;
+  attribute_aspects?: Array<{ name: string; value: any }>;
   notes?: any;
   [k: string]: any;
 };
@@ -1052,57 +1054,33 @@ For pocketType/frontType/fabricType/occasion:
     const fashionPath = norm(category.path);
     const isFashionCategory = ['clothing', 'shoes', 'bags', 'accessories', 'apparel'].some((k) => fashionPath.includes(k));
 
-    const intentTokens: string[] = [];
-    if (isFashionCategory) {
-      const intentAspectOrder = ['pattern', 'style', 'theme', 'occasion', 'sport', 'activity'];
+    const buildPromotedFromReconcile = (
+      list: Array<{ name: string; value: any }> | undefined,
+      limit: number
+    ): string[] => {
+      if (!Array.isArray(list)) return [];
+      const out: string[] = [];
       const seen = new Set<string>();
-      const getSpecificValues = (aspectKey: string): string[] => {
-        const s = finalSpecifics.find((x) => norm(x.name) === aspectKey);
-        const v: any = s ? (s as any).value : null;
-        if (Array.isArray(v)) return v.map(String).map((x) => x.trim()).filter(Boolean);
-        if (typeof v === 'string') return [v.trim()].filter(Boolean);
-        return [];
-      };
-
-      for (const k of intentAspectOrder) {
-        for (const v of getSpecificValues(k)) {
-          const key = norm(v);
-          if (!key || seen.has(key)) continue;
-          seen.add(key);
-          intentTokens.push(v);
-          if (intentTokens.length >= 3) break;
-        }
-        if (intentTokens.length >= 3) break;
+      for (const item of list) {
+        if (out.length >= limit) break;
+        const aspectName = String(item?.name || '').trim();
+        const valueRaw = item?.value;
+        const value = Array.isArray(valueRaw) ? valueRaw[0] : valueRaw;
+        const token = String(value || '').trim();
+        if (!aspectName || !token) continue;
+        const optionSet = optionSets.get(norm(aspectName));
+        if (!optionSet || optionSet.size === 0) continue;
+        if (!optionSet.has(norm(token))) continue;
+        const key = norm(token);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(token);
       }
-    }
+      return out;
+    };
 
-    const attributeTokens: string[] = [];
-    if (isFashionCategory) {
-      const attributeAspectMatchers = [
-        'wash',
-        'cuff',
-        'hem',
-        'distressed',
-        'finish',
-        'feature',
-      ];
-      const seenAttr = new Set<string>();
-      for (const spec of finalSpecifics) {
-        const nameKey = norm(spec.name || '');
-        if (!attributeAspectMatchers.some((m) => nameKey.includes(m))) continue;
-        const value: any = (spec as any).value;
-        const values = Array.isArray(value) ? value : value ? [value] : [];
-        for (const v of values) {
-          const token = String(v || '').trim();
-          const key = norm(token);
-          if (!key || seenAttr.has(key)) continue;
-          seenAttr.add(key);
-          attributeTokens.push(token);
-          if (attributeTokens.length >= 2) break;
-        }
-        if (attributeTokens.length >= 2) break;
-      }
-    }
+    const intentTokens = isFashionCategory ? buildPromotedFromReconcile(recJSON.intent_aspects, 3) : [];
+    const attributeTokens = isFashionCategory ? buildPromotedFromReconcile(recJSON.attribute_aspects, 2) : [];
 
     const bestColor = (() => {
       const multi = colors.find((c) => norm(c) === 'multicolor');
