@@ -3,7 +3,7 @@ export type TitleParts = {
   productName: string;
   identifiers?: string[];
   meaningTokens?: string[];
-  styleToken?: string | null;
+  intentTokens?: string[];
   colors?: string[];
   sizeToken?: string | null;
   condition?: string | null;
@@ -51,8 +51,14 @@ export function buildPromotedTitle(parts: TitleParts): string {
     break;
   }
 
-  if (parts.styleToken) {
-    addToken(tokens, parts.styleToken, maxLen);
+  const intents = Array.isArray(parts.intentTokens) ? parts.intentTokens : [];
+  let intentCount = 0;
+  for (const t of intents) {
+    if (intentCount >= 3) break;
+    const beforeLen = tokens.join(' ').length;
+    addToken(tokens, t, maxLen);
+    const afterLen = tokens.join(' ').length;
+    if (afterLen !== beforeLen) intentCount += 1;
   }
 
   const color = pickBestColor(Array.isArray(parts.colors) ? parts.colors : []);
@@ -67,8 +73,8 @@ export function buildPromotedTitle(parts: TitleParts): string {
   if (parts.condition) addToken(tokens, parts.condition, maxLen);
 
   // Example:
-  // buildPromotedTitle({ brand: 'Nike', productName: 'Air Max', meaningTokens: ['Friends'], colors: ['Black', 'Red'] })
-  // => "Nike Air Max Friends Black"
+  // buildPromotedTitle({ brand: 'Nike', productName: 'Air Max', meaningTokens: ['Friends'], intentTokens: ['Bohemian','Floral'], colors: ['Black', 'Red'] })
+  // => "Nike Air Max Friends Bohemian Floral Black"
 
   return tokens.join(' ').trim();
 }
