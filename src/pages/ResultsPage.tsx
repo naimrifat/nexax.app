@@ -2845,30 +2845,6 @@ export default function ResultsPage() {
           {rebuildSuccess ? <div className="results-rebuild-success">{rebuildSuccess}</div> : null}
         </section>
 
-        <section className="results-seo-panel" aria-label="SEO Health">
-          <div className="results-seo-header">SEO Health</div>
-          <div className="results-seo-item">
-            <div className="results-seo-label">Title length</div>
-            <div className="results-seo-value">{title.length}/80</div>
-          </div>
-          {title.length < 50 ? (
-            <div className="results-seo-warning">Title may be too short for best visibility.</div>
-          ) : null}
-          {title.length > 80 ? <div className="results-seo-error">Title exceeds 80 characters.</div> : null}
-
-          <div className="results-seo-item">
-            <div className="results-seo-label">Missing required specifics</div>
-            <div className="results-seo-value">{missingRequiredSpecifics.length}</div>
-          </div>
-          {missingRequiredSpecifics.length > 0 ? (
-            <div className="results-seo-missing">
-              {missingRequiredSpecifics.slice(0, 8).join(', ')}
-              {missingRequiredSpecifics.length > 8 ? ` +${missingRequiredSpecifics.length - 8} more` : ''}
-            </div>
-          ) : (
-            <div className="results-seo-good">All required specifics filled.</div>
-          )}
-        </section>
 
         <section style={{ marginTop: 24 }}>
           <div className="results-sku-row">
