@@ -2787,10 +2787,11 @@ export default function ResultsPage() {
               ref={titleInputRef}
               className="results-title-input"
               placeholder="Enter title..."
+              maxLength={80}
               value={title}
               onChange={(e) => {
                 setIsDirty(true);
-                setTitle(e.target.value);
+                setTitle(e.target.value.slice(0, 80));
                 setRebuildSuccess('');
               }}
               style={{
