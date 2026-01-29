@@ -763,7 +763,9 @@ export default function HomePage() {
          } catch {
            errorData = {};
          }
-         const msg = String(errorData?.error || errorData?.message || raw || '').trim();
+         const base = String(errorData?.error || errorData?.message || raw || '').trim();
+         const reqId = String(errorData?.requestId || '').trim();
+         const msg = reqId ? `${base} (requestId: ${reqId})` : base;
          throw new Error(msg || 'Failed to analyze images');
        }
 
