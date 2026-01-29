@@ -661,7 +661,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 
     const vision = await callOpenAIChat({
-      model: 'gpt-5.1',
+      model: 'gpt-5.2',
       response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
@@ -874,7 +874,7 @@ condition_reason should be a short phrase like "tags visible" or "light wear".
     });
 
     const reconcile = await callOpenAIChat({
-      model: 'gpt-5.1',
+      model: 'gpt-5.2',
       response_format: { type: 'json_object' },
       temperature: 0.2,
       messages: [
