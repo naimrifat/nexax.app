@@ -822,7 +822,7 @@ export default function ResultsPage() {
       try {
         setError(null);
 
-        const response = await fetch('/api/ebay-categories', {
+        const response = await fetch('/api/ebay-api', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
@@ -904,13 +904,13 @@ export default function ResultsPage() {
           return;
         }
 
-        const response = await fetch('/api/ebay-item-conditions', {
+        const response = await fetch('/api/ebay-api', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({ category_id: cid }),
+          body: JSON.stringify({ action: 'getCategoryConditions', categoryId: cid }),
         });
 
         const data: any = await response.json().catch(() => ({}));
