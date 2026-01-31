@@ -4,6 +4,7 @@ import { reconcileSpecificsCore } from './cores/reconcileSpecificsCore'
 import { publishListingCore } from './cores/publishListingCore'
 import { transcribeCore } from './cores/transcribeCore'
 import { ebayCategoriesCore } from './cores/ebayCategoriesCore'
+import { Telemetry } from './telemetry'
 
 // Dispatcher gateway: single entry for all eBay related API surface
 // This keeps the Hobby plan within 1 gateway function while delegating work to existing endpoints.
