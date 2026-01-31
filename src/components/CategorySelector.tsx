@@ -54,7 +54,7 @@ export default function CategorySelector({
       return;
     }
     try {
-      const r = await fetch('/api/ebay-categories', {
+      const r = await fetch('/api/ebay-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'getCategories', parentCategoryId: pid }),
@@ -90,7 +90,7 @@ export default function CategorySelector({
     setSearching(true);
     setError('');
     try {
-      const r = await fetch('/api/ebay-categories', {
+      const r = await fetch('/api/ebay-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'searchCategories', query: term }),
