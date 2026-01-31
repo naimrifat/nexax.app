@@ -13,6 +13,41 @@ export type TitleParts = {
 
 const normalizeToken = (value: string): string => String(value || '').replace(/\s+/g, ' ').trim();
 
+function normalizeTitleSizeToken(raw: string): string {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+
+  // Normalize common bilingual/alias size formats for titles.
+  // Examples:
+  // - "3XL (3XG/3TG)" -> "3XL"
+  // - "XL (TG)" -> "XL"
+  // - "L/G" -> "L"
+  // Keep conversions like "(EU 44)" by only removing specific alias codes.
+
+  // Drop a trailing parenthetical if it looks like a size alias code block.
+  s = s.replace(/\s*\(([^)]+)\)\s*$/g, (_m, inner) => {
+    const v = String(inner || '').trim();
+    if (!v) return '';
+    if (/\b(?:EU|UK|US|CM|MM|IN|INCH|INCHES)\b/i.test(v)) return ` (${v})`;
+
+    const alias = v.replace(/\s+/g, '').toUpperCase();
+    // French/CA apparel size aliases commonly seen on tags.
+    // TP/P/M/G/TG/TTG and variants like 3TG, 2TG, 3XG, etc.
+    const looksLikeAliasOnly = /^[0-9]*?(?:XG|TG|TTG|TP|P|M|G)(?:\/[0-9]*?(?:XG|TG|TTG|TP|P|M|G))*$/.test(alias);
+    if (looksLikeAliasOnly) return '';
+    return ` (${v})`;
+  });
+
+  // Drop a trailing "/ALIAS" pattern when it is clearly redundant (e.g. "XL/TG", "L/G").
+  s = s.replace(/\s*\/?\s*(?:TP|TTG|TG|XG|G)\s*$/i, (m) => {
+    // Only remove if the string still contains a usable size before the alias.
+    const before = s.slice(0, Math.max(0, s.length - m.length)).trim();
+    return before ? '' : m;
+  });
+
+  return s.trim();
+}
+
 const addToken = (parts: string[], token: string, maxLen: number): void => {
   const clean = normalizeToken(token);
   if (!clean) return;
@@ -75,7 +110,10 @@ export function buildPromotedTitle(parts: TitleParts): string {
   const color = pickBestColor(Array.isArray(parts.colors) ? parts.colors : []);
   if (color) addToken(tokens, color, maxLen);
 
-  if (parts.sizeToken) addToken(tokens, parts.sizeToken, maxLen);
+  if (parts.sizeToken) {
+    const normalizedSize = normalizeTitleSizeToken(parts.sizeToken);
+    if (normalizedSize) addToken(tokens, normalizedSize, maxLen);
+  }
 
   const attributes = Array.isArray(parts.attributes) ? parts.attributes : [];
   const stretch = attributes.find((a) => normalizeToken(a).toLowerCase() === 'stretch') || '';
