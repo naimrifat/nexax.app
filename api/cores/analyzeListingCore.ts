@@ -5,16 +5,26 @@ export async function analyzeListingCore(input: any): Promise<any> {
   if (!payload) {
     return { ok: false, data: {}, error: 'No payload', requestId: '0' }
   }
-  const title = payload?.title ?? 'Untitled Listing'
-  const description = payload?.description ?? ''
+  // Normalize basic fields
+  const title = (payload?.title ?? 'Untitled Listing').toString()
+  const description = String(payload?.description ?? '')
   const categoryId = String(payload?.category_id ?? payload?.categoryId ?? payload?.category_id ?? '0')
   const categoryName = payload?.categoryName ?? 'Auto Category'
-  const item_specifics = Array.isArray(payload?.item_specifics)
-    ? payload.item_specifics
-    : typeof payload?.item_specifics === 'object' && payload?.item_specifics
-    ? Object.entries(payload.item_specifics).map(([name, value]) => ({ name, value: value ?? '', multi: false }))
-    : []
-  const keywords = Array.isArray(payload?.keywords) ? payload.keywords : payload?.keywords ? [payload.keywords] : []
+
+  // Normalize item specifics from different shapes
+  let item_specifics: any[] = []
+  const rawSpecs = payload?.item_specifics
+  if (Array.isArray(rawSpecs)) {
+    item_specifics = rawSpecs
+  } else if (rawSpecs && typeof rawSpecs === 'object') {
+    item_specifics = Object.entries(rawSpecs).map(([name, value]) => ({ name, value: value ?? '', multi: false }))
+  }
+
+  // Optional keywords
+  let keywords: any[] = []
+  if (Array.isArray(payload?.keywords)) keywords = payload.keywords
+  else if (payload?.keywords) keywords = [payload.keywords]
+
   const data = {
     title,
     description,
