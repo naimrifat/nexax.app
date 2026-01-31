@@ -1,5 +1,4 @@
 import type { Response } from 'node-fetch'
-
 export async function reconcileSpecificsCore(input: any): Promise<any> {
   const payload = input?.payload ?? input
   const current: any[] = Array.isArray(payload?.item_specifics) ? payload.item_specifics : []
