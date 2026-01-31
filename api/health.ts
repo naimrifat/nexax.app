@@ -3,7 +3,6 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { Telemetry } from './telemetry'
 
 export const config = {
-  runtime: 'nodejs'
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
