@@ -41,13 +41,7 @@ async function callOpenAIChat(body: any) {
   return r.json();
 }
 
-function normalizeStringArray(input: any): string[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .filter((v) => typeof v === 'string')
-    .map((v) => v.trim())
-    .filter((v) => v.length > 0);
-}
+// NOTE: normalizeStringArray kept for compatibility; not used in current flow
 
 function dedupeArray<T>(arr: T[]): T[] {
   const seen = new Set<string>();
@@ -577,7 +571,7 @@ Return JSON only:
       }
     }
 
-    const finalSpecifics = Array.from(filled.values());
+    // finalSpecifics removed; results built directly from 'filled' below
 
     return res.status(200).json({
       success: true,
