@@ -15,7 +15,8 @@ const ROUTES: RouteMap = {
   'publish': '/api/publish-listing',
   'transcribe': '/api/transcribe',
   'getCategorySpecifics': '/api/ebay-categories',
-  'getCategorySuggestions': '/api/ebay-categories'
+  'getCategorySuggestions': '/api/ebay-categories',
+  'getCategoryConditions': '/api/ebay-item-conditions'
 }
 
 export const config = {
