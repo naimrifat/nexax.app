@@ -1,4 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { analyzeListingCore } from './cores/analyzeListingCore'
+import { reconcileSpecificsCore } from './cores/reconcileSpecificsCore'
+import { publishListingCore } from './cores/publishListingCore'
+import { transcribeCore } from './cores/transcribeCore'
+import { ebayCategoriesCore } from './cores/ebayCategoriesCore'
 
 // Dispatcher gateway: single entry for all eBay related API surface
 // This keeps the Hobby plan within 1 gateway function while delegating work to existing endpoints.
@@ -44,34 +49,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       payload = payload
     }
 
-    const path = ROUTES[action]
-    if (!path) {
-      return res.status(400).json({ error: 'Invalid action', requestId })
+    // Route to core implementations (dispatcher gateway -> core modules)
+    let result: any = null
+    switch (action) {
+      case 'analyze-listing':
+        result = await analyzeListingCore({ payload, headers: req.headers as any });
+        break
+      case 'reconcile-specifics':
+        result = await reconcileSpecificsCore({ payload, headers: req.headers as any });
+        break
+      case 'publish':
+        result = await publishListingCore({ payload, headers: req.headers as any });
+        break
+      case 'transcribe':
+        result = await transcribeCore({ payload, headers: req.headers as any });
+        break
+      case 'getCategorySpecifics':
+      case 'getCategorySuggestions':
+      case 'getCategoryConditions':
+        result = await ebayCategoriesCore({ payload, headers: req.headers as any });
+        break
+      default:
+        return res.status(400).json({ error: 'Invalid action', requestId })
     }
 
-    // Forward to existing backend endpoints, preserving auth headers
-    const host = (req.headers.host && `http://${req.headers.host}`) || ''
-    const baseUrl = process.env.NEXAX_GATEWAY_BASE_URL || host || ''
-    const url = (baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl) + path
-
-    const authHeader = req.headers['authorization'] as string | undefined
-    const headers: any = {
-      'Content-Type': 'application/json',
-    }
-    if (authHeader) headers['Authorization'] = authHeader
-
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    })
-
-    const data = await resp.json().catch(() => ({}))
-    if (!resp.ok) {
-      return res.status(resp.status).json({ error: data?.error || resp.statusText, requestId, data })
-    }
-
-    res.status(200).json({ ok: true, requestId, data })
+    const ok = result?.ok ?? true
+    const dataOut = result?.data ?? {}
+    const errOut = result?.error
+    const rid = result?.requestId ?? requestId
+    return res.status(200).json({ ok, requestId: rid, data: dataOut, error: errOut })
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'Internal server error', requestId })
   }
