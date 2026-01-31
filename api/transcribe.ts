@@ -3,6 +3,27 @@ import { createClient } from '@supabase/supabase-js';
 import formidable from 'formidable';
 import fs from 'fs';
 
+// Declare formidable types for the build
+declare module 'formidable' {
+  export interface File {
+    filepath: string;
+    originalFilename: string;
+    mimetype: string;
+    size: number;
+  }
+  export interface Fields {
+    [key: string]: any;
+  }
+  export interface Files {
+    [key: string]: File;
+  }
+  export interface Formidable {
+    (options?: any): {
+      parse: (req: any, callback: (err: any, fields: Fields, files: Files) => void) => void;
+    };
+  };
+}
+
 export const config = {
   api: { bodyParser: false },
   maxDuration: 60,
