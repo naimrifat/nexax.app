@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { analyzeListingCore } from './cores/analyzeListingCore'
-import { reconcileSpecificsCore } from './cores/reconcileSpecificsCore'
-import { publishListingCore } from './cores/publishListingCore'
-import { transcribeCore } from './cores/transcribeCore'
-import { ebayCategoriesCore } from './cores/ebayCategoriesCore'
+import { analyzeListingCore } from './cores/analyzeListingCore.js'
+import { reconcileSpecificsCore } from './cores/reconcileSpecificsCore.js'
+import { publishListingCore } from './cores/publishListingCore.js'
+import { transcribeCore } from './cores/transcribeCore.js'
+import { ebayCategoriesCore } from './cores/ebayCategoriesCore.js'
 import { Telemetry } from './telemetry'
 
 // Dispatcher gateway: single entry for all eBay related API surface
