@@ -463,59 +463,7 @@ async function getEbayAppToken(env: string, requestId: string): Promise<string> 
   return accessToken;
 }
 
-async function getCategoryConditionsForPublish(params: {
-  env: string;
-  marketplaceId: string;
-  categoryId: string;
-  requestId: string;
-}): Promise<{ id: string; name: string }[] | null> {
-  const categoryId = String(params.categoryId || '').trim();
-  if (!categoryId) return [];
-
-  try {
-    const base = pickEbayApiBase(params.env);
-    const token = await getEbayAppToken(params.env, params.requestId);
-
-    const url = `${base}/sell/metadata/v1/marketplace/${encodeURIComponent(
-      params.marketplaceId
-    )}/get_item_condition_policies?category_id=${encodeURIComponent(categoryId)}`;
-
-    const r = await ebayFetch(
-      url,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-        },
-      },
-      { requestId: params.requestId, operation: 'publish' }
-    );
-
-    if (!r.ok) return null;
-
-    const data: any = r.json || {};
-
-    const policies = Array.isArray(data?.itemConditionPolicies) ? data.itemConditionPolicies : [];
-    const itemConditions =
-      Array.isArray(data?.itemConditions)
-        ? data.itemConditions
-        : policies.length && Array.isArray(policies[0]?.itemConditions)
-          ? policies[0].itemConditions
-          : [];
-
-    const conditions = (itemConditions || [])
-      .map((c: any) => ({
-        id: String(c?.conditionId ?? c?.id ?? ''),
-        name: String(c?.conditionDescription ?? c?.name ?? c?.conditionName ?? ''),
-      }))
-      .filter((c: any) => c.id && c.name);
-
-    return conditions;
-  } catch {
-    return null;
-  }
-}
+// Removed: getCategoryConditionsForPublish (deprecated)
 
 /**
  * REAL eBay publish using Inventory API.
@@ -1047,7 +995,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Sanitize listing_json for eBay payloads (payload-only; do not persist to DB)
     const { cleaned: cleanedListingJson, removed: sanitizedRemoved } = sanitizeListingForEbay(listingJson);
-    const sanitizedRemovedCount = sanitizedRemoved.length;
+    // sanitizedRemovedCount is deprecated; compute length inline where needed
 
     if (sanitizedRemoved.length > 0) {
       console.log('[publish] sanitized listing', {
@@ -1323,7 +1271,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           workspace_id: String((listing as any).workspace_id || ''),
           listing_id: String((listing as any).id || ''),
           tags: { field },
-          extras: { requestId, removedCount: sanitizedRemovedCount },
+        extras: { requestId },
         });
 
         await persistPublishFailed({ message: String(err?.message || 'Publish validation failed.'), errorId: null, stage: 'validation' });
@@ -1382,11 +1330,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           workspace_id: workspaceIdForSentry || '',
           listing_id: listingIdForSentry || '',
         },
-        extras: {
-          code: 'EBAY_RECONNECT_REQUIRED',
-          requestId,
-          removedCount: sanitizedRemovedCount,
-        },
+         extras: {
+            code: 'EBAY_RECONNECT_REQUIRED',
+            requestId,
+          },
       });
 
       await persistPublishFailed({
@@ -1445,11 +1392,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           listing_id: listingIdForSentry || '',
         },
         extras: {
-          requestId,
-          removedCount: sanitizedRemovedCount,
-          httpStatus,
-          ebay_error_id: ebayErrorId || undefined,
-          hint: err?.hint || undefined,
+            requestId,
+            httpStatus,
+            ebay_error_id: ebayErrorId || undefined,
+            hint: err?.hint || undefined,
         },
       });
 
@@ -1475,7 +1421,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       extras: {
         requestId,
-        removedCount: sanitizedRemovedCount,
       },
     });
     await persistPublishFailed({ message: msg || 'Unexpected server error.', errorId: requestId, stage: 'publish' });
