@@ -436,7 +436,7 @@ export default function HomePage() {
     setLoadingSpecifics(true);
 
     try {
-      const response = await fetch('/api/ebay-categories', {
+      const response = await fetch('/api/ebay-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
@@ -755,13 +755,13 @@ export default function HomePage() {
         return;
       }
 
-      const analysisResponse = await fetch('/api/analyze-listing', {
+      const analysisResponse = await fetch('/api/ebay-api', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(analyzePayload),
+        body: JSON.stringify({ action: 'analyze-listing', payload: analyzePayload }),
       });
 
        if (!analysisResponse.ok) {
