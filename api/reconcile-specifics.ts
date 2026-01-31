@@ -41,7 +41,13 @@ async function callOpenAIChat(body: any) {
   return r.json();
 }
 
-// NOTE: normalizeStringArray kept for compatibility; not used in current flow
+function toStrArray(input: any): string[] {
+  if (Array.isArray(input)) return input.map((x) => String(x)).filter((s) => s != null && s !== '');
+  if (input == null) return [];
+  return [String(input)];
+}
+
+// Small compatibility shim: normalize/strip arrays of tokens into strings
 
 function dedupeArray<T>(arr: T[]): T[] {
   const seen = new Set<string>();
