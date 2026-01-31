@@ -50,7 +50,7 @@ function parseForm(req: VercelRequest): Promise<{ fields: any; files: any }> {
       allowEmptyFiles: false,
     });
 
-    form.parse(req, (err, fields, files) => {
+    form.parse(req, (err: any, fields: any, files: any) => {
       if (err) return reject(err);
       resolve({ fields, files });
     });
