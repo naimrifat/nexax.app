@@ -5,11 +5,13 @@ export const config = {
   runtime: 'nodejs14.x',
 }
 
+import { Telemetry } from './telemetry'
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
     res.status(405).json({ ok: false, status: 'method not allowed' })
     return
   }
 
-  res.status(200).json({ ok: true, status: 'OK', version: 'Phase 3.5', timestamp: new Date().toISOString() })
+  res.status(200).json({ ok: true, status: 'OK', version: 'Phase 3.5', timestamp: new Date().toISOString(), telemetry: Telemetry.report() })
 }
