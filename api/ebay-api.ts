@@ -53,21 +53,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let result: any = null
     switch (action) {
       case 'analyze-listing':
-        result = await analyzeListingCore({ payload, headers: req.headers as any });
+        {
+          const t0 = Date.now()
+          result = await analyzeListingCore({ payload, headers: req.headers as any })
+          const latency = Date.now() - t0
+          // instrument telemetry
+          // @ts-ignore
+          Telemetry?.record?.(action, !!result?.ok, latency)
+        }
         break
       case 'reconcile-specifics':
-        result = await reconcileSpecificsCore({ payload, headers: req.headers as any });
+        {
+          const t0 = Date.now()
+          result = await reconcileSpecificsCore({ payload, headers: req.headers as any })
+          const latency = Date.now() - t0
+          // @ts-ignore
+          Telemetry?.record?.(action, !!result?.ok, latency)
+        }
         break
       case 'publish':
-        result = await publishListingCore({ payload, headers: req.headers as any });
+        {
+          const t0 = Date.now()
+          result = await publishListingCore({ payload, headers: req.headers as any })
+          const latency = Date.now() - t0
+          // @ts-ignore
+          Telemetry?.record?.(action, !!result?.ok, latency)
+        }
         break
       case 'transcribe':
-        result = await transcribeCore({ payload, headers: req.headers as any });
+        {
+          const t0 = Date.now()
+          result = await transcribeCore({ payload, headers: req.headers as any })
+          const latency = Date.now() - t0
+          // @ts-ignore
+          Telemetry?.record?.(action, !!result?.ok, latency)
+        }
         break
       case 'getCategorySpecifics':
       case 'getCategorySuggestions':
       case 'getCategoryConditions':
-        result = await ebayCategoriesCore({ payload, headers: req.headers as any });
+        {
+          const t0 = Date.now()
+          result = await ebayCategoriesCore({ payload, headers: req.headers as any })
+          const latency = Date.now() - t0
+          // @ts-ignore
+          Telemetry?.record?.(action, !!result?.ok, latency)
+        }
         break
       default:
         return res.status(400).json({ error: 'Invalid action', requestId })
