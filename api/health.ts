@@ -1,11 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-export const config = {
-  // Simple health check endpoint
-  runtime: 'nodejs14.x',
-}
-
 import { Telemetry } from './telemetry'
+
+export const config = {
+  runtime: 'nodejs'
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
