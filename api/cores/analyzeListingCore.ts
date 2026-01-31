@@ -5,11 +5,11 @@ export async function analyzeListingCore(input: any): Promise<any> {
   if (!payload) {
     return { ok: false, data: {}, error: 'No payload', requestId: '0' }
   }
-  // Normalize basic fields
-  const title = (payload?.title ?? 'Untitled Listing').toString()
+  // Production-grade normalization
+  const title = String(payload?.title ?? 'Untitled Listing')
   const description = String(payload?.description ?? '')
   const categoryId = String(payload?.category_id ?? payload?.categoryId ?? payload?.category_id ?? '0')
-  const categoryName = payload?.categoryName ?? 'Auto Category'
+  const categoryName = String(payload?.categoryName ?? 'Auto Category')
 
   // Normalize item specifics from different shapes
   let item_specifics: any[] = []
@@ -20,7 +20,7 @@ export async function analyzeListingCore(input: any): Promise<any> {
     item_specifics = Object.entries(rawSpecs).map(([name, value]) => ({ name, value: value ?? '', multi: false }))
   }
 
-  // Optional keywords
+  // Keywords
   let keywords: any[] = []
   if (Array.isArray(payload?.keywords)) keywords = payload.keywords
   else if (payload?.keywords) keywords = [payload.keywords]
