@@ -13,18 +13,6 @@ function makeRequestId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-type RouteMap = { [k: string]: string }
-
-const ROUTES: RouteMap = {
-  'analyze-listing': '/api/analyze-listing',
-  'reconcile-specifics': '/api/reconcile-specifics',
-  'publish': '/api/publish-listing',
-  'transcribe': '/api/transcribe',
-  'getCategorySpecifics': '/api/ebay-categories',
-  'getCategorySuggestions': '/api/ebay-categories',
-  'getCategoryConditions': '/api/ebay-item-conditions'
-}
-
 export const config = {
   api: { bodyParser: true },
 }
