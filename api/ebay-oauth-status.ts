@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
+import { getValidEbayToken } from '../lib/ebay/ebay-token-manager.js'
 
 function mustEnv(name: string): string {
   const v = process.env[name]
@@ -61,12 +62,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       !!String(refreshToken || '').trim() &&
       !!String(expiresAt || '').trim()
 
-    return res.status(200).json({
-      ok: true,
-      connected,
-      expires_at: expiresAt ?? null,
-      has_refresh_token,
-    })
+    const verify = pickFirstQueryValue(req.query.verify as any).trim()
+
+    if (verify === '1' && connected === true) {
+      let verified = false
+      let ebay_error_status: number | undefined
+
+      try {
+        const token = await getValidEbayToken(workspaceId, 'production')
+        const ebayRes = await fetch('https://api.ebay.com/sell/account/v1/privilege', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/json',
+          },
+        })
+
+        if (ebayRes.ok) {
+          verified = true
+        } else {
+          verified = false
+          ebay_error_status = ebayRes.status
+        }
+      } catch (e: any) {
+        verified = false
+        if (typeof e?.statusCode === 'number') ebay_error_status = e.statusCode
+      }
+
+      return res.status(200).json({
+        ok: true,
+        connected,
+        expires_at: expiresAt ?? null,
+        has_refresh_token,
+        verified,
+        ...(typeof ebay_error_status === 'number' ? { ebay_error_status } : {}),
+      })
+    }
+
+    return res.status(200).json({ ok: true, connected, expires_at: expiresAt ?? null, has_refresh_token })
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Internal server error' })
   }
