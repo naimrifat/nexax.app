@@ -75,7 +75,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       client_id: clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
-      scope: 'sell.inventory sell.account sell.fulfillment',
+      scope:
+        'https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.account https://api.ebay.com/oauth/api_scope/sell.fulfillment',
       state,
     })
 
