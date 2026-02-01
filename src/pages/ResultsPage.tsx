@@ -2477,19 +2477,22 @@ export default function ResultsPage() {
         }),
       });
 
+      const raw = await res.text()
       let data: any = {}
       try {
-        data = await res.json()
+        data = JSON.parse(raw)
       } catch {
         data = {}
       }
+
       const oauthUrl = data?.oauthUrl || data?.url
 
       if (!res.ok || !oauthUrl) {
-        setEbayReconnectError(data?.error || 'Failed to start eBay OAuth.')
+        setEbayReconnectError(data?.error || raw || `Failed (HTTP ${res.status})`)
         return
       }
 
+      console.log('Redirecting to eBay:', oauthUrl)
       window.location.assign(String(oauthUrl))
     } finally {
       setEbayReconnectLoading(false);
