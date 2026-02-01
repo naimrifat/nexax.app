@@ -79,6 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         break
       case 'getCategorySpecifics':
+      case 'getCategories':
       case 'getCategorySuggestions':
       case 'getCategoryConditions':
         {
