@@ -2477,15 +2477,20 @@ export default function ResultsPage() {
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
-      const oauthUrl = data?.oauthUrl;
+      let data: any = {}
+      try {
+        data = await res.json()
+      } catch {
+        data = {}
+      }
+      const oauthUrl = data?.oauthUrl || data?.url
 
       if (!res.ok || !oauthUrl) {
-        setEbayReconnectError(data?.error || 'Failed to start eBay OAuth.');
-        return;
+        setEbayReconnectError(data?.error || 'Failed to start eBay OAuth.')
+        return
       }
 
-      window.location.href = String(oauthUrl);
+      window.location.assign(String(oauthUrl))
     } finally {
       setEbayReconnectLoading(false);
     }
