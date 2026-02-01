@@ -96,6 +96,8 @@ export function EbayConnectCard() {
       });
 
       const raw = await res.text()
+      console.log('[ebay-oauth-start] status:', res.status, 'ok:', res.ok)
+      console.log('[ebay-oauth-start] raw response:', raw)
       let data: any = {}
       try {
         data = JSON.parse(raw)
@@ -106,7 +108,7 @@ export function EbayConnectCard() {
       const oauthUrl = data?.oauthUrl || data?.url
 
       if (!res.ok || !oauthUrl) {
-        setStatusMsg(data?.error || raw || `Failed (HTTP ${res.status})`)
+        setStatusMsg(String(data?.error || raw || `Failed (HTTP ${res.status})`))
         return
       }
 
