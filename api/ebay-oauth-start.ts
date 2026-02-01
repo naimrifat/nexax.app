@@ -32,15 +32,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end()
   }
 
-  if (req.method !== 'POST' && req.method !== 'GET') {
+  if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const body: any = req.method === 'POST' ? req.body || {} : {}
-  const workspaceId = String(body.workspace_id || pickFirstQueryValue(req.query.workspace_id as any) || '').trim()
+  const body: any = req.body || {}
+  const workspaceId = String(body.workspace_id || '').trim()
   const returnTo = String(body.return_to || '').trim()
   if (!workspaceId) {
     return res.status(400).json({ error: 'Missing workspace_id' })
+  }
+  if (!returnTo) {
+    return res.status(400).json({ error: 'Missing return_to' })
   }
 
   const token = readBearerToken(req)
@@ -78,13 +81,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const authUrl = `https://auth.ebay.com/oauth2/authorize?${params.toString()}`
 
-    if (req.method === 'POST') {
-      return res.status(200).json({ oauthUrl: authUrl })
-    }
-
-    res.statusCode = 302
-    res.setHeader('Location', authUrl)
-    return res.end()
+    return res.status(200).json({ oauthUrl: authUrl })
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Internal server error' })
   }
