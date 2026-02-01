@@ -23,16 +23,22 @@ function readBearerToken(req: VercelRequest): string {
   return m ? String(m[1] || '').trim() : ''
 }
 
+export const config = {
+  api: { bodyParser: true },
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') {
     return res.status(200).end()
   }
 
-  if (req.method !== 'GET') {
+  if (req.method !== 'POST' && req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const workspaceId = pickFirstQueryValue(req.query.workspace_id as any).trim()
+  const body: any = req.method === 'POST' ? req.body || {} : {}
+  const workspaceId = String(body.workspace_id || pickFirstQueryValue(req.query.workspace_id as any) || '').trim()
+  const returnTo = String(body.return_to || '').trim()
   if (!workspaceId) {
     return res.status(400).json({ error: 'Missing workspace_id' })
   }
@@ -57,8 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const userId = String(data.user.id || '').trim()
     const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-    const ts = Date.now()
-    const state = base64urlJson({ workspace_id: workspaceId, user_id: userId, nonce, ts })
+    const state = base64urlJson({ workspace_id: workspaceId, user_id: userId, return_to: returnTo, nonce })
 
     const clientId = getEnv('EBAY_CLIENT_ID')
     const redirectUri = getEnv('EBAY_REDIRECT_URI')
@@ -72,6 +77,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     const authUrl = `https://auth.ebay.com/oauth2/authorize?${params.toString()}`
+
+    if (req.method === 'POST') {
+      return res.status(200).json({ oauthUrl: authUrl })
+    }
 
     res.statusCode = 302
     res.setHeader('Location', authUrl)
