@@ -34,27 +34,31 @@ export function EbayConnectCard() {
         return;
       }
 
-      const res = await fetch('/api/ebay-oauth-status', {
-        method: 'POST',
+      const res = await fetch(`/api/ebay-oauth-status?workspace_id=${encodeURIComponent(String(workspaceId))}`, {
+        method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ workspace_id: workspaceId }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const raw = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = {};
+      }
 
       if (!res.ok) {
-        setStatusMsg(data?.error || 'Failed to check eBay connection status.');
+        setStatusMsg(String(data?.error || raw || 'Failed to check eBay connection status.'));
         setConnected(false);
         return;
       }
 
-      const isConnected = !!data.connected;
+      const isConnected = !!data?.connected;
       setConnected(isConnected);
 
-      if (!isConnected && data?.reason === 'missing_refresh_token') {
+      if (!isConnected && data?.has_refresh_token === false) {
         setStatusMsg('Expired — please reconnect');
       }
     } finally {
