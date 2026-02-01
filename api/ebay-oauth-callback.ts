@@ -36,11 +36,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const code = pickFirstQueryValue(req.query.code as any).trim()
   const state = pickFirstQueryValue(req.query.state as any).trim()
+  const oauthError = pickFirstQueryValue(req.query.error as any).trim()
+  const oauthErrorDescription = pickFirstQueryValue(req.query.error_description as any).trim()
+
+  if (oauthError) {
+    res.statusCode = 400
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    return res.end(`OAuth error: ${oauthError} - ${oauthErrorDescription}`)
+  }
 
   if (!code) {
     res.statusCode = 400
     res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-    return res.end('Missing code')
+    return res.end('Missing code. Query: ' + JSON.stringify(req.query))
   }
   if (!state) {
     res.statusCode = 400
