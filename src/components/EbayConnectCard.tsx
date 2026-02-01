@@ -83,28 +83,10 @@ export function EbayConnectCard() {
         return;
       }
 
-      const res = await fetch('/api/ebay-oauth-start', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          workspace_id: workspaceId,
-          return_to: `${window.location.origin}/settings?ebay=connected`,
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      const oauthUrl = data?.oauthUrl ?? data?.url;
-
-      if (!res.ok || !oauthUrl) {
-        setStatusMsg(data?.error || 'Failed to start eBay OAuth.');
-        return;
-      }
-
       // Redirect user to eBay consent screen
-      window.location.href = String(oauthUrl);
+      window.location.href = `/api/ebay-oauth-start?workspace_id=${workspaceId}&return_to=${encodeURIComponent(
+        `${window.location.origin}/settings?ebay=connected`
+      )}`;
     } finally {
       setLoading(false);
     }
