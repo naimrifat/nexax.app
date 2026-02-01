@@ -27,7 +27,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const body: any = req.body || {}
-    const action = String(body.action ?? body?.payload?.action ?? body?.['action'] ?? '').trim()
+    const actionFromBody = body?.action
+    const actionFromPayload = body?.payload?.action
+    const rawAction = String(body.action ?? body?.payload?.action ?? body?.['action'] ?? '')
+    const action = rawAction.trim()
     let payload = body.payload ?? body
     if (!action) {
       return res.status(400).json({ error: 'Missing action', requestId })
@@ -37,6 +40,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (payload && typeof payload === 'object' && Object.values(payload).length === 1 && payload.action) {
       payload = payload
     }
+
+    return res.status(200).json({
+      actionFromBody,
+      actionFromPayload,
+      rawAction,
+      bodyKeys: Object.keys(body || {}),
+      payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+    })
 
     // Route to core implementations (dispatcher gateway -> core modules)
     let result: any = null
