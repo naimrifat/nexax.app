@@ -64,6 +64,7 @@ export function EbayConnectCard() {
 
 
   async function connect() {
+    console.log('[ebay reconnect] clicked')
     setLoading(true);
     setStatusMsg('');
 
@@ -109,6 +110,7 @@ export function EbayConnectCard() {
 
       if (!res.ok || !oauthUrl) {
         setStatusMsg(String(data?.error || raw || `Failed (HTTP ${res.status})`))
+        console.error('[ebay-oauth-start] missing oauthUrl', { status: res.status, ok: res.ok, data })
         return
       }
 
