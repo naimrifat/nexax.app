@@ -1,4 +1,4 @@
-import categoriesByCid from './ebayCategoriesConfig.js'
+const categoriesByCid = require('./ebayCategoriesConfig.js')
 export async function ebayCategoriesCore(input) {
   const payload = (input && input.payload) || input
   const cid = String(payload?.categoryId ?? payload?.category_id ?? '').trim()
