@@ -2465,9 +2465,27 @@ export default function ResultsPage() {
         return;
       }
 
-      window.location.href = `/api/ebay-oauth-start?workspace_id=${workspaceId}&return_to=${encodeURIComponent(
-        `${window.location.origin}/settings?ebay=connected`
-      )}`;
+      const res = await fetch('/api/ebay-oauth-start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          return_to: `${window.location.origin}/settings?ebay=connected`,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      const oauthUrl = data?.oauthUrl;
+
+      if (!res.ok || !oauthUrl) {
+        setEbayReconnectError(data?.error || 'Failed to start eBay OAuth.');
+        return;
+      }
+
+      window.location.href = String(oauthUrl);
     } finally {
       setEbayReconnectLoading(false);
     }
