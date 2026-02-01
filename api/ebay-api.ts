@@ -4,7 +4,7 @@ import { reconcileSpecificsCore } from '../lib/cores/reconcileSpecificsCore.js'
 import { publishListingCore } from '../lib/cores/publishListingCore.js'
 import { transcribeCore } from '../lib/cores/transcribeCore.js'
 import { ebayCategoriesCore } from '../lib/cores/ebayCategoriesCore.js'
-import { record } from '../lib/telemetry.js'
+import * as Telemetry from '../lib/telemetry.js'
 
 // Dispatcher gateway: single entry for all eBay related API surface
 // This keeps the Hobby plan within 1 gateway function while delegating work to existing endpoints.
@@ -27,27 +27,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const body: any = req.body || {}
-    const actionFromBody = body?.action
-    const actionFromPayload = body?.payload?.action
-    const rawAction = String(body.action ?? body?.payload?.action ?? body?.['action'] ?? '')
-    const action = rawAction.trim()
-    let payload = body.payload ?? body
+    const action = String(body.action ?? body?.payload?.action ?? '').trim()
+    const payload = body.payload ?? body
     if (!action) {
       return res.status(400).json({ error: 'Missing action', requestId })
     }
-
-    // Normalize payload shape for common patterns
-    if (payload && typeof payload === 'object' && Object.values(payload).length === 1 && payload.action) {
-      payload = payload
-    }
-
-    return res.status(200).json({
-      actionFromBody,
-      actionFromPayload,
-      rawAction,
-      bodyKeys: Object.keys(body || {}),
-      payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
-    })
 
     // Route to core implementations (dispatcher gateway -> core modules)
     let result: any = null
@@ -58,8 +42,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           result = await analyzeListingCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
           // instrument telemetry
-          // @ts-ignore
-          record?.(action, !!result?.ok, latency)
+          Telemetry.record?.(action, !!result?.ok, latency)
         }
         break
       case 'reconcile-specifics':
@@ -67,8 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const t0 = Date.now()
           result = await reconcileSpecificsCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
-          // @ts-ignore
-          record?.(action, !!result?.ok, latency)
+          Telemetry.record?.(action, !!result?.ok, latency)
         }
         break
       case 'publish':
@@ -76,8 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const t0 = Date.now()
           result = await publishListingCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
-          // @ts-ignore
-          record?.(action, !!result?.ok, latency)
+          Telemetry.record?.(action, !!result?.ok, latency)
         }
         break
       case 'transcribe':
@@ -85,8 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const t0 = Date.now()
           result = await transcribeCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
-          // @ts-ignore
-          record?.(action, !!result?.ok, latency)
+          Telemetry.record?.(action, !!result?.ok, latency)
         }
         break
       case 'getCategorySpecifics':
@@ -97,8 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const t0 = Date.now()
           result = await ebayCategoriesCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
-          // @ts-ignore
-          record?.(action, !!result?.ok, latency)
+          Telemetry.record?.(action, !!result?.ok, latency)
         }
         break
       default:
