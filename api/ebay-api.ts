@@ -4,7 +4,7 @@ import { reconcileSpecificsCore } from '../lib/cores/reconcileSpecificsCore.js'
 import { publishListingCore } from '../lib/cores/publishListingCore.js'
 import { transcribeCore } from '../lib/cores/transcribeCore.js'
 import { ebayCategoriesCore } from '../lib/cores/ebayCategoriesCore.js'
-import Telemetry from '../lib/telemetry.js'
+import { record } from '../lib/telemetry.js'
 
 // Dispatcher gateway: single entry for all eBay related API surface
 // This keeps the Hobby plan within 1 gateway function while delegating work to existing endpoints.
@@ -48,7 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const latency = Date.now() - t0
           // instrument telemetry
           // @ts-ignore
-          Telemetry?.record?.(action, !!result?.ok, latency)
+          record?.(action, !!result?.ok, latency)
         }
         break
       case 'reconcile-specifics':
@@ -57,7 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           result = await reconcileSpecificsCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
           // @ts-ignore
-          Telemetry?.record?.(action, !!result?.ok, latency)
+          record?.(action, !!result?.ok, latency)
         }
         break
       case 'publish':
@@ -66,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           result = await publishListingCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
           // @ts-ignore
-          Telemetry?.record?.(action, !!result?.ok, latency)
+          record?.(action, !!result?.ok, latency)
         }
         break
       case 'transcribe':
@@ -75,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           result = await transcribeCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
           // @ts-ignore
-          Telemetry?.record?.(action, !!result?.ok, latency)
+          record?.(action, !!result?.ok, latency)
         }
         break
       case 'getCategorySpecifics':
@@ -86,7 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           result = await ebayCategoriesCore({ payload, headers: req.headers as any })
           const latency = Date.now() - t0
           // @ts-ignore
-          Telemetry?.record?.(action, !!result?.ok, latency)
+          record?.(action, !!result?.ok, latency)
         }
         break
       default:
