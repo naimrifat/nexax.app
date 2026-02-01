@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-import { Telemetry } from './telemetry'
+const Telemetry = require('./telemetry.js')
 
 export const config = {
 }
