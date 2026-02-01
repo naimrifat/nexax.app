@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { analyzeListingCore } from './cores/analyzeListingCore.js'
-import { reconcileSpecificsCore } from './cores/reconcileSpecificsCore.js'
-import { publishListingCore } from './cores/publishListingCore.js'
-import { transcribeCore } from './cores/transcribeCore.js'
-import { ebayCategoriesCore } from './cores/ebayCategoriesCore.js'
-import Telemetry from './telemetry.js'
+import { analyzeListingCore } from '../lib/cores/analyzeListingCore'
+import { reconcileSpecificsCore } from '../lib/cores/reconcileSpecificsCore'
+import { publishListingCore } from '../lib/cores/publishListingCore'
+import { transcribeCore } from '../lib/cores/transcribeCore'
+import { ebayCategoriesCore } from '../lib/cores/ebayCategoriesCore'
+import Telemetry from '../lib/telemetry'
 
 // Dispatcher gateway: single entry for all eBay related API surface
 // This keeps the Hobby plan within 1 gateway function while delegating work to existing endpoints.
