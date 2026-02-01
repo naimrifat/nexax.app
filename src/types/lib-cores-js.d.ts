@@ -20,5 +20,8 @@ declare module '../lib/cores/ebayCategoriesCore.js' {
 
 declare module '../lib/telemetry.js' {
   const Telemetry: any
+  export const record: any
+  export const report: any
+  export const reset: any
   export default Telemetry
 }
