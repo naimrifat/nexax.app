@@ -2446,6 +2446,7 @@ export default function ResultsPage() {
   };
 
   const handleReconnectEbay = async () => {
+    console.log('[ebay reconnect] clicked')
     setEbayReconnectLoading(true);
     setEbayReconnectError(null);
 
@@ -2491,6 +2492,7 @@ export default function ResultsPage() {
 
       if (!res.ok || !oauthUrl) {
         setEbayReconnectError(String(data?.error || raw || `Failed (HTTP ${res.status})`))
+        console.error('[ebay-oauth-start] missing oauthUrl', { status: res.status, ok: res.ok, data })
         return
       }
 
