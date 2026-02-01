@@ -95,16 +95,21 @@ export function EbayConnectCard() {
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
-      const oauthUrl = data?.oauthUrl;
+      let data: any = {}
+      try {
+        data = await res.json()
+      } catch {
+        data = {}
+      }
+      const oauthUrl = data?.oauthUrl || data?.url
 
       if (!res.ok || !oauthUrl) {
-        setStatusMsg(data?.error || 'Failed to start eBay OAuth.');
-        return;
+        setStatusMsg(data?.error || 'Failed to start eBay OAuth.')
+        return
       }
 
       // Redirect user to eBay consent screen
-      window.location.href = String(oauthUrl);
+      window.location.assign(String(oauthUrl))
     } finally {
       setLoading(false);
     }
