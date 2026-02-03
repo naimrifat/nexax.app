@@ -1,106 +1,89 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createClient } from '@supabase/supabase-js'
-import { getValidEbayToken } from '../lib/ebay/ebay-token-manager.js'
+// api/ebay-oauth-status.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
+import { sentryCaptureException } from "../lib/sentry.js";
 
-function mustEnv(name: string): string {
-  const v = process.env[name]
-  if (!v) throw new Error(`Missing env var: ${name}`)
-  return v
+
+function mustEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
 }
 
-function pickFirstQueryValue(v: string | string[] | undefined): string {
-  if (Array.isArray(v)) return String(v[0] ?? '')
-  return String(v ?? '')
-}
+async function getAuthedUser(accessToken: string) {
+  const supabase = createClient(mustEnv('SUPABASE_URL'), mustEnv('SUPABASE_ANON_KEY'), {
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    auth: { persistSession: false },
+  });
 
-function readBearerToken(req: VercelRequest): string {
-  const raw = String(req.headers.authorization || '')
-  const m = raw.match(/^Bearer\s+(.+)$/i)
-  return m ? String(m[1] || '').trim() : ''
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data?.user) throw new Error('Unauthorized');
+  return data.user;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method === 'OPTIONS') return res.status(200).end()
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
-
-  const token = readBearerToken(req)
-  if (!token) return res.status(401).json({ error: 'Unauthorized' })
-
-  const workspaceId = pickFirstQueryValue(req.query.workspace_id as any).trim()
-  if (!workspaceId) return res.status(400).json({ error: 'Missing workspace_id' })
+  const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   try {
-    const supabase = createClient(mustEnv('SUPABASE_URL'), mustEnv('SUPABASE_SERVICE_ROLE_KEY'), {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed', requestId });
+
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (!token) return res.status(401).json({ error: 'Unauthorized', requestId });
+
+    const user = await getAuthedUser(token);
+
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body ?? {});
+    const workspaceId = String(body.workspace_id || '').trim();
+    if (!workspaceId) return res.status(400).json({ error: 'workspace_id is required', requestId });
+
+    const admin = createClient(mustEnv('SUPABASE_URL'), mustEnv('SUPABASE_SERVICE_ROLE_KEY'), {
       auth: { persistSession: false },
-    })
+    });
 
-    const { data: authData, error: authErr } = await supabase.auth.getUser(token)
-    if (authErr || !authData?.user) {
-      return res.status(401).json({ error: 'Unauthorized' })
-    }
+    const env = (process.env.EBAY_ENV || 'production').toLowerCase();
 
-    const { data: row, error } = await supabase
+    // IMPORTANT CHANGE:
+    // We select refresh_token and access_token, because "connected" should be based on refresh_token.
+    const { data, error } = await admin
       .from('marketplace_connections')
-      .select('access_token,refresh_token,expires_at')
+      .select('id,updated_at,expires_at,refresh_token,access_token')
       .eq('workspace_id', workspaceId)
+      .eq('user_id', user.id)
       .eq('marketplace', 'ebay')
-      .eq('environment', 'production')
-      .maybeSingle<any>()
+      .eq('environment', env)
+      .maybeSingle();
 
-    if (error) {
-      return res.status(500).json({ error: error.message || 'Failed to query marketplace_connections' })
-    }
+    if (error) throw error;
 
-    const accessToken = row?.access_token
-    const refreshToken = row?.refresh_token
-    const expiresAt = row?.expires_at
+    // accessExpired is informational only; it MUST NOT drive "connected"
+    const accessExpired = data?.expires_at ? new Date(data.expires_at).getTime() <= Date.now() : true;
 
-    const has_refresh_token = !!String(refreshToken || '').trim()
-    const connected =
-      !!row &&
-      !!String(accessToken || '').trim() &&
-      !!String(refreshToken || '').trim() &&
-      !!String(expiresAt || '').trim()
+    // Correct "connected" meaning for "connect once":
+    // If we have a refresh token, we can always refresh access silently.
+    const connected = !!data?.id && !!data?.refresh_token;
 
-    const verify = pickFirstQueryValue(req.query.verify as any).trim()
+    const reason = connected ? null : !data?.id ? 'not_connected' : 'missing_refresh_token';
 
-    if (verify === '1' && connected === true) {
-      let verified = false
-      let ebay_error_status: number | undefined
+    // Optional: tell UI that a refresh will be needed soon (useful for debugging; not user-facing).
+    const needsRefresh = connected && accessExpired;
 
-      try {
-        const token = await getValidEbayToken(workspaceId, 'production')
-        const ebayRes = await fetch('https://api.ebay.com/sell/account/v1/privilege', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json',
-          },
-        })
-
-        if (ebayRes.ok) {
-          verified = true
-        } else {
-          verified = false
-          ebay_error_status = ebayRes.status
-        }
-      } catch (e: any) {
-        verified = false
-        if (typeof e?.statusCode === 'number') ebay_error_status = e.statusCode
-      }
-
-      return res.status(200).json({
-        ok: true,
-        connected,
-        expires_at: expiresAt ?? null,
-        has_refresh_token,
-        verified,
-        ...(typeof ebay_error_status === 'number' ? { ebay_error_status } : {}),
-      })
-    }
-
-    return res.status(200).json({ ok: true, connected, expires_at: expiresAt ?? null, has_refresh_token })
+    return res.status(200).json({
+      connected,
+      reason,
+      needsRefresh, // informational; you can ignore in UI
+      accessExpired, // informational; you should NOT show "not connected" because of this
+      updatedAt: data?.updated_at || null,
+      requestId,
+    });
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'Internal server error' })
+    sentryCaptureException(err, {
+      operation: 'ebay_oauth_status',
+      requestId,
+      extras: { message: String(err?.message || ''), status: 500 },
+    });
+    console.error('[ebay-oauth-status] error', { requestId, err });
+    return res.status(500).json({ error: 'Internal server error', details: err?.message, requestId });
   }
+
 }

@@ -34,31 +34,27 @@ export function EbayConnectCard() {
         return;
       }
 
-      const res = await fetch(`/api/ebay-oauth-status?workspace_id=${encodeURIComponent(String(workspaceId))}`, {
-        method: 'GET',
+      const res = await fetch('/api/ebay-oauth-status', {
+        method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
+        body: JSON.stringify({ workspace_id: workspaceId }),
       });
 
-      const raw = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        data = {};
-      }
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setStatusMsg(String(data?.error || raw || 'Failed to check eBay connection status.'));
+        setStatusMsg(data?.error || 'Failed to check eBay connection status.');
         setConnected(false);
         return;
       }
 
-      const isConnected = !!data?.connected;
+      const isConnected = !!data.connected;
       setConnected(isConnected);
 
-      if (!isConnected && data?.has_refresh_token === false) {
+      if (!isConnected && data?.reason === 'missing_refresh_token') {
         setStatusMsg('Expired — please reconnect');
       }
     } finally {
@@ -68,7 +64,6 @@ export function EbayConnectCard() {
 
 
   async function connect() {
-    console.log('[ebay reconnect] clicked')
     setLoading(true);
     setStatusMsg('');
 
@@ -100,26 +95,16 @@ export function EbayConnectCard() {
         }),
       });
 
-      const raw = await res.text()
-      console.log('[ebay-oauth-start] status:', res.status, 'ok:', res.ok)
-      console.log('[ebay-oauth-start] raw response:', raw)
-      let data: any = {}
-      try {
-        data = JSON.parse(raw)
-      } catch {
-        data = {}
-      }
-
-      const oauthUrl = data?.oauthUrl || data?.url
+      const data = await res.json().catch(() => ({}));
+      const oauthUrl = data?.oauthUrl ?? data?.url;
 
       if (!res.ok || !oauthUrl) {
-        setStatusMsg(String(data?.error || raw || `Failed (HTTP ${res.status})`))
-        console.error('[ebay-oauth-start] missing oauthUrl', { status: res.status, ok: res.ok, data })
-        return
+        setStatusMsg(data?.error || 'Failed to start eBay OAuth.');
+        return;
       }
 
-      console.log('Redirecting to eBay:', oauthUrl)
-      window.location.assign(String(oauthUrl))
+      // Redirect user to eBay consent screen
+      window.location.href = String(oauthUrl);
     } finally {
       setLoading(false);
     }

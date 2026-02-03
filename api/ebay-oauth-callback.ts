@@ -1,168 +1,211 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createClient } from '@supabase/supabase-js'
+// api/ebay-oauth-callback.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
+import { sentryCaptureException } from "../lib/sentry.js";
 
-function mustEnv(name: string): string {
-  const v = process.env[name]
-  if (!v) throw new Error(`Missing env var: ${name}`)
-  return v
+
+function mustEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
 }
 
-function pickFirstQueryValue(v: string | string[] | undefined): string {
-  if (Array.isArray(v)) return String(v[0] ?? '')
-  return String(v ?? '')
+function b64url(input: Buffer | string) {
+  const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
+  return b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function base64urlToUtf8(input: string): string {
-  const s = String(input || '').replace(/-/g, '+').replace(/_/g, '/')
-  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4))
-  return Buffer.from(s + pad, 'base64').toString('utf8')
+function b64urlToString(input: string) {
+  const b64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+  return Buffer.from(b64 + pad, 'base64').toString('utf8');
 }
 
-function decodeState(state: string): { workspace_id: string; user_id: string } {
-  const raw = base64urlToUtf8(state)
-  const obj: any = JSON.parse(raw)
-  const workspaceId = String(obj?.workspace_id || '').trim()
-  const userId = String(obj?.user_id || '').trim()
-  if (!workspaceId || !userId) throw new Error('Invalid state')
-  return { workspace_id: workspaceId, user_id: userId }
+function signState(payloadJson: string, secret: string) {
+  return b64url(crypto.createHmac('sha256', secret).update(payloadJson).digest());
+}
+
+async function exchangeCodeForTokens(args: { env: string; clientId: string; clientSecret: string; runame: string; code: string }) {
+  const tokenUrl =
+    args.env === 'sandbox'
+      ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token'
+      : 'https://api.ebay.com/identity/v1/oauth2/token';
+
+  const basic = Buffer.from(`${args.clientId}:${args.clientSecret}`).toString('base64');
+
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: args.code,
+    redirect_uri: args.runame, // RuName
+  });
+
+  const resp = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Basic ${basic}`,
+    },
+    body,
+  });
+
+  const text = await resp.text();
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { raw: text };
+  }
+
+  if (!resp.ok) {
+    const msg = json?.error_description || json?.error || text || 'Token exchange failed';
+    // Do not include authorization code/tokens; msg is safe.
+    throw new Error(`eBay token exchange failed: ${msg}`);
+  }
+
+  return json as {
+    access_token: string;
+    expires_in: number;
+    refresh_token: string;
+    refresh_token_expires_in: number;
+    token_type: string;
+  };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') {
-    res.statusCode = 405
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-    return res.end('Method not allowed')
-  }
-
-  const code = pickFirstQueryValue(req.query.code as any).trim()
-  const state = pickFirstQueryValue(req.query.state as any).trim()
-  const oauthError = pickFirstQueryValue(req.query.error as any).trim()
-  const oauthErrorDescription = pickFirstQueryValue(req.query.error_description as any).trim()
-
-  if (oauthError) {
-    res.statusCode = 400
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-    return res.end(`OAuth error: ${oauthError} - ${oauthErrorDescription}`)
-  }
-
-  if (!code) {
-    res.statusCode = 400
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-    return res.end('Missing code. Query: ' + JSON.stringify(req.query))
-  }
-  if (!state) {
-    res.statusCode = 400
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-    return res.end('Missing state')
-  }
-
-  let workspace_id = ''
-  let user_id = ''
+  const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let workspaceIdForSentry: string | null = null;
+  let envForSentry: string | null = null;
 
   try {
-    const decoded = decodeState(state)
-    workspace_id = decoded.workspace_id
-    user_id = decoded.user_id
-  } catch {
-    res.statusCode = 400
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-    return res.end('Invalid state')
-  }
+    if (req.method !== 'GET') return res.status(405).send('Method not allowed');
 
-  try {
-    const clientId = mustEnv('EBAY_CLIENT_ID')
-    const clientSecret = mustEnv('EBAY_CLIENT_SECRET')
-    const redirectUri = mustEnv('EBAY_REDIRECT_URI')
+    const code = String(req.query.code || '').trim();
+    const state = String(req.query.state || '').trim();
+    if (!code) return res.status(400).send('Missing code');
+    if (!state) return res.status(400).send('Missing state');
 
-    const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
+    const STATE_SECRET = mustEnv('EBAY_OAUTH_STATE_SECRET');
 
-    const body = new URLSearchParams()
-    body.set('grant_type', 'authorization_code')
-    body.set('code', code)
-    body.set('redirect_uri', redirectUri)
+    const [payloadB64, sig] = state.split('.');
+    if (!payloadB64 || !sig) return res.status(400).send('Invalid state');
 
-    const tokenResp = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${encoded}`,
-      },
-      body,
-    })
+    const payloadJson = b64urlToString(payloadB64);
+    const expectedSig = signState(payloadJson, STATE_SECRET);
 
-    const tokenJson: any = await tokenResp.json().catch(() => ({}))
-    if (!tokenResp.ok) {
-      res.statusCode = 302
-      res.setHeader('Location', '/dashboard?ebay=error')
-      return res.end()
+    // Signature verify
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) {
+      return res.status(400).send('Invalid state signature');
     }
 
-    const access_token = String(tokenJson?.access_token || '')
-    const refresh_token = String(tokenJson?.refresh_token || '')
-    const expires_in = Number(tokenJson?.expires_in || 0)
-    const scopeStr = String(tokenJson?.scope || '')
+    const payload = JSON.parse(payloadJson) as {
+      v: number;
+      ts: number;
+      nonce: string;
+      a: string;  // user_id (auth uid)
+      w: string;  // workspace_id
+      r: string;  // return_to
+      env: string;
+    };
 
-    const expiresAtMs = Date.now() + Math.max(0, expires_in - 60) * 1000
-    const expires_at = new Date(expiresAtMs).toISOString()
-    const scopes = scopeStr.split(' ').map((s) => s.trim()).filter(Boolean)
+    // 10 min window
+    if (!payload.ts || Date.now() - payload.ts > 10 * 60 * 1000) {
+      return res.status(400).send('State expired; please try again');
+    }
 
-    const SUPABASE_URL = mustEnv('SUPABASE_URL')
-    const SUPABASE_SERVICE_ROLE_KEY = mustEnv('SUPABASE_SERVICE_ROLE_KEY')
+    const EBAY_ENV = String(payload.env || process.env.EBAY_ENV || 'production').toLowerCase();
+    workspaceIdForSentry = typeof payload?.w === 'string' ? payload.w : null;
+    envForSentry = EBAY_ENV;
+    const CLIENT_ID = mustEnv('EBAY_CLIENT_ID');
+    const CLIENT_SECRET = mustEnv('EBAY_CLIENT_SECRET');
+    const RUNAME = mustEnv('EBAY_REDIRECT_URI');
+    const SCOPES_STR = mustEnv('EBAY_OAUTH_SCOPES');
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    let tokens: {
+      access_token: string;
+      expires_in: number;
+      refresh_token: string;
+      refresh_token_expires_in: number;
+      token_type: string;
+    };
+
+    try {
+      tokens = await exchangeCodeForTokens({
+        env: EBAY_ENV,
+        clientId: CLIENT_ID,
+        clientSecret: CLIENT_SECRET,
+        runame: RUNAME,
+        code,
+      });
+    } catch (e: any) {
+      sentryCaptureException(e, {
+        operation: 'oauth',
+        requestId,
+        workspace_id: workspaceIdForSentry,
+        tags: { operation: 'oauth', workspace_id: workspaceIdForSentry || '' },
+        extras: { requestId, env: EBAY_ENV, stage: 'token_exchange' },
+      });
+      throw e;
+    }
+
+    const now = Date.now();
+    const accessExpiresAt = new Date(now + (Number(tokens.expires_in) || 0) * 1000).toISOString();
+
+    const scopes = SCOPES_STR.split(' ').map((s) => s.trim()).filter(Boolean);
+
+    // Service role for DB write
+    const admin = createClient(mustEnv('SUPABASE_URL'), mustEnv('SUPABASE_SERVICE_ROLE_KEY'), {
       auth: { persistSession: false },
-    })
+    });
 
-    // Prefer a conservative select->update/insert to avoid depending on unique indexes.
-    const existing = await supabase
-      .from('marketplace_connections')
-      .select('id')
-      .eq('workspace_id', workspace_id)
-      .eq('user_id', user_id)
-      .eq('marketplace', 'ebay')
-      .eq('environment', 'production')
-      .limit(1)
-      .maybeSingle()
-
-    if (existing.error) {
-      res.statusCode = 302
-      res.setHeader('Location', '/dashboard?ebay=error')
-      return res.end()
-    }
-
-    const row: any = {
-      workspace_id,
-      user_id,
+    const upsertPayload = {
+      workspace_id: payload.w,
+      user_id: payload.a,
       marketplace: 'ebay',
-      environment: 'production',
-      access_token: access_token || null,
-      refresh_token: refresh_token || null,
-      expires_at,
+      environment: EBAY_ENV,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: accessExpiresAt,
       scopes,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await admin
+      .from('marketplace_connections')
+      .upsert(upsertPayload, { onConflict: 'workspace_id,user_id,marketplace,environment' });
+
+    if (error) {
+      sentryCaptureException(error, {
+        operation: 'oauth',
+        requestId,
+        workspace_id: workspaceIdForSentry,
+        tags: { operation: 'oauth', workspace_id: workspaceIdForSentry || '' },
+        extras: { requestId, env: envForSentry, stage: 'db_persist' },
+      });
+      throw error;
     }
 
-    if (existing.data?.id) {
-      const up = await supabase.from('marketplace_connections').update(row).eq('id', existing.data.id)
-      if (up.error) {
-        res.statusCode = 302
-        res.setHeader('Location', '/dashboard?ebay=error')
-        return res.end()
-      }
-    } else {
-      const ins = await supabase.from('marketplace_connections').insert(row)
-      if (ins.error) {
-        res.statusCode = 302
-        res.setHeader('Location', '/dashboard?ebay=error')
-        return res.end()
-      }
-    }
+    res.status(302).setHeader('Location', payload.r || '/settings?ebay=connected');
+    return res.end();
+  } catch (err: any) {
+    // OAuth errors: capture without secrets (no code/tokens/headers).
+    sentryCaptureException(err, {
+      operation: 'oauth',
+      requestId,
+      workspace_id: workspaceIdForSentry,
+      tags: {
+        operation: 'oauth',
+        workspace_id: workspaceIdForSentry || '',
+      },
+      extras: {
+        requestId,
+        env: envForSentry || String(process.env.EBAY_ENV || 'production').toLowerCase(),
+      },
+    });
 
-    res.statusCode = 302
-    res.setHeader('Location', '/dashboard?ebay=connected')
-    return res.end()
-  } catch {
-    res.statusCode = 302
-    res.setHeader('Location', '/dashboard?ebay=error')
-    return res.end()
+    const msg = encodeURIComponent(err?.message || 'OAuth failed');
+    res.status(302).setHeader('Location', `/settings?ebay=error&message=${msg}`);
+    return res.end();
   }
+
 }

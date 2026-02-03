@@ -112,11 +112,6 @@ function firstValue(v: string | string[] | undefined): string {
   return v ?? '';
 }
 
-function hasSpecificValue(v: any): boolean {
-  if (Array.isArray(v)) return v.some((x) => String(x ?? '').trim().length > 0);
-  return String(v ?? '').trim().length > 0;
-}
-
 function isHostedImageUrl(u: string): boolean {
   const s = String(u || '').trim();
   if (!s) return false;
@@ -822,7 +817,7 @@ export default function ResultsPage() {
       try {
         setError(null);
 
-        const response = await fetch('/api/ebay-api', {
+        const response = await fetch('/api/ebay-categories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
@@ -904,13 +899,13 @@ export default function ResultsPage() {
           return;
         }
 
-        const response = await fetch('/api/ebay-api', {
+        const response = await fetch('/api/ebay-item-conditions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({ action: 'getCategoryConditions', categoryId: cid }),
+          body: JSON.stringify({ category_id: cid }),
         });
 
         const data: any = await response.json().catch(() => ({}));
@@ -1953,10 +1948,6 @@ export default function ResultsPage() {
           const baseSpecs: ItemSpecific[] = Array.isArray(lj.item_specifics) ? lj.item_specifics : [];
           setSpecifics(applySizeTypeFilterToSpecifics(baseSpecs, getCategoryPathString(cat)));
 
-          // Cache detected facts + last-known specifics for category changes
-          aiDetectedRef.current = (lj?.detected && typeof lj.detected === 'object') ? lj.detected : (lj?.analysis?.detected || {});
-          aiSpecificsRef.current = baseSpecs;
-
           // Prefill Shipping & Policies from DB row
           setEbayPaymentPolicyId(String(row.ebay_payment_policy_id || ''));
           setEbayReturnPolicyId(String(row.ebay_return_policy_id || ''));
@@ -1993,81 +1984,12 @@ export default function ResultsPage() {
 
   const handleCategorySelect = async (newCategory: CategoryWithPath) => {
     setIsDirty(true);
-
-    const prevSpecifics = specifics;
-
     setCategory(newCategory);
     setConditionId('');
     setConditionName('');
     setConditionDescription('');
     setShowCategoryModal(false);
-
-    const categoryPath = getCategoryPathString(newCategory);
-
-    // If we don't have a DB listing yet, fall back to schema-only fetch.
-    if (!String(listingId || '').trim()) {
-      await fetchCategorySpecifics(newCategory.id, categoryPath);
-      return;
-    }
-
-    // Auto re-reconcile specifics for the new category (no manual work)
-    try {
-      setLoadingSpecifics(true);
-      setError(null);
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      const token = String(session?.access_token || '').trim();
-      if (!token) throw new Error('Not logged in. Please sign in again.');
-
-      const res = await fetch('/api/reconcile-specifics', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          listing_id: listingId,
-          category_id: newCategory.id,
-          category_path: categoryPath,
-          current: {
-            title,
-            description,
-            detected: aiDetectedRef.current || {},
-          },
-        }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || 'Failed to reconcile specifics');
-
-      const nextSpecifics = applySizeTypeFilterToSpecifics(
-        normalizeSpecifics(json?.data?.item_specifics),
-        categoryPath
-      );
-
-      // Preserve any existing user-entered values when the same aspect exists in the new schema.
-      const prevMap = new Map(prevSpecifics.map((s) => [String(s.name || '').toLowerCase(), s]));
-      const merged = nextSpecifics.map((s) => {
-        const prev = prevMap.get(String(s.name || '').toLowerCase());
-        if (!prev) return s;
-        if (hasSpecificValue(s.value)) return s;
-        if (!hasSpecificValue(prev.value)) return s;
-        return { ...s, value: prev.value };
-      });
-
-      setSpecifics(merged);
-      aiSpecificsRef.current = merged;
-      return;
-    } catch (e: any) {
-      console.error('[Specifics] reconcile-specifics failed:', e);
-      // Fallback to schema-only fetch + local smart fill
-      await fetchCategorySpecifics(newCategory.id, categoryPath);
-    } finally {
-      setLoadingSpecifics(false);
-    }
+    await fetchCategorySpecifics(newCategory.id, getCategoryPathString(newCategory));
   };
 
   const updateSpecific = (idx: number, value: string | string[]) => {
@@ -2446,7 +2368,6 @@ export default function ResultsPage() {
   };
 
   const handleReconnectEbay = async () => {
-    console.log('[ebay reconnect] clicked')
     setEbayReconnectLoading(true);
     setEbayReconnectError(null);
 
@@ -2474,30 +2395,19 @@ export default function ResultsPage() {
         },
         body: JSON.stringify({
           workspace_id: workspaceId,
-          return_to: `${window.location.origin}/settings?ebay=connected`,
+          return_to: window.location.href,
         }),
       });
 
-      const raw = await res.text()
-      console.log('[ebay-oauth-start] status:', res.status, 'ok:', res.ok)
-      console.log('[ebay-oauth-start] raw response:', raw)
-      let data: any = {}
-      try {
-        data = JSON.parse(raw)
-      } catch {
-        data = {}
-      }
-
-      const oauthUrl = data?.oauthUrl || data?.url
+      const data = await res.json().catch(() => ({}));
+      const oauthUrl = data?.oauthUrl || data?.url;
 
       if (!res.ok || !oauthUrl) {
-        setEbayReconnectError(String(data?.error || raw || `Failed (HTTP ${res.status})`))
-        console.error('[ebay-oauth-start] missing oauthUrl', { status: res.status, ok: res.ok, data })
-        return
+        setEbayReconnectError(data?.error || 'Failed to start eBay OAuth.');
+        return;
       }
 
-      console.log('Redirecting to eBay:', oauthUrl)
-      window.location.assign(String(oauthUrl))
+      window.location.href = String(oauthUrl);
     } finally {
       setEbayReconnectLoading(false);
     }
