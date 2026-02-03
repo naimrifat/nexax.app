@@ -146,6 +146,8 @@ const DashboardPage: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState<string>("all");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   // IMPORTANT: we no longer "hard-block" rendering on loading.
   const [loading, setLoading] = useState<boolean>(false);
@@ -230,7 +232,7 @@ const DashboardPage: React.FC = () => {
 
   const filteredListings = useMemo(() => {
     return listingItems
-.filter((item) => {
+ .filter((item) => {
   if (activeFilter === "all") return true;
 
   const status = (item.status || "").toLowerCase();
@@ -252,6 +254,20 @@ const DashboardPage: React.FC = () => {
         return sortDirection === "asc" ? dateA - dateB : dateB - dateA;
       });
   }, [listingItems, activeFilter, searchQuery, sortDirection]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeFilter, searchQuery, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredListings.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageEnd = pageStart + pageSize;
+  const pagedListings = filteredListings.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
 
   const toggleSortDirection = () => {
     setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -408,30 +424,57 @@ const DashboardPage: React.FC = () => {
                 </Link>
               </div>
             ) : (
-              filteredListings.map((listing) => (
+              pagedListings.map((listing) => (
                 <ListingCard key={listing.id} listing={listing} onRefresh={fetchListings} />
               ))
             )}
           </div>
 
-          {/* Pagination (placeholder) */}
           {filteredListings.length > 0 && (
-            <div className="flex justify-center mt-8">
-              <nav className="flex items-center space-x-1">
-                <button className="btn btn-outline py-1.5 px-3" type="button" disabled>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mt-8">
+              <nav className="flex items-center space-x-2">
+                <button
+                  className="btn btn-outline py-1.5 px-3"
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                >
                   Previous
                 </button>
+                <span className="text-sm text-gray-600">
+                  Page <span className="font-medium text-gray-900">{safePage}</span> of{" "}
+                  <span className="font-medium text-gray-900">{totalPages}</span>
+                </span>
                 <button
-                  className="h-9 w-9 rounded-md bg-teal-50 text-teal-700 font-medium flex items-center justify-center"
+                  className="btn btn-outline py-1.5 px-3"
                   type="button"
-                  disabled
+                  disabled={safePage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                 >
-                  1
-                </button>
-                <button className="btn btn-outline py-1.5 px-3" type="button" disabled>
                   Next
                 </button>
               </nav>
+
+              <div className="flex items-center justify-end gap-3">
+                <span className="text-sm text-gray-600">Items per page</span>
+                <div className="relative">
+                  <select
+                    className="input pr-10 py-2 w-28"
+                    value={pageSize}
+                    onChange={(e) => {
+                      const next = Number(e.target.value) || 25;
+                      setPageSize(next);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                  </select>
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400">
+                    ▼
+                  </span>
+                </div>
+              </div>
             </div>
           )}
         </div>
