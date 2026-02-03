@@ -27,15 +27,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const body: any = req.body || {}
-    const action = String(body.action ?? body?.payload?.action ?? '').trim()
+    const action = body.action ?? body.payload?.action ?? null
+    const actionKey = typeof action === 'string' ? action.trim() : action
     const payload = body.payload ?? body
-    if (!action) {
-      return res.status(400).json({ error: 'Missing action', requestId })
+    if (!actionKey) {
+      return res.status(400).json({ ok: false, error: 'MISSING_ACTION', requestId })
     }
 
     // Route to core implementations (dispatcher gateway -> core modules)
     let result: any = null
-    switch (action) {
+    switch (actionKey) {
       case 'analyze-listing':
         {
           const t0 = Date.now()
@@ -75,13 +76,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'getCategoryConditions':
         {
           const t0 = Date.now()
-          result = await ebayCategoriesCore({ payload, headers: req.headers as any })
+          const normalizedPayload =
+            actionKey === 'getCategories'
+              ? {
+                  ...payload,
+                  parentCategoryId:
+                    payload?.parentCategoryId == null && payload?.parent_category_id == null
+                      ? '0'
+                      : String(payload?.parentCategoryId).trim() === '0'
+                        ? '0'
+                        : payload?.parentCategoryId,
+                }
+              : payload
+          result = await ebayCategoriesCore({ payload: normalizedPayload, headers: req.headers as any })
           const latency = Date.now() - t0
           Telemetry.record?.(action, !!result?.ok, latency)
         }
         break
       default:
-        return res.status(400).json({ error: 'Invalid action', requestId })
+        return res.status(400).json({
+          ok: false,
+          error: 'INVALID_ACTION',
+          received_action: actionKey,
+          received_body_keys: Object.keys(body),
+          requestId,
+        })
     }
 
     const ok = result?.ok ?? true
