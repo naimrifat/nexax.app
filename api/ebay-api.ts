@@ -201,14 +201,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'getCategoryConditions':
         {
           const t0 = Date.now()
+          if (actionKey === 'getCategorySpecifics') {
+            const categoryId = String(payload?.categoryId ?? payload?.category_id ?? '').trim()
+            console.log(JSON.stringify({ requestId, action: 'getCategorySpecifics', categoryId, phase: 'start' }))
+          }
           result = await ebayCategoriesCore({ payload, headers: req.headers as any })
           if (actionKey === 'getCategorySpecifics') {
+            const categoryId = String(payload?.categoryId ?? payload?.category_id ?? '').trim()
+            const aspectCount = Array.isArray(result?.data?.aspects) ? result.data.aspects.length : 0
+            const ebayStatus = Number(result?.status || (result?.ok ? 200 : 0)) || 0
             console.log('[ebay-api] getCategorySpecifics', {
               requestId,
               action: actionKey,
               categoryId: String(payload?.categoryId ?? payload?.category_id ?? '').trim(),
-              aspectCount: Array.isArray(result?.data?.aspects) ? result.data.aspects.length : 0,
+              aspectCount,
             })
+            console.log(
+              JSON.stringify({
+                requestId,
+                action: 'getCategorySpecifics',
+                categoryId,
+                phase: 'end',
+                aspectCount,
+                ebayStatus,
+              })
+            )
           }
           const latency = Date.now() - t0
           Telemetry.record?.(action, !!result?.ok, latency)
