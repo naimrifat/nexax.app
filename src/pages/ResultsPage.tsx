@@ -9,6 +9,7 @@ import CategorySelector from '../components/CategorySelector';
 import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext'; // adjust if different
+import { authFetch } from '../utils/authFetch';
 
 type Category = {
   id: string;
@@ -822,7 +823,7 @@ export default function ResultsPage() {
       try {
         setError(null);
 
-        const response = await fetch('/api/ebay-api', {
+        const response = await authFetch('/api/ebay-api', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
