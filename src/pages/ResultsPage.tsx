@@ -1937,16 +1937,18 @@ export default function ResultsPage() {
           setKeywordsList(parsedKeywords);
 
           const catFromJson = lj.category || null;
+          const rawCatId = String(catFromJson?.id ?? row.category_id ?? '').trim();
+          const catId = rawCatId && rawCatId !== '0' ? rawCatId : '';
           const cat: CategoryWithPath | null =
-            catFromJson && (catFromJson.id || catFromJson.name)
+            catFromJson && (catId || catFromJson.name)
               ? {
-                  id: String(catFromJson.id ?? row.category_id ?? ''),
-                  name: String(catFromJson.name ?? 'Selected Category'),
+                  id: catId,
+                  name: String(catFromJson.name ?? (catId ? 'Selected Category' : '')),
                   path: String(catFromJson.path ?? row.category_path ?? ''),
                   breadcrumbs: Array.isArray(catFromJson.breadcrumbs) ? catFromJson.breadcrumbs : undefined,
                 }
-              : row.category_id
-                ? { id: String(row.category_id), name: 'Selected Category', path: String(row.category_path ?? '') }
+              : catId
+                ? { id: catId, name: 'Selected Category', path: String(row.category_path ?? '') }
                 : null;
 
           setCategory(cat);
