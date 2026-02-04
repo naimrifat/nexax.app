@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { createClient } from '@supabase/supabase-js'
 import { analyzeListingCore } from '../lib/cores/analyzeListingCore.js'
 import { reconcileSpecificsCore } from '../lib/cores/reconcileSpecificsCore.js'
 import { publishListingCore } from '../lib/cores/publishListingCore.js'
@@ -50,6 +51,12 @@ function normalizeWorkspaceId(payload: any): string {
   return String(payload?.workspace_id ?? payload?.workspaceId ?? '').trim()
 }
 
+function getEnv(name: string): string {
+  const v = process.env[name]
+  if (!v) throw new Error(`Missing env var: ${name}`)
+  return v
+}
+
 function mapCategoryChildren(children: any[]): Array<{ id: string; name: string; leaf: boolean }> {
   return (children || [])
     .map((n: any) => {
@@ -82,6 +89,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const payload = body.payload ?? body
     if (!actionKey) {
       return res.status(400).json({ ok: false, error: 'MISSING_ACTION', requestId })
+    }
+
+    const SUPABASE_URL = getEnv('SUPABASE_URL')
+    const SUPABASE_ANON_KEY = getEnv('SUPABASE_ANON_KEY')
+    const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY')
+    const authHeader = req.headers.authorization || ''
+
+    const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: authHeader ? { Authorization: authHeader } : {} },
+      auth: { persistSession: false },
+    })
+
+    const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false },
+    })
+
+    const {
+      data: { user },
+      error: authErr,
+    } = await userClient.auth.getUser()
+
+    if (authErr || !user) {
+      return res.status(401).json({ ok: false, error: 'Unauthorized', requestId })
     }
 
     // Route to core implementations (dispatcher gateway -> core modules)
@@ -134,16 +164,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           const t0 = Date.now()
           const marketplaceId = 'EBAY_US'
-          const workspaceId = normalizeWorkspaceId(payload)
+          const workspaceIdFromPayload = normalizeWorkspaceId(payload)
+
+          const { data: userRow, error: userRowErr } = await adminClient
+            .from('users')
+            .select('workspace_id')
+            .eq('auth_provider_user_id', user.id)
+            .maybeSingle()
+
+          if (userRowErr) {
+            return res.status(500).json({ ok: false, error: 'Failed to resolve user workspace', requestId })
+          }
+
+          const userWorkspaceId = String((userRow as any)?.workspace_id || '').trim()
+          const workspaceId = workspaceIdFromPayload || userWorkspaceId
+
           if (!workspaceId) {
             return res.status(401).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
           }
+
+          if (workspaceIdFromPayload && userWorkspaceId && workspaceIdFromPayload !== userWorkspaceId) {
+            return res.status(403).json({ ok: false, error: 'Forbidden', requestId })
+          }
+
+          let tokenRowFound = false
+          try {
+            const { data: connRow } = await adminClient
+              .from('marketplace_connections')
+              .select('id')
+              .eq('workspace_id', workspaceId)
+              .eq('marketplace', 'ebay')
+              .eq('environment', 'production')
+              .maybeSingle()
+            tokenRowFound = !!connRow
+          } catch {
+            tokenRowFound = false
+          }
+
+          console.log('[ebay-api] token lookup', {
+            requestId,
+            userId: user.id,
+            workspaceId,
+            tokenRowFound,
+          })
 
           let accessToken = ''
           try {
             accessToken = await getValidEbayToken(workspaceId, 'production')
           } catch (err: any) {
             const code = String(err?.code || '')
+            if (!tokenRowFound && (code === 'EBAY_NOT_CONNECTED' || code === 'EBAY_NO_REFRESH_TOKEN')) {
+              console.log('[ebay-api] token missing', {
+                requestId,
+                userId: user.id,
+                workspaceId,
+                tokenRowFound: false,
+              })
+            }
             if (code === 'EBAY_NOT_CONNECTED' || code === 'EBAY_NO_REFRESH_TOKEN') {
               return res.status(401).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
             }
