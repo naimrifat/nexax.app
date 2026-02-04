@@ -62,8 +62,8 @@ export default function CategorySelector({
       });
       if (!r.ok) throw new Error(await r.text());
       const data = await r.json();
-      const items = Array.isArray(data?.items) && data.items.length ? data.items : [];
-      const categories = Array.isArray(data?.categories) ? data.categories : [];
+      const items = Array.isArray(data?.data?.items) && data.data.items.length ? data.data.items : [];
+      const categories = Array.isArray(data?.data?.categories) ? data.data.categories : [];
       const list: ApiCategory[] = items.length ? items : categories;
 
       const mapped: CategoryNode[] = list
@@ -74,12 +74,11 @@ export default function CategorySelector({
         }))
         .filter((c) => c.id && c.name);
 
-      console.debug('[category-selector] getCategories', {
-        action: 'getCategories',
+      console.debug('getCategories', {
         parentCategoryId: pid,
-        itemsLen: items.length,
-        categoriesLen: categories.length,
-        normalizedLen: mapped.length,
+        ok: data?.ok,
+        itemsLen: data?.data?.items?.length,
+        categoriesLen: data?.data?.categories?.length,
       });
 
       // sort alphabetically by name
