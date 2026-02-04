@@ -314,7 +314,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             result = {
               ok: true,
-              data: { categories, items: [] },
+              data: { categories, items: categories },
               error: null,
               requestId,
             }
