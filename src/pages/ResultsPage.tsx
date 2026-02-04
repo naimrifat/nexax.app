@@ -502,7 +502,8 @@ function ItemSpecificControl({
   hasError?: boolean;
 }) {
   const opts = Array.isArray(spec.options) ? spec.options : [];
-  if (opts.length > 0 || spec.type === 'dropdown') {
+  const useDropdown = !!spec.selectionOnly || (spec.freeTextAllowed === false && opts.length > 0) || spec.type === 'dropdown';
+  if (useDropdown && opts.length > 0) {
     return (
       <TokenSelect
         multi={!!spec.multi}
@@ -894,20 +895,77 @@ export default function ResultsPage() {
             size: String(detected.size || '').trim(),
             department: String(detected.department || '').trim(),
             type: String(detected.type || '').trim(),
+            material: String(
+              (Array.isArray(detected.materials) ? detected.materials[0] : detected.materials) ||
+                detected.outerShellMaterial ||
+                detected.liningMaterial ||
+                ''
+            ).trim(),
           };
           const colors = Array.isArray(detected.colors) ? detected.colors : detected.colors ? [detected.colors] : [];
           const color = String(colors[0] || '').trim();
+
+          const normalize = (v: string) =>
+            String(v || '')
+              .toLowerCase()
+              .replace(/[^a-z0-9\s]/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
 
           const next: Record<string, string | string[]> = {};
           aspects.forEach((a: any) => {
             const name = String(a?.name || '').trim();
             if (!name) return;
             const key = name.toLowerCase();
-            if (key.includes('brand') && detectedMap.brand) next[name] = detectedMap.brand;
-            else if (key.includes('size') && detectedMap.size) next[name] = detectedMap.size;
-            else if ((key.includes('color') || key.includes('colour')) && color) next[name] = color;
-            else if (key.includes('department') && detectedMap.department) next[name] = detectedMap.department;
-            else if (key === 'type' && detectedMap.type) next[name] = detectedMap.type;
+            const allowed = Array.isArray(a?.values) ? a.values : [];
+            const selectionOnly = !!a?.selectionOnly || a?.freeTextAllowed === false;
+            const matchAllowed = (val: string) => {
+              if (!selectionOnly || !allowed.length) return val;
+              const map = new Map(allowed.map((v: string) => [normalize(v), v]));
+              return map.get(normalize(val)) || '';
+            };
+
+            if (key.includes('size type')) {
+              const sizeToken = String(detectedMap.size || '').toUpperCase();
+              let inferred = '';
+              if (sizeToken.includes('PET') || sizeToken.includes('PETITE')) inferred = 'Petite';
+              else if (
+                sizeToken.includes('TALL') ||
+                sizeToken.includes('XLT') ||
+                sizeToken.includes('2XLT') ||
+                sizeToken.includes('3XLT')
+              ) {
+                inferred = allowed.some((v: string) => normalize(v) === 'big tall' || normalize(v) === 'big & tall')
+                  ? 'Big & Tall'
+                  : 'Tall';
+              } else {
+                inferred = 'Regular';
+              }
+
+              const matched = matchAllowed(inferred);
+              if (matched) next[name] = matched;
+              return;
+            }
+
+            if (key.includes('brand') && detectedMap.brand) {
+              const matched = matchAllowed(String(detectedMap.brand));
+              if (matched) next[name] = matched;
+            } else if (key.includes('size') && detectedMap.size) {
+              const matched = matchAllowed(String(detectedMap.size));
+              if (matched) next[name] = matched;
+            } else if ((key.includes('color') || key.includes('colour')) && color) {
+              const matched = matchAllowed(color);
+              if (matched) next[name] = matched;
+            } else if (key.includes('department') && detectedMap.department) {
+              const matched = matchAllowed(String(detectedMap.department));
+              if (matched) next[name] = matched;
+            } else if (key === 'type' && detectedMap.type) {
+              const matched = matchAllowed(String(detectedMap.type));
+              if (matched) next[name] = matched;
+            } else if (key.includes('material') && detectedMap.material) {
+              const matched = matchAllowed(String(detectedMap.material));
+              if (matched) next[name] = matched;
+            }
           });
           return next;
         });
@@ -2152,14 +2210,22 @@ export default function ResultsPage() {
     const name = String(aspect?.name || '').trim();
     if (!name) return;
 
+    let valueToStore: string | string[] = nextValue;
+    if (aspect?.multi && typeof nextValue === 'string') {
+      valueToStore = nextValue
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+
     setIsDirty(true);
-    setSpecificsValues((prev) => ({ ...prev, [name]: nextValue }));
+    setSpecificsValues((prev) => ({ ...prev, [name]: valueToStore }));
     setSpecifics((prev) => {
       const next = [...prev];
       const idx = next.findIndex((s) => String(s.name || '').toLowerCase() === name.toLowerCase());
       const entry: ItemSpecific = {
         name,
-        value: nextValue as any,
+        value: valueToStore as any,
         required: !!aspect?.required,
         multi: !!aspect?.multi,
         selectionOnly: !!aspect?.selectionOnly,
@@ -3231,12 +3297,30 @@ export default function ResultsPage() {
               {categoryAspects.slice(0, 25).map((aspect: any, i: number) => {
                 const name = String(aspect?.name || '').trim();
                 if (!name) return null;
-                const value = specificsValues[name] ?? (aspect?.multi ? [] : '');
+                const rawValue = specificsValues[name] ?? (aspect?.multi ? [] : '');
+                const value = aspect?.multi
+                  ? Array.isArray(rawValue)
+                    ? rawValue
+                    : rawValue
+                      ? [String(rawValue)]
+                      : []
+                  : rawValue;
                 const shouldHighlight = highlightMissing || showTitleInlineError;
                 const isMissing = Array.isArray(value)
                   ? value.filter((v: any) => String(v ?? '').trim().length > 0).length === 0
                   : String(value ?? '').trim().length === 0;
                 const hasError = shouldHighlight && !!aspect?.required && isMissing;
+
+                const spec: ItemSpecific = {
+                  name,
+                  value: value as any,
+                  required: !!aspect?.required,
+                  options: Array.isArray(aspect?.values) ? aspect.values : [],
+                  multi: !!aspect?.multi,
+                  selectionOnly: !!aspect?.selectionOnly,
+                  freeTextAllowed: aspect?.freeTextAllowed !== false,
+                  type: aspect?.selectionOnly ? 'dropdown' : 'text',
+                };
 
                 return (
                   <div key={`${name}-${i}`} className="flex flex-col gap-1">
@@ -3244,69 +3328,11 @@ export default function ResultsPage() {
                       <span>{name}</span>
                       {aspect?.required && <span className="ml-1 text-red-500">*</span>}
                     </label>
-                    {aspect?.selectionOnly && Array.isArray(aspect?.values) && aspect.values.length > 0 ? (
-                      <select
-                        value={
-                          aspect?.multi
-                            ? Array.isArray(value)
-                              ? value
-                              : value
-                                ? [String(value)]
-                                : []
-                            : String(value || '')
-                        }
-                        multiple={!!aspect?.multi}
-                        onChange={(e) => {
-                          if (aspect?.multi) {
-                            const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
-                            setSchemaSpecificValue(aspect, selected);
-                          } else {
-                            setSchemaSpecificValue(aspect, String(e.target.value || ''));
-                          }
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '8px 10px',
-                          borderRadius: 6,
-                          border: hasError ? '1px solid #ef4444' : '1px solid #d1d5db',
-                          background: 'white',
-                          fontSize: 14,
-                        }}
-                      >
-                        {aspect?.multi ? null : <option value="">Select…</option>}
-                        {aspect.values.map((opt: string) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        value={Array.isArray(value) ? value.join(', ') : String(value || '')}
-                        onChange={(e) => {
-                          const raw = String(e.target.value || '');
-                          if (aspect?.multi) {
-                            const parts = raw
-                              .split(',')
-                              .map((s) => s.trim())
-                              .filter(Boolean);
-                            setSchemaSpecificValue(aspect, parts);
-                          } else {
-                            setSchemaSpecificValue(aspect, raw);
-                          }
-                        }}
-                        placeholder={`Enter ${name}`}
-                        style={{
-                          width: '100%',
-                          padding: '8px 10px',
-                          borderRadius: 6,
-                          border: hasError ? '1px solid #ef4444' : '1px solid #d1d5db',
-                          background: 'white',
-                          fontSize: 14,
-                        }}
-                      />
-                    )}
+                    <ItemSpecificControl
+                      spec={spec}
+                      hasError={hasError}
+                      onChange={(val) => setSchemaSpecificValue(aspect, val)}
+                    />
                   </div>
                 );
               })}
