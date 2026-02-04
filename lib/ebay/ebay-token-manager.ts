@@ -48,11 +48,12 @@ async function refreshToken(params: {
   env: EbayEnv;
   refreshToken: string;
   connectionId?: string;
+  requestId?: string;
+  workspaceId?: string;
 }) {
   const body = new URLSearchParams();
   body.set('grant_type', 'refresh_token');
   body.set('refresh_token', params.refreshToken);
-  body.set('scope', mustEnv('EBAY_OAUTH_SCOPES'));
 
   let res: Response;
   try {
@@ -80,6 +81,14 @@ async function refreshToken(params: {
   const json = await res.json().catch(() => ({}));
 
   if (!res.ok) {
+    console.log('[ebay-token-manager] refresh', {
+      requestId: params.requestId || null,
+      workspace_id: params.workspaceId || null,
+      environment: params.env,
+      refreshAttempt: true,
+      refreshOk: false,
+      ebayStatus: res.status,
+    });
     const err = json?.error || 'refresh_failed';
     const desc = json?.error_description || 'Unknown refresh error';
 
@@ -123,6 +132,15 @@ async function refreshToken(params: {
       details: json,
     });
   }
+
+  console.log('[ebay-token-manager] refresh', {
+    requestId: params.requestId || null,
+    workspace_id: params.workspaceId || null,
+    environment: params.env,
+    refreshAttempt: true,
+    refreshOk: true,
+    ebayStatus: res.status,
+  });
 
   return json as {
     access_token: string;
@@ -217,7 +235,13 @@ export async function getValidEbayToken(
 
     let refreshed: { access_token: string; expires_in: number; refresh_token?: string };
     try {
-      refreshed = await refreshToken({ env, refreshToken: refreshTok, connectionId: data.id });
+      refreshed = await refreshToken({
+        env,
+        refreshToken: refreshTok,
+        connectionId: data.id,
+        requestId: String(Date.now()),
+        workspaceId,
+      });
     } catch (e: any) {
       // Add workspace context at callsite (no tokens)
       sentryCaptureException(e, {
