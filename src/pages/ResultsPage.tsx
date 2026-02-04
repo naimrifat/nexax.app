@@ -557,6 +557,8 @@ export default function ResultsPage() {
   const [category, setCategory] = useState<CategoryWithPath | null>(null);
   const [categorySuggestions, setCategorySuggestions] = useState<Category[]>([]);
   const [specifics, setSpecifics] = useState<ItemSpecific[]>([]);
+  const [categoryAspects, setCategoryAspects] = useState<any[]>([]);
+  const [specificsValues, setSpecificsValues] = useState<Record<string, string | string[]>>({});
   const [images, setImages] = useState<ImageItem[]>([]);
 
   const [conditionOptions, setConditionOptions] = useState<{ conditionId: number; conditionName: string }[]>([]);
@@ -876,40 +878,21 @@ export default function ResultsPage() {
 
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
         const filtered = applySizeTypeFilterToSpecifics(filled, categoryPathForFilter);
-        setSpecifics(filtered);
 
-        const listingIdStr = String(listingId || '').trim();
-        const hasAiSpecifics = Array.isArray(aiSpecificsRef.current) && aiSpecificsRef.current.length > 0;
-        if (!listingIdStr || hasAiSpecifics) return;
+        const schemaNameSet = new Set(aspects.map((a: any) => String(a?.name || '').toLowerCase()));
+        const customSpecifics = (specifics || []).filter((s) => !schemaNameSet.has(String(s.name || '').toLowerCase()));
+        const mergedSpecifics = [...filtered, ...customSpecifics];
 
-        try {
-          const recRes = await authFetch('/api/reconcile-specifics', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              listing_id: listingIdStr,
-              category_id: categoryId,
-              category_path: categoryPathForFilter,
-              current: {
-                title,
-                description,
-                detected: aiDetectedRef.current || {},
-              },
-            }),
+        setCategoryAspects(aspects);
+        setSpecifics(mergedSpecifics);
+        setSpecificsValues(() => {
+          const next: Record<string, string | string[]> = {};
+          mergedSpecifics.forEach((s) => {
+            if (!s?.name) return;
+            next[String(s.name)] = s.value as any;
           });
-
-          const recJson = await recRes.json().catch(() => ({}));
-          if (recRes.ok && recJson?.data?.item_specifics) {
-            const reconciled = applySizeTypeFilterToSpecifics(
-              normalizeSpecifics(recJson.data.item_specifics),
-              categoryPathForFilter
-            );
-            setSpecifics(reconciled);
-            aiSpecificsRef.current = reconciled;
-          }
-        } catch (reconcileErr) {
-          console.error('[Specifics] reconcile-specifics failed:', reconcileErr);
-        }
+          return next;
+        });
       } catch (err: any) {
         console.error('[Specifics] Error:', err);
         setError(err?.message || 'Failed to load category specifics');
@@ -917,7 +900,7 @@ export default function ResultsPage() {
         setLoadingSpecifics(false);
       }
     },
-    [description, listingId, smartFillSpecifics, title]
+    [description, smartFillSpecifics, specifics]
   );
 
   const fetchItemConditions = useCallback(
@@ -1583,6 +1566,43 @@ export default function ResultsPage() {
       buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, getDimsForImage(img))
     );
 
+    const schemaNameSet = new Set(categoryAspects.map((a) => String(a?.name || '').toLowerCase()));
+    const schemaSpecifics = categoryAspects
+      .map((aspect: any) => {
+        const name = String(aspect?.name || '').trim();
+        if (!name) return null;
+        const value =
+          specificsValues[name] != null
+            ? (specificsValues[name] as any)
+            : aspect?.multi
+              ? []
+              : '';
+        return {
+          name,
+          value,
+          required: !!aspect?.required,
+          multi: !!aspect?.multi,
+          selectionOnly: !!aspect?.selectionOnly,
+          freeTextAllowed: aspect?.freeTextAllowed !== false,
+          options: aspect?.values || [],
+        };
+      })
+      .filter(Boolean) as ItemSpecific[];
+
+    const customSpecifics = specifics
+      .filter((s) => !schemaNameSet.has(String(s.name || '').toLowerCase()) && String(s.name || '').trim())
+      .map((s) => ({
+        name: s.name,
+        value: s.value,
+        required: !!s.required,
+        multi: !!s.multi,
+        selectionOnly: !!s.selectionOnly,
+        freeTextAllowed: s.freeTextAllowed !== false,
+        options: s.options || [],
+        allOptions: s.allOptions || undefined,
+        type: s.type || undefined,
+      }));
+
     return {
       title: title.trim(),
       sku: sku.trim(),
@@ -1600,17 +1620,7 @@ export default function ResultsPage() {
          const s = String(conditionDescription || '').trim();
          return s ? s : null;
        })(),
-       item_specifics: specifics.map((s) => ({
-         name: s.name,
-         value: s.value,
-         required: !!s.required,
-         multi: !!s.multi,
-         selectionOnly: !!s.selectionOnly,
-         freeTextAllowed: s.freeTextAllowed !== false,
-         options: s.options || [],
-         allOptions: s.allOptions || undefined,
-         type: s.type || undefined,
-       })),
+        item_specifics: [...schemaSpecifics, ...customSpecifics],
 
       keywords: keywords
         .split(',')
@@ -1621,7 +1631,7 @@ export default function ResultsPage() {
       image_urls: orderedImageUrls,
       mainImageIndex: 0,
     };
-  }, [category, images, mainImageIndex, price, specifics, keywords, title, sku, description, conditionId, conditionName, conditionDescription, getDimsForImage]);
+  }, [category, categoryAspects, images, mainImageIndex, price, specifics, specificsValues, keywords, title, sku, description, conditionId, conditionName, conditionDescription, getDimsForImage]);
 
   const assertHostedImagesOrThrow = (arr: string[]) => {
     const bad = (arr || []).filter((u) => !isHostedImageUrl(u));
@@ -1996,7 +2006,16 @@ export default function ResultsPage() {
           setCategory(cat);
 
           const baseSpecs: ItemSpecific[] = Array.isArray(lj.item_specifics) ? lj.item_specifics : [];
-          setSpecifics(applySizeTypeFilterToSpecifics(baseSpecs, getCategoryPathString(cat)));
+          const filteredSpecs = applySizeTypeFilterToSpecifics(baseSpecs, getCategoryPathString(cat));
+          setSpecifics(filteredSpecs);
+          setSpecificsValues(() => {
+            const next: Record<string, string | string[]> = {};
+            filteredSpecs.forEach((s) => {
+              if (!s?.name) return;
+              next[String(s.name)] = s.value as any;
+            });
+            return next;
+          });
 
           // Cache detected facts + last-known specifics for category changes
           aiDetectedRef.current = (lj?.detected && typeof lj.detected === 'object') ? lj.detected : (lj?.analysis?.detected || {});
@@ -2055,64 +2074,36 @@ export default function ResultsPage() {
       return;
     }
 
-    // Auto re-reconcile specifics for the new category (no manual work)
-    try {
-      setLoadingSpecifics(true);
-      setError(null);
+    await fetchCategorySpecifics(newCategory.id, categoryPath);
+  };
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+  const setSchemaSpecificValue = (aspect: any, nextValue: string | string[]) => {
+    const name = String(aspect?.name || '').trim();
+    if (!name) return;
 
-      const token = String(session?.access_token || '').trim();
-      if (!token) throw new Error('Not logged in. Please sign in again.');
-
-      const res = await fetch('/api/reconcile-specifics', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          listing_id: listingId,
-          category_id: newCategory.id,
-          category_path: categoryPath,
-          current: {
-            title,
-            description,
-            detected: aiDetectedRef.current || {},
-          },
-        }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || 'Failed to reconcile specifics');
-
-      const nextSpecifics = applySizeTypeFilterToSpecifics(
-        normalizeSpecifics(json?.data?.item_specifics),
-        categoryPath
-      );
-
-      // Preserve any existing user-entered values when the same aspect exists in the new schema.
-      const prevMap = new Map(prevSpecifics.map((s) => [String(s.name || '').toLowerCase(), s]));
-      const merged = nextSpecifics.map((s) => {
-        const prev = prevMap.get(String(s.name || '').toLowerCase());
-        if (!prev) return s;
-        if (hasSpecificValue(s.value)) return s;
-        if (!hasSpecificValue(prev.value)) return s;
-        return { ...s, value: prev.value };
-      });
-
-      setSpecifics(merged);
-      aiSpecificsRef.current = merged;
-      return;
-    } catch (e: any) {
-      console.error('[Specifics] reconcile-specifics failed:', e);
-      // Fallback to schema-only fetch + local smart fill
-      await fetchCategorySpecifics(newCategory.id, categoryPath);
-    } finally {
-      setLoadingSpecifics(false);
-    }
+    setIsDirty(true);
+    setSpecificsValues((prev) => ({ ...prev, [name]: nextValue }));
+    setSpecifics((prev) => {
+      const next = [...prev];
+      const idx = next.findIndex((s) => String(s.name || '').toLowerCase() === name.toLowerCase());
+      const entry: ItemSpecific = {
+        name,
+        value: nextValue as any,
+        required: !!aspect?.required,
+        multi: !!aspect?.multi,
+        selectionOnly: !!aspect?.selectionOnly,
+        freeTextAllowed: aspect?.freeTextAllowed !== false,
+        options: aspect?.values || [],
+        allOptions: aspect?.values || [],
+        type: aspect?.selectionOnly ? 'dropdown' : 'text',
+      };
+      if (idx >= 0) {
+        next[idx] = { ...next[idx], ...entry };
+      } else {
+        next.push(entry);
+      }
+      return next;
+    });
   };
 
   const updateSpecific = (idx: number, value: string | string[]) => {
@@ -3155,30 +3146,138 @@ export default function ResultsPage() {
             Item Specifics {loadingSpecifics && <span style={{ fontSize: 14, color: '#666' }}>(Loading…)</span>}
           </h3>
 
-          {specifics.length === 0 && !loadingSpecifics && (
+          {categoryAspects.length === 0 && specifics.length === 0 && !loadingSpecifics && (
             <div style={{ opacity: 0.7, marginTop: 8 }}>No specifics loaded. Select a category first.</div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-3" style={{ marginTop: 12 }}>
-            {specifics.map((spec, i) => (
-              <div key={`${spec.name}-${i}`} className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
-                  <span>{spec.name}</span>
-                  {spec.required && <span className="ml-1 text-red-500">*</span>}
-                </label>
-                {(() => {
-                  const shouldHighlight = highlightMissing || showTitleInlineError;
-                  const value = (spec as any)?.value;
-                  const isMissing = Array.isArray(value)
-                    ? value.filter((v: any) => String(v ?? '').trim().length > 0).length === 0
-                    : String(value ?? '').trim().length === 0;
-                  const hasError = shouldHighlight && !!(spec as any)?.required && isMissing;
+          {categoryAspects.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-3" style={{ marginTop: 12 }}>
+              {categoryAspects.slice(0, 25).map((aspect: any, i: number) => {
+                const name = String(aspect?.name || '').trim();
+                if (!name) return null;
+                const value = specificsValues[name] ?? (aspect?.multi ? [] : '');
+                const shouldHighlight = highlightMissing || showTitleInlineError;
+                const isMissing = Array.isArray(value)
+                  ? value.filter((v: any) => String(v ?? '').trim().length > 0).length === 0
+                  : String(value ?? '').trim().length === 0;
+                const hasError = shouldHighlight && !!aspect?.required && isMissing;
 
-                  return <ItemSpecificControl spec={spec} hasError={hasError} onChange={(val) => updateSpecific(i, val)} />;
-                })()}
+                return (
+                  <div key={`${name}-${i}`} className="flex flex-col gap-1">
+                    <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
+                      <span>{name}</span>
+                      {aspect?.required && <span className="ml-1 text-red-500">*</span>}
+                    </label>
+                    {aspect?.selectionOnly && Array.isArray(aspect?.values) && aspect.values.length > 0 ? (
+                      <select
+                        value={
+                          aspect?.multi
+                            ? Array.isArray(value)
+                              ? value
+                              : value
+                                ? [String(value)]
+                                : []
+                            : String(value || '')
+                        }
+                        multiple={!!aspect?.multi}
+                        onChange={(e) => {
+                          if (aspect?.multi) {
+                            const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
+                            setSchemaSpecificValue(aspect, selected);
+                          } else {
+                            setSchemaSpecificValue(aspect, String(e.target.value || ''));
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          border: hasError ? '1px solid #ef4444' : '1px solid #d1d5db',
+                          background: 'white',
+                          fontSize: 14,
+                        }}
+                      >
+                        {aspect?.multi ? null : <option value="">Select…</option>}
+                        {aspect.values.map((opt: string) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={Array.isArray(value) ? value.join(', ') : String(value || '')}
+                        onChange={(e) => {
+                          const raw = String(e.target.value || '');
+                          if (aspect?.multi) {
+                            const parts = raw
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean);
+                            setSchemaSpecificValue(aspect, parts);
+                          } else {
+                            setSchemaSpecificValue(aspect, raw);
+                          }
+                        }}
+                        placeholder={`Enter ${name}`}
+                        style={{
+                          width: '100%',
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          border: hasError ? '1px solid #ef4444' : '1px solid #d1d5db',
+                          background: 'white',
+                          fontSize: 14,
+                        }}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-3" style={{ marginTop: 12 }}>
+              {specifics.map((spec, i) => (
+                <div key={`${spec.name}-${i}`} className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
+                    <span>{spec.name}</span>
+                    {spec.required && <span className="ml-1 text-red-500">*</span>}
+                  </label>
+                  {(() => {
+                    const shouldHighlight = highlightMissing || showTitleInlineError;
+                    const value = (spec as any)?.value;
+                    const isMissing = Array.isArray(value)
+                      ? value.filter((v: any) => String(v ?? '').trim().length > 0).length === 0
+                      : String(value ?? '').trim().length === 0;
+                    const hasError = shouldHighlight && !!(spec as any)?.required && isMissing;
+
+                    return <ItemSpecificControl spec={spec} hasError={hasError} onChange={(val) => updateSpecific(i, val)} />;
+                  })()}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {categoryAspects.length > 0 && (() => {
+            const schemaNameSet = new Set(categoryAspects.map((a: any) => String(a?.name || '').toLowerCase()));
+            const customSpecifics = specifics
+              .map((spec, idx) => ({ spec, idx }))
+              .filter(({ spec }) => !schemaNameSet.has(String(spec.name || '').toLowerCase()));
+            if (!customSpecifics.length) return null;
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-3" style={{ marginTop: 12 }}>
+                {customSpecifics.map(({ spec, idx }) => (
+                  <div key={`${spec.name}-${idx}`} className="flex flex-col gap-1">
+                    <label className="text-sm font-medium text-gray-700 flex justify-between items-center">
+                      <span>{spec.name || 'Custom'}</span>
+                      {spec.required && <span className="ml-1 text-red-500">*</span>}
+                    </label>
+                    <ItemSpecificControl spec={spec} onChange={(val) => updateSpecific(idx, val)} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()}
 
           <button type="button" onClick={addSpecific} style={{ marginTop: 12, padding: '8px 16px', fontSize: 14 }}>
             + Add Custom Specific
