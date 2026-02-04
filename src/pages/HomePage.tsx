@@ -6,6 +6,7 @@ import { filterSizesForFamilyAndSizeType, detectSizeTypeForFamily } from '../uti
 import { compressForUpload } from '../utils/compressImage';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
+import { authFetch } from '../utils/authFetch';
 
 
 
@@ -436,7 +437,7 @@ export default function HomePage() {
     setLoadingSpecifics(true);
 
     try {
-      const response = await fetch('/api/ebay-api', {
+      const response = await authFetch('/api/ebay-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
@@ -933,7 +934,7 @@ export default function HomePage() {
 
     setStatus('Publishing to eBay...');
     try {
-      const response = await fetch('/api/publish-listing', {
+      const response = await authFetch('/api/publish-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
