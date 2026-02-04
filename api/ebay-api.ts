@@ -26,6 +26,41 @@ function ebaySafeErrorMessage(json: any, status: number): string {
   )
 }
 
+let cachedAppToken: { access_token: string; expires_at: number } | null = null
+
+async function getEbayAppToken(): Promise<string> {
+  if (cachedAppToken && cachedAppToken.expires_at > Date.now()) return cachedAppToken.access_token
+
+  const clientId = process.env.EBAY_CLIENT_ID
+  const clientSecret = process.env.EBAY_CLIENT_SECRET
+  if (!clientId || !clientSecret) return ''
+
+  const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
+
+  const resp = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Basic ${encoded}`,
+    },
+    body: 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope',
+  })
+
+  if (!resp.ok) return ''
+
+  const data = await resp.json().catch(() => ({}))
+  const accessToken = String(data?.access_token || '')
+  const expiresIn = Number(data?.expires_in ?? 7200)
+  if (!accessToken) return ''
+
+  cachedAppToken = {
+    access_token: accessToken,
+    expires_at: Date.now() + Math.max(0, (expiresIn - 300) * 1000),
+  }
+
+  return accessToken
+}
+
 async function ebayGetJsonOrThrow(url: string, accessToken: string) {
   const res = await fetch(url, {
     method: 'GET',
@@ -217,16 +252,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
           }
 
-          let accessToken = ''
-          try {
-            accessToken = await getValidEbayToken(workspaceId, 'production')
-          } catch (err: any) {
-            const code = String(err?.code || '')
-            if (code === 'EBAY_NOT_CONNECTED' || code === 'EBAY_NO_REFRESH_TOKEN') {
-              return res.status(200).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
-            }
-            throw err
-          }
+          console.error('[ebay-api] taxonomy token', {
+            requestId,
+            action: actionKey,
+            workspace_id: workspaceId,
+            usingAppToken: true,
+          })
+
+          const accessToken = await getEbayAppToken()
 
           if (!accessToken) {
             return res.status(200).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
