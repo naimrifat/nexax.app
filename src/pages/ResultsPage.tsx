@@ -600,6 +600,7 @@ export default function ResultsPage() {
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
+  const lastCategoryFetchRef = useRef<string>('');
   const [isEditImageLoading, setIsEditImageLoading] = useState(false);
 
   const [loading, setLoading] = useState(true);
@@ -876,20 +877,36 @@ export default function ResultsPage() {
           return { ...field, value };
         });
 
-        const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
-        const filtered = applySizeTypeFilterToSpecifics(filled, categoryPathForFilter);
-
+        const filtered = applySizeTypeFilterToSpecifics(baseSpecifics, categoryPathForFilter);
         const schemaNameSet = new Set(aspects.map((a: any) => String(a?.name || '').toLowerCase()));
         const customSpecifics = (specifics || []).filter((s) => !schemaNameSet.has(String(s.name || '').toLowerCase()));
         const mergedSpecifics = [...filtered, ...customSpecifics];
 
         setCategoryAspects(aspects);
         setSpecifics(mergedSpecifics);
-        setSpecificsValues(() => {
+        setSpecificsValues((prev) => {
+          if (Object.keys(prev || {}).length > 0) return prev;
+
+          const detected = aiDetectedRef.current || {};
+          const detectedMap: Record<string, string | string[]> = {
+            brand: String(detected.brand || '').trim(),
+            size: String(detected.size || '').trim(),
+            department: String(detected.department || '').trim(),
+            type: String(detected.type || '').trim(),
+          };
+          const colors = Array.isArray(detected.colors) ? detected.colors : detected.colors ? [detected.colors] : [];
+          const color = String(colors[0] || '').trim();
+
           const next: Record<string, string | string[]> = {};
-          mergedSpecifics.forEach((s) => {
-            if (!s?.name) return;
-            next[String(s.name)] = s.value as any;
+          aspects.forEach((a: any) => {
+            const name = String(a?.name || '').trim();
+            if (!name) return;
+            const key = name.toLowerCase();
+            if (key.includes('brand') && detectedMap.brand) next[name] = detectedMap.brand;
+            else if (key.includes('size') && detectedMap.size) next[name] = detectedMap.size;
+            else if ((key.includes('color') || key.includes('colour')) && color) next[name] = color;
+            else if (key.includes('department') && detectedMap.department) next[name] = detectedMap.department;
+            else if (key === 'type' && detectedMap.type) next[name] = detectedMap.type;
           });
           return next;
         });
@@ -900,7 +917,7 @@ export default function ResultsPage() {
         setLoadingSpecifics(false);
       }
     },
-    [description, smartFillSpecifics, specifics]
+    [description, specifics]
   );
 
   const fetchItemConditions = useCallback(
@@ -1559,49 +1576,20 @@ export default function ResultsPage() {
     setLastPreflightCode(null);
   }, [preflightInputKey, preflightPassed]);
 
+  useEffect(() => {
+    const cid = String(category?.id || '').trim();
+    if (!cid) return;
+    if (lastCategoryFetchRef.current === cid) return;
+    lastCategoryFetchRef.current = cid;
+    void fetchCategorySpecifics(cid, getCategoryPathString(category));
+  }, [category?.id, fetchCategorySpecifics]);
+
   const buildListingJson = useCallback(() => {
     const categoryPath = getCategoryPathString(category);
     const orderedImages = getOrderedImageItems(images, mainImageIndex);
     const orderedImageUrls = orderedImages.map((img) =>
       buildRotatedCloudinaryUrl(img.url, img.rotate, img.crop, getDimsForImage(img))
     );
-
-    const schemaNameSet = new Set(categoryAspects.map((a) => String(a?.name || '').toLowerCase()));
-    const schemaSpecifics = categoryAspects
-      .map((aspect: any) => {
-        const name = String(aspect?.name || '').trim();
-        if (!name) return null;
-        const value =
-          specificsValues[name] != null
-            ? (specificsValues[name] as any)
-            : aspect?.multi
-              ? []
-              : '';
-        return {
-          name,
-          value,
-          required: !!aspect?.required,
-          multi: !!aspect?.multi,
-          selectionOnly: !!aspect?.selectionOnly,
-          freeTextAllowed: aspect?.freeTextAllowed !== false,
-          options: aspect?.values || [],
-        };
-      })
-      .filter(Boolean) as ItemSpecific[];
-
-    const customSpecifics = specifics
-      .filter((s) => !schemaNameSet.has(String(s.name || '').toLowerCase()) && String(s.name || '').trim())
-      .map((s) => ({
-        name: s.name,
-        value: s.value,
-        required: !!s.required,
-        multi: !!s.multi,
-        selectionOnly: !!s.selectionOnly,
-        freeTextAllowed: s.freeTextAllowed !== false,
-        options: s.options || [],
-        allOptions: s.allOptions || undefined,
-        type: s.type || undefined,
-      }));
 
     return {
       title: title.trim(),
@@ -1620,7 +1608,7 @@ export default function ResultsPage() {
          const s = String(conditionDescription || '').trim();
          return s ? s : null;
        })(),
-        item_specifics: [...schemaSpecifics, ...customSpecifics],
+        item_specifics: Object.entries(specificsValues).map(([name, value]) => ({ name, value })),
 
       keywords: keywords
         .split(',')
@@ -1631,7 +1619,7 @@ export default function ResultsPage() {
       image_urls: orderedImageUrls,
       mainImageIndex: 0,
     };
-  }, [category, categoryAspects, images, mainImageIndex, price, specifics, specificsValues, keywords, title, sku, description, conditionId, conditionName, conditionDescription, getDimsForImage]);
+  }, [category, images, mainImageIndex, price, specificsValues, keywords, title, sku, description, conditionId, conditionName, conditionDescription, getDimsForImage]);
 
   const assertHostedImagesOrThrow = (arr: string[]) => {
     const bad = (arr || []).filter((u) => !isHostedImageUrl(u));
@@ -2111,6 +2099,11 @@ export default function ResultsPage() {
     setSpecifics((prev) => {
       let next = [...prev];
       next[idx] = { ...next[idx], value };
+
+       const name = String(next[idx]?.name || '').trim();
+       if (name) {
+         setSpecificsValues((prevValues) => ({ ...prevValues, [name]: value }));
+       }
 
       if (/size type/i.test(next[idx].name || '')) {
         next = applySizeTypeFilterToSpecifics(next, getCategoryPathString(category));
