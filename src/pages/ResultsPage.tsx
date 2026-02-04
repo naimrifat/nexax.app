@@ -829,10 +829,18 @@ export default function ResultsPage() {
           body: JSON.stringify({ action: 'getCategorySpecifics', categoryId }),
         });
 
-        if (!response.ok) throw new Error('Failed to fetch category specifics');
         const data = await response.json();
+        if (!response.ok || data?.ok === false) {
+          throw new Error(data?.error || 'Failed to fetch category specifics');
+        }
 
-        const baseSpecifics: ItemSpecific[] = (data.aspects || []).map((aspect: any) => ({
+        const aspects = Array.isArray(data?.data?.aspects)
+          ? data.data.aspects
+          : Array.isArray(data?.aspects)
+            ? data.aspects
+            : [];
+
+        const baseSpecifics: ItemSpecific[] = aspects.map((aspect: any) => ({
           name: aspect.name,
           value: aspect.multi ? [] : '',
           required: !!aspect.required,
@@ -867,7 +875,41 @@ export default function ResultsPage() {
         });
 
         const filled = smartFillSpecifics(withAiSpecifics, aiDetectedRef.current || {});
-        setSpecifics(applySizeTypeFilterToSpecifics(filled, categoryPathForFilter));
+        const filtered = applySizeTypeFilterToSpecifics(filled, categoryPathForFilter);
+        setSpecifics(filtered);
+
+        const listingIdStr = String(listingId || '').trim();
+        const hasAiSpecifics = Array.isArray(aiSpecificsRef.current) && aiSpecificsRef.current.length > 0;
+        if (!listingIdStr || hasAiSpecifics) return;
+
+        try {
+          const recRes = await authFetch('/api/reconcile-specifics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              listing_id: listingIdStr,
+              category_id: categoryId,
+              category_path: categoryPathForFilter,
+              current: {
+                title,
+                description,
+                detected: aiDetectedRef.current || {},
+              },
+            }),
+          });
+
+          const recJson = await recRes.json().catch(() => ({}));
+          if (recRes.ok && recJson?.data?.item_specifics) {
+            const reconciled = applySizeTypeFilterToSpecifics(
+              normalizeSpecifics(recJson.data.item_specifics),
+              categoryPathForFilter
+            );
+            setSpecifics(reconciled);
+            aiSpecificsRef.current = reconciled;
+          }
+        } catch (reconcileErr) {
+          console.error('[Specifics] reconcile-specifics failed:', reconcileErr);
+        }
       } catch (err: any) {
         console.error('[Specifics] Error:', err);
         setError(err?.message || 'Failed to load category specifics');
@@ -875,7 +917,7 @@ export default function ResultsPage() {
         setLoadingSpecifics(false);
       }
     },
-    [smartFillSpecifics]
+    [description, listingId, smartFillSpecifics, title]
   );
 
   const fetchItemConditions = useCallback(
