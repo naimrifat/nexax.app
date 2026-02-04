@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, ChevronLeft, Search, Check, Loader2, X } from 'lucide-react';
+import { authFetch } from '../utils/authFetch';
 
 type CategoryNode = {
   id: string;
@@ -54,7 +55,7 @@ export default function CategorySelector({
       return;
     }
     try {
-      const r = await fetch('/api/ebay-api', {
+      const r = await authFetch('/api/ebay-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'getCategories', parentCategoryId: pid }),
@@ -90,7 +91,7 @@ export default function CategorySelector({
     setSearching(true);
     setError('');
     try {
-      const r = await fetch('/api/ebay-api', {
+      const r = await authFetch('/api/ebay-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'searchCategories', query: term }),
