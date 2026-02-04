@@ -66,11 +66,13 @@ export default function CategorySelector({
       const categories = Array.isArray(data?.categories) ? data.categories : [];
       const list: ApiCategory[] = items.length ? items : categories;
 
-      const mapped: CategoryNode[] = list.map((c: any) => ({
-        id: String(c.id ?? c.categoryId ?? c.value ?? ''),
-        name: String(c.name ?? c.label ?? ''),
-        hasChildren: !!(c.hasChildren ?? c.leaf === false || c.leafCategory === false),
-      })).filter((c) => c.id && c.name);
+      const mapped: CategoryNode[] = list
+        .map((c: any) => ({
+          id: String(c.id ?? c.categoryId ?? c.value ?? ''),
+          name: String(c.name ?? c.label ?? ''),
+          hasChildren: !!(c.hasChildren ?? (c.leaf === false) ?? (c.leafCategory === false) ?? false),
+        }))
+        .filter((c) => c.id && c.name);
 
       console.debug('[category-selector] getCategories', {
         action: 'getCategories',
