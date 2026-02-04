@@ -79,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  if (req.method === 'OPTIONS') return res.status(200).end()
+  if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed', requestId })
 
   try {
@@ -96,8 +96,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const SUPABASE_SERVICE_ROLE_KEY = getEnv('SUPABASE_SERVICE_ROLE_KEY')
     const authHeader = req.headers.authorization || ''
 
+    if (!authHeader) {
+      return res.status(401).json({ ok: false, error: 'UNAUTHORIZED', requestId })
+    }
+
     const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: authHeader ? { Authorization: authHeader } : {} },
+      global: { headers: { Authorization: authHeader } },
       auth: { persistSession: false },
     })
 
@@ -111,7 +115,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } = await userClient.auth.getUser()
 
     if (authErr || !user) {
-      return res.status(401).json({ ok: false, error: 'Unauthorized', requestId })
+      return res.status(401).json({ ok: false, error: 'UNAUTHORIZED', requestId })
     }
 
     // Route to core implementations (dispatcher gateway -> core modules)
@@ -180,55 +184,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const workspaceId = workspaceIdFromPayload || userWorkspaceId
 
           if (!workspaceId) {
-            return res.status(401).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
+            return res.status(200).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
           }
 
           if (workspaceIdFromPayload && userWorkspaceId && workspaceIdFromPayload !== userWorkspaceId) {
-            return res.status(403).json({ ok: false, error: 'Forbidden', requestId })
+            return res.status(403).json({ ok: false, error: 'FORBIDDEN', requestId })
           }
 
-          let tokenRowFound = false
-          try {
-            const { data: connRow } = await adminClient
-              .from('marketplace_connections')
-              .select('id')
-              .eq('workspace_id', workspaceId)
-              .eq('marketplace', 'ebay')
-              .eq('environment', 'production')
-              .maybeSingle()
-            tokenRowFound = !!connRow
-          } catch {
-            tokenRowFound = false
-          }
+          const { data: connRow, error: connErr } = await adminClient
+            .from('marketplace_connections')
+            .select('id')
+            .eq('workspace_id', workspaceId)
+            .eq('marketplace', 'ebay')
+            .eq('environment', 'production')
+            .maybeSingle()
 
-          console.log('[ebay-api] token lookup', {
+          const tokenRowFound = !!connRow
+
+          console.error('[ebay-api] auth context', {
             requestId,
+            hasAuthorization: !!authHeader,
             userId: user.id,
             workspaceId,
             tokenRowFound,
           })
+
+          if (connErr) {
+            return res.status(500).json({ ok: false, error: 'Failed to load eBay connection', requestId })
+          }
+
+          if (!connRow) {
+            return res.status(200).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
+          }
 
           let accessToken = ''
           try {
             accessToken = await getValidEbayToken(workspaceId, 'production')
           } catch (err: any) {
             const code = String(err?.code || '')
-            if (!tokenRowFound && (code === 'EBAY_NOT_CONNECTED' || code === 'EBAY_NO_REFRESH_TOKEN')) {
-              console.log('[ebay-api] token missing', {
-                requestId,
-                userId: user.id,
-                workspaceId,
-                tokenRowFound: false,
-              })
-            }
             if (code === 'EBAY_NOT_CONNECTED' || code === 'EBAY_NO_REFRESH_TOKEN') {
-              return res.status(401).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
+              return res.status(200).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
             }
             throw err
           }
 
           if (!accessToken) {
-            return res.status(401).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
+            return res.status(200).json({ ok: false, error: 'EBAY_NOT_CONNECTED', requestId })
           }
 
           const parentCategoryId = String(payload?.parentCategoryId ?? '').trim()
