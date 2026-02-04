@@ -601,6 +601,7 @@ export default function ResultsPage() {
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const lastCategoryFetchRef = useRef<string>('');
+  const lastReconcileRef = useRef<string>('');
   const [isEditImageLoading, setIsEditImageLoading] = useState(false);
 
   const [loading, setLoading] = useState(true);
@@ -1583,6 +1584,88 @@ export default function ResultsPage() {
     lastCategoryFetchRef.current = cid;
     void fetchCategorySpecifics(cid, getCategoryPathString(category));
   }, [category?.id, fetchCategorySpecifics]);
+
+  useEffect(() => {
+    const cid = String(category?.id || '').trim();
+    if (!cid) return;
+    if (!categoryAspects.length) return;
+    const detected = aiDetectedRef.current || {};
+    if (!detected || Object.keys(detected).length === 0) return;
+
+    const hasValue = (val: any) => {
+      if (Array.isArray(val)) return val.filter((v) => String(v ?? '').trim().length > 0).length > 0;
+      return String(val ?? '').trim().length > 0;
+    };
+
+    const reconcileKey = `${cid}:${categoryAspects.length}`;
+    if (lastReconcileRef.current === reconcileKey) return;
+    lastReconcileRef.current = reconcileKey;
+
+    const run = async () => {
+      try {
+        const res = await authFetch('/api/ebay-api', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'reconcileSpecifics',
+            categoryId: cid,
+            categoryPath: getCategoryPathString(category),
+            aspects: categoryAspects,
+            detected,
+            title,
+            description,
+          }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || json?.ok === false) return;
+        const items = Array.isArray(json?.data?.item_specifics) ? json.data.item_specifics : [];
+
+        if (!items.length) return;
+
+        setSpecificsValues((prev) => {
+          const next = { ...prev };
+          items.forEach((it: any) => {
+            if (!it?.accepted) return;
+            const name = String(it?.name || '').trim();
+            if (!name) return;
+            if (hasValue(next[name])) return;
+            next[name] = it.value as any;
+          });
+          return next;
+        });
+
+        setSpecifics((prev) => {
+          const next = [...prev];
+          items.forEach((it: any) => {
+            if (!it?.accepted) return;
+            const name = String(it?.name || '').trim();
+            if (!name) return;
+            const idx = next.findIndex((s) => String(s.name || '').toLowerCase() === name.toLowerCase());
+            if (idx >= 0 && hasValue(next[idx]?.value)) return;
+            const entry: ItemSpecific = {
+              name,
+              value: it.value as any,
+              required: !!it?.required,
+              multi: Array.isArray(it.value),
+              selectionOnly: false,
+              freeTextAllowed: true,
+              options: [],
+              allOptions: [],
+              type: Array.isArray(it.value) ? 'dropdown' : 'text',
+            };
+            if (idx >= 0) next[idx] = { ...next[idx], ...entry };
+            else next.push(entry);
+          });
+          return next;
+        });
+      } catch (err) {
+        console.error('[Specifics] reconcileSpecifics failed:', err);
+      }
+    };
+
+    void run();
+  }, [category?.id, categoryAspects, description, title]);
 
   const buildListingJson = useCallback(() => {
     const categoryPath = getCategoryPathString(category);
