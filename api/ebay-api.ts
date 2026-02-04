@@ -202,6 +202,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           const t0 = Date.now()
           result = await ebayCategoriesCore({ payload, headers: req.headers as any })
+          if (actionKey === 'getCategorySpecifics') {
+            console.log('[ebay-api] getCategorySpecifics', {
+              requestId,
+              action: actionKey,
+              categoryId: String(payload?.categoryId ?? payload?.category_id ?? '').trim(),
+              aspectCount: Array.isArray(result?.data?.aspects) ? result.data.aspects.length : 0,
+            })
+          }
           const latency = Date.now() - t0
           Telemetry.record?.(action, !!result?.ok, latency)
         }
