@@ -6,7 +6,7 @@ import { publishListingCore } from '../lib/cores/publishListingCore.js'
 import { transcribeCore } from '../lib/cores/transcribeCore.js'
 import { ebayCategoriesCore } from '../lib/cores/ebayCategoriesCore.js'
 import { getValidEbayToken } from '../lib/ebay/ebay-token-manager.js'
-import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from '../lib/prompts/reconcilePrompt.js'
+import { mapDetectedToAspects } from '../lib/ebay/mapDetectedToAspects.js'
 import * as Telemetry from '../lib/telemetry.js'
 
 // Dispatcher gateway: single entry for all eBay related API surface
@@ -25,27 +25,6 @@ function ebaySafeErrorMessage(json: any, status: number): string {
     json?.error ||
     `eBay API failed: ${status}`
   )
-}
-
-function safeJsonParse<T = any>(txt: string, fallback: T): T {
-  try {
-    return JSON.parse(txt) as T
-  } catch {
-    return fallback
-  }
-}
-
-async function callOpenAIChat(body: any) {
-  const r = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-  if (!r.ok) throw new Error(`OpenAI API error: ${r.status} ${await r.text()}`)
-  return r.json()
 }
 
 function isLowConfidenceValue(v: string): boolean {
@@ -228,29 +207,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             options: Array.isArray(a?.values) ? a.values : [],
           }))
 
-          const userPrompt = buildReconcileUserPrompt({
-            categoryPath,
-            title: String(payload?.title || ''),
-            description: String(payload?.description || ''),
-            detected,
-            aspectsForModel,
-          })
-
-          const reconcile = await callOpenAIChat({
-            model: 'gpt-5.2',
-            response_format: { type: 'json_object' },
-            temperature: 0.2,
-            messages: [
-              { role: 'system', content: RECONCILE_SYSTEM_PROMPT },
-              { role: 'user', content: [{ type: 'text', text: userPrompt }] },
-            ],
-          })
-
-          const recJson = safeJsonParse<any>(reconcile?.choices?.[0]?.message?.content || '{}', {
-            final_specifics: [],
-          })
-
-          const proposals = Array.isArray(recJson?.final_specifics) ? recJson.final_specifics : []
+          const proposals = mapDetectedToAspects({ detected, aspects: aspectsForModel })
           const schemaMap = new Map(
             aspectsForModel
               .filter((a: any) => a?.name)
