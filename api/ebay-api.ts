@@ -6,6 +6,7 @@ import { publishListingCore } from '../lib/cores/publishListingCore.js'
 import { transcribeCore } from '../lib/cores/transcribeCore.js'
 import { ebayCategoriesCore } from '../lib/cores/ebayCategoriesCore.js'
 import { getValidEbayToken } from '../lib/ebay/ebay-token-manager.js'
+import { RECONCILE_SYSTEM_PROMPT, buildReconcileUserPrompt } from '../lib/prompts/reconcilePrompt.js'
 import * as Telemetry from '../lib/telemetry.js'
 
 // Dispatcher gateway: single entry for all eBay related API surface
@@ -24,6 +25,36 @@ function ebaySafeErrorMessage(json: any, status: number): string {
     json?.error ||
     `eBay API failed: ${status}`
   )
+}
+
+function safeJsonParse<T = any>(txt: string, fallback: T): T {
+  try {
+    return JSON.parse(txt) as T
+  } catch {
+    return fallback
+  }
+}
+
+async function callOpenAIChat(body: any) {
+  const r = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) throw new Error(`OpenAI API error: ${r.status} ${await r.text()}`)
+  return r.json()
+}
+
+function isLowConfidenceValue(v: string): boolean {
+  const s = String(v || '').trim().toLowerCase()
+  return !s || s === 'unknown' || s === 'n/a' || s === 'na' || s === 'maybe'
+}
+
+function normalizeValueString(v: string): string {
+  return String(v || '').trim().toLowerCase()
 }
 
 let cachedAppToken: { access_token: string; expires_at: number } | null = null
@@ -176,6 +207,118 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           const t0 = Date.now()
           result = await reconcileSpecificsCore({ payload, headers: req.headers as any })
+          const latency = Date.now() - t0
+          Telemetry.record?.(action, !!result?.ok, latency)
+        }
+        break
+      case 'reconcileSpecifics':
+        {
+          const t0 = Date.now()
+          const categoryId = String(payload?.categoryId ?? payload?.category_id ?? '').trim()
+          const categoryPath = String(payload?.categoryPath ?? payload?.category_path ?? '')
+          const detected = payload?.detected || {}
+          const aspects = Array.isArray(payload?.aspects) ? payload.aspects : []
+
+          const aspectsForModel = aspects.map((a: any) => ({
+            name: String(a?.name || '').trim(),
+            required: !!a?.required,
+            selectionOnly: !!a?.selectionOnly,
+            multi: !!a?.multi,
+            freeTextAllowed: a?.freeTextAllowed !== false,
+            options: Array.isArray(a?.values) ? a.values : [],
+          }))
+
+          const userPrompt = buildReconcileUserPrompt({
+            categoryPath,
+            title: String(payload?.title || ''),
+            description: String(payload?.description || ''),
+            detected,
+            aspectsForModel,
+          })
+
+          const reconcile = await callOpenAIChat({
+            model: 'gpt-5.2',
+            response_format: { type: 'json_object' },
+            temperature: 0.2,
+            messages: [
+              { role: 'system', content: RECONCILE_SYSTEM_PROMPT },
+              { role: 'user', content: [{ type: 'text', text: userPrompt }] },
+            ],
+          })
+
+          const recJson = safeJsonParse<any>(reconcile?.choices?.[0]?.message?.content || '{}', {
+            final_specifics: [],
+          })
+
+          const proposals = Array.isArray(recJson?.final_specifics) ? recJson.final_specifics : []
+          const schemaMap = new Map(
+            aspectsForModel
+              .filter((a: any) => a?.name)
+              .map((a: any) => [normalizeValueString(a.name), a])
+          )
+
+          const item_specifics = proposals.map((p: any) => {
+            const name = String(p?.name || '').trim()
+            const key = normalizeValueString(name)
+            const aspect = schemaMap.get(key)
+            if (!aspect) {
+              return { name, value: p?.value ?? '', accepted: false, reason: 'Unknown aspect' }
+            }
+
+            const rawValue = p?.value
+            if (Array.isArray(rawValue)) {
+              const cleaned = rawValue.map((v) => String(v || '')).filter((v) => !isLowConfidenceValue(v))
+              if (!cleaned.length) return { name, value: [], accepted: false, reason: 'Empty value' }
+
+              if (aspect.selectionOnly && Array.isArray(aspect.options) && aspect.options.length) {
+                const allowed = new Map(
+                  aspect.options.map((v: string) => [normalizeValueString(v), v])
+                )
+                const filtered = cleaned
+                  .map((v) => allowed.get(normalizeValueString(v)) || '')
+                  .filter(Boolean)
+                if (!filtered.length) {
+                  return { name, value: [], accepted: false, reason: 'Value not in options' }
+                }
+                return { name, value: aspect.multi ? filtered : filtered[0], accepted: true, reason: 'Accepted' }
+              }
+
+              if (aspect.freeTextAllowed) {
+                return { name, value: aspect.multi ? cleaned : cleaned[0], accepted: true, reason: 'Accepted' }
+              }
+
+              return { name, value: [], accepted: false, reason: 'Free text not allowed' }
+            }
+
+            const value = String(rawValue || '')
+            if (isLowConfidenceValue(value)) {
+              return { name, value: '', accepted: false, reason: 'Empty value' }
+            }
+
+            if (aspect.selectionOnly && Array.isArray(aspect.options) && aspect.options.length) {
+              const allowed = new Map(
+                aspect.options.map((v: string) => [normalizeValueString(v), v])
+              )
+              const matched = allowed.get(normalizeValueString(value))
+              if (!matched) {
+                return { name, value: '', accepted: false, reason: 'Value not in options' }
+              }
+              return { name, value: matched, accepted: true, reason: 'Accepted' }
+            }
+
+            if (aspect.freeTextAllowed) {
+              return { name, value, accepted: true, reason: 'Accepted' }
+            }
+
+            return { name, value: '', accepted: false, reason: 'Free text not allowed' }
+          })
+
+          result = {
+            ok: true,
+            data: { categoryId, item_specifics },
+            error: null,
+            requestId,
+          }
           const latency = Date.now() - t0
           Telemetry.record?.(action, !!result?.ok, latency)
         }
