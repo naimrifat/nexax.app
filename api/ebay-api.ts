@@ -160,6 +160,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           const t0 = Date.now()
           result = await analyzeListingCore({ payload, headers: req.headers as any })
+          console.log('[ebay-api] analyze-listing', {
+            requestId,
+            action: actionKey,
+            analyzeOk: !!result?.ok,
+            titleLen: String(result?.data?.title || '').length,
+            categoryIdPresent: !!String(result?.data?.category_id || result?.data?.category?.id || '').trim(),
+          })
           const latency = Date.now() - t0
           // instrument telemetry
           Telemetry.record?.(action, !!result?.ok, latency)
