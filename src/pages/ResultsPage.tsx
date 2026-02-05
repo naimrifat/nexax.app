@@ -6,7 +6,6 @@ import { Mic, Square, RefreshCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import './ResultsPage.css';
 import CategorySelector from '../components/CategorySelector';
-import { filterSizesForFamilyAndSizeType } from '../utils/sizeMaps';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext'; // adjust if different
 import { authFetch } from '../utils/authFetch';
@@ -304,29 +303,87 @@ function extractApiMessage(json: any): string {
 }
 
 /* ---------- Size helpers ---------- */
+function normalize(s: string): string {
+  return String(s || '').toLowerCase().trim();
+}
+
+function isBigTallSizeValue(v: string): boolean {
+  const n = normalize(v);
+  if (!n) return false;
+  if (n.startsWith('big ')) return true;
+  if (n.includes('xlt')) return true;
+  if (/^\d+xlt$/i.test(n)) return true;
+  if (/^(s|m|l)t$/i.test(n)) return true;
+  return false;
+}
+
+function isSizeTypeAspectName(name: string): boolean {
+  return /^size type$/i.test(name || '');
+}
+
+function isPrimarySizeAspectName(name: string): boolean {
+  return /^size$/i.test(name || '');
+}
+
+function isSelectionOnlyAspect(aspect: any): boolean {
+  return aspect?.type === 'SelectionOnly' || aspect?.selectionOnly || aspect?.freeTextAllowed === false;
+}
+
 function getSizeTypeValueFromSpecifics(specs: ItemSpecific[]): string {
-  const st = specs.find((s) => /size type/i.test(s.name || ''));
+  const st = specs.find((s) => isSizeTypeAspectName(String(s?.name || '')));
   if (!st) return '';
   return firstValue(st.value);
 }
 
-function isSizeAspectName(name: string): boolean {
-  return /^(size|waist size|neck size|chest size|inseam)$/i.test(name || '');
+function getSpecificValueByMatcher(
+  values: Record<string, string | string[]>,
+  matcher: (name: string) => boolean
+): string {
+  const keys = Object.keys(values || {});
+  for (const key of keys) {
+    if (matcher(key)) return firstValue(values[key] as any);
+  }
+  return '';
 }
 
-function filterSizeOptionsBySizeType(sizeType: string, allOptions: string[] = [], categoryPath: string = ''): string[] {
-  return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
+function getSpecificKeyByMatcher(
+  values: Record<string, string | string[]>,
+  matcher: (name: string) => boolean
+): string {
+  const keys = Object.keys(values || {});
+  for (const key of keys) {
+    if (matcher(key)) return key;
+  }
+  return '';
 }
 
-function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: string = ''): ItemSpecific[] {
+function filterSizeOptionsBySizeType(sizeType: string, allOptions: string[] = []): string[] {
+  const normalized = normalize(sizeType);
+  if (!normalized) return allOptions;
+  if (normalized === 'regular') return allOptions.filter((v) => !isBigTallSizeValue(v));
+  if (normalized === 'big & tall' || normalized === 'big and tall' || normalized === 'big tall') {
+    return allOptions.filter((v) => isBigTallSizeValue(v));
+  }
+  return allOptions;
+}
+
+function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], _categoryPath: string = ''): ItemSpecific[] {
+  const sizeTypeSpec = specs.find((s) => isSizeTypeAspectName(String(s?.name || '')));
+  const sizeSpec = specs.find((s) => isPrimarySizeAspectName(String(s?.name || '')));
+  if (!sizeTypeSpec || !sizeSpec) return specs;
+
+  const sizeTypeSelectionOnly = isSelectionOnlyAspect(sizeTypeSpec);
+  const sizeSelectionOnly = isSelectionOnlyAspect(sizeSpec);
+  if (!sizeTypeSelectionOnly || !sizeSelectionOnly) return specs;
+
   const sizeTypeVal = getSizeTypeValueFromSpecifics(specs);
   if (!sizeTypeVal) return specs;
 
   return specs.map((spec) => {
-    if (!isSizeAspectName(spec.name)) return spec;
+    if (!isPrimarySizeAspectName(spec.name)) return spec;
 
     const fullOptions = spec.allOptions ?? spec.options ?? [];
-    const filtered = filterSizeOptionsBySizeType(sizeTypeVal, fullOptions, categoryPath);
+    const filtered = filterSizeOptionsBySizeType(sizeTypeVal, fullOptions);
 
     let value = spec.value;
     const valueStr = firstValue(typeof value === 'string' || Array.isArray(value) ? (value as any) : '');
@@ -2218,8 +2275,27 @@ export default function ResultsPage() {
         .filter(Boolean);
     }
 
+    const sizeTypeAspect = categoryAspects.find((a: any) => isSizeTypeAspectName(String(a?.name || '')));
+    const sizeAspect = categoryAspects.find((a: any) => isPrimarySizeAspectName(String(a?.name || '')));
+    const shouldApplySizeTypeDependency =
+      !!sizeTypeAspect && !!sizeAspect && isSelectionOnlyAspect(sizeTypeAspect) && isSelectionOnlyAspect(sizeAspect);
+
+    const isSizeTypeUpdate = shouldApplySizeTypeDependency && isSizeTypeAspectName(name);
+    const sizeOptions = Array.isArray(sizeAspect?.values) ? sizeAspect.values : [];
+    const currentSizeKey = getSpecificKeyByMatcher(specificsValues, isPrimarySizeAspectName) || String(sizeAspect?.name || '');
+    const currentSizeValue = getSpecificValueByMatcher(specificsValues, isPrimarySizeAspectName);
+    const filteredSizeOptions = isSizeTypeUpdate ? filterSizeOptionsBySizeType(String(valueToStore), sizeOptions) : sizeOptions;
+    const shouldClearSize =
+      !!currentSizeKey && !!currentSizeValue && isSizeTypeUpdate && !filteredSizeOptions.includes(currentSizeValue);
+
     setIsDirty(true);
-    setSpecificsValues((prev) => ({ ...prev, [name]: valueToStore }));
+    setSpecificsValues((prev) => {
+      const next = { ...prev, [name]: valueToStore };
+      if (shouldClearSize && currentSizeKey) {
+        next[currentSizeKey] = sizeAspect?.multi ? [] : '';
+      }
+      return next;
+    });
     setSpecifics((prev) => {
       const next = [...prev];
       const idx = next.findIndex((s) => String(s.name || '').toLowerCase() === name.toLowerCase());
@@ -2238,6 +2314,12 @@ export default function ResultsPage() {
         next[idx] = { ...next[idx], ...entry };
       } else {
         next.push(entry);
+      }
+      if (shouldClearSize && currentSizeKey) {
+        const sizeIdx = next.findIndex((s) => isPrimarySizeAspectName(String(s?.name || '')));
+        if (sizeIdx >= 0) {
+          next[sizeIdx] = { ...next[sizeIdx], value: sizeAspect?.multi ? [] : '' };
+        }
       }
       return next;
     });
@@ -2288,6 +2370,17 @@ export default function ResultsPage() {
           .filter(Boolean)
           .join(' > ')
       : '');
+
+  const schemaSizeTypeAspect = categoryAspects.find((a: any) => isSizeTypeAspectName(String(a?.name || '')));
+  const schemaSizeAspect = categoryAspects.find((a: any) => isPrimarySizeAspectName(String(a?.name || '')));
+  const shouldApplySchemaSizeTypeDependency =
+    !!schemaSizeTypeAspect &&
+    !!schemaSizeAspect &&
+    isSelectionOnlyAspect(schemaSizeTypeAspect) &&
+    isSelectionOnlyAspect(schemaSizeAspect);
+  const selectedSchemaSizeTypeValue = shouldApplySchemaSizeTypeDependency
+    ? getSpecificValueByMatcher(specificsValues, isSizeTypeAspectName)
+    : '';
 
   // ----------------------------
   // Save Draft (NO created_by sent; DB default auth.uid())
@@ -3311,11 +3404,17 @@ export default function ResultsPage() {
                   : String(value ?? '').trim().length === 0;
                 const hasError = shouldHighlight && !!aspect?.required && isMissing;
 
+                const baseOptions = Array.isArray(aspect?.values) ? aspect.values : [];
+                const options =
+                  shouldApplySchemaSizeTypeDependency && isPrimarySizeAspectName(name)
+                    ? filterSizeOptionsBySizeType(selectedSchemaSizeTypeValue, baseOptions)
+                    : baseOptions;
+
                 const spec: ItemSpecific = {
                   name,
                   value: value as any,
                   required: !!aspect?.required,
-                  options: Array.isArray(aspect?.values) ? aspect.values : [],
+                  options,
                   multi: !!aspect?.multi,
                   selectionOnly: !!aspect?.selectionOnly,
                   freeTextAllowed: aspect?.freeTextAllowed !== false,
