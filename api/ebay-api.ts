@@ -6,7 +6,7 @@ import { publishListingCore } from '../lib/cores/publishListingCore.js'
 import { transcribeCore } from '../lib/cores/transcribeCore.js'
 import { ebayCategoriesCore } from '../lib/cores/ebayCategoriesCore.js'
 import { getValidEbayToken } from '../lib/ebay/ebay-token-manager.js'
-import { mapDetectedToAspects } from '@/lib/ebay/mapDetectedToAspects'
+import { mapDetectedToAspects } from '../lib/ebay/mapDetectedToAspects'
 import * as Telemetry from '../lib/telemetry.js'
 
 // Dispatcher gateway: single entry for all eBay related API surface
