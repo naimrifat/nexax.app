@@ -1757,11 +1757,22 @@ export default function ResultsPage() {
               const sizeKey = Object.keys(next).find((k) => k.toLowerCase() === 'size') || 'Size';
               if (!hasValue(next[sizeKey])) next[sizeKey] = sizeValue as any;
               if (sizeKey !== name && !hasValue(next[name])) next[name] = sizeValue as any;
+              console.log('[DEBUG][SIZE][MAP]', {
+                name: it?.name,
+                value: it?.value,
+                writingToKey: sizeKey,
+              });
               return;
             }
             if (hasValue(next[name])) return;
+            console.log('[DEBUG][SIZE][MAP]', {
+              name: it?.name,
+              value: it?.value,
+              writingToKey: name,
+            });
             next[name] = it.value as any;
           });
+          console.log('[DEBUG][SIZE][FINAL_MAP]', next);
           console.log('[DEBUG][SIZE][HYDRATE]', {
             sizeValue: next?.['Size'] ?? next?.['size'],
             sizeTypeValue: next?.['Size Type'] ?? next?.['size type'],
