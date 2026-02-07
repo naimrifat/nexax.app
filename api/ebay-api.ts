@@ -196,6 +196,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const categoryId = String(payload?.categoryId ?? payload?.category_id ?? '').trim()
           const categoryPath = String(payload?.categoryPath ?? payload?.category_path ?? '')
           const detected = payload?.detected || {}
+          const title = String(payload?.title ?? '')
+          const description = String(payload?.description ?? '')
           const aspects = Array.isArray(payload?.aspects) ? payload.aspects : []
 
           const aspectsForModel = aspects.map((a: any) => ({
@@ -207,7 +209,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             options: Array.isArray(a?.values) ? a.values : [],
           }))
 
-          const proposals = mapDetectedToAspects({ detected, aspects: aspectsForModel })
+          const proposals = mapDetectedToAspects({ detected, aspects: aspectsForModel, title, description })
+          const aiSpecifics = proposals
           const schemaMap = new Map(
             aspectsForModel
               .filter((a: any) => a?.name)
@@ -270,9 +273,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return { name, value: '', accepted: false, reason: 'Free text not allowed' }
           })
 
+          const reconcileResult = await reconcileSpecificsCore({
+            payload: { item_specifics, aiSpecifics },
+            headers: req.headers as any,
+          })
+          const reconciledSpecifics = Array.isArray(reconcileResult?.data?.item_specifics)
+            ? reconcileResult.data.item_specifics
+            : item_specifics
+
           result = {
             ok: true,
-            data: { categoryId, item_specifics },
+            data: { categoryId, item_specifics: reconciledSpecifics },
             error: null,
             requestId,
           }
