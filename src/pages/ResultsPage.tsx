@@ -1748,7 +1748,7 @@ export default function ResultsPage() {
         setSpecificsValues((prev) => {
           const next = { ...prev };
           items.forEach((it: any) => {
-            if (!it?.accepted) return;
+            if (it?.accepted === false) return;
             const name = String(it?.name || '').trim();
             if (!name) return;
             const lowerName = name.toLowerCase();
@@ -1783,7 +1783,7 @@ export default function ResultsPage() {
         setSpecifics((prev) => {
           const next = [...prev];
           items.forEach((it: any) => {
-            if (!it?.accepted) return;
+            if (it?.accepted === false) return;
             const name = String(it?.name || '').trim();
             if (!name) return;
             const idx = next.findIndex((s) => String(s.name || '').toLowerCase() === name.toLowerCase());
