@@ -6,7 +6,7 @@ import { publishListingCore } from '../lib/cores/publishListingCore.js'
 import { transcribeCore } from '../lib/cores/transcribeCore.js'
 import { ebayCategoriesCore } from '../lib/cores/ebayCategoriesCore.js'
 import { getValidEbayToken } from '../lib/ebay/ebay-token-manager.js'
-import { mapDetectedToAspects } from '../lib/ebay/mapDetectedToAspects.js'
+import { mapDetectedToAspects } from '@/lib/ebay/mapDetectedToAspects'
 import * as Telemetry from '../lib/telemetry.js'
 
 // Dispatcher gateway: single entry for all eBay related API surface
@@ -209,15 +209,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             options: Array.isArray(a?.values) ? a.values : [],
           }))
 
-          const proposals = mapDetectedToAspects({ detected, aspects: aspectsForModel, title, description })
-          const aiSpecifics = proposals
+          const aiSpecifics = mapDetectedToAspects({ detected, aspects: aspectsForModel, title, description })
           const schemaMap = new Map(
             aspectsForModel
               .filter((a: any) => a?.name)
               .map((a: any) => [normalizeValueString(a.name), a])
           )
 
-          const item_specifics = proposals.map((p: any) => {
+          const item_specifics = aiSpecifics.map((p: any) => {
             const name = String(p?.name || '').trim()
             const key = normalizeValueString(name)
             const aspect = schemaMap.get(key)
@@ -274,7 +273,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           })
 
           const reconcileResult = await reconcileSpecificsCore({
-            payload: { item_specifics, aiSpecifics },
+            payload: {
+              item_specifics: Array.isArray(payload?.item_specifics) ? payload.item_specifics : item_specifics,
+              aiSpecifics,
+              aspects,
+            },
             headers: req.headers as any,
           })
           const reconciledSpecifics = Array.isArray(reconcileResult?.data?.item_specifics)
