@@ -206,7 +206,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             selectionOnly: !!a?.selectionOnly,
             multi: !!a?.multi,
             freeTextAllowed: a?.freeTextAllowed !== false,
-            options: Array.isArray(a?.values) ? a.values : [],
+            values: Array.isArray(a?.values) ? a.values : Array.isArray(a?.options) ? a.options : [],
           }))
 
           const aiSpecifics = mapDetectedToAspects({
