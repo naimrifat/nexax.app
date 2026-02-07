@@ -196,7 +196,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const categoryId = String(payload?.categoryId ?? payload?.category_id ?? '').trim()
           const categoryPath = String(payload?.categoryPath ?? payload?.category_path ?? '')
           const detected = payload?.detected || {}
-          const title = String(payload?.title ?? '')
+          const listingTitle = String(payload?.title ?? req?.body?.payload?.title ?? '')
           const description = String(payload?.description ?? '')
           const aspects = Array.isArray(payload?.aspects) ? payload.aspects : []
 
@@ -209,7 +209,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             options: Array.isArray(a?.values) ? a.values : [],
           }))
 
-          const aiSpecifics = mapDetectedToAspects({ detected, aspects: aspectsForModel, title, description })
+          const aiSpecifics = mapDetectedToAspects({
+            detected: { ...detected, title: listingTitle },
+            aspects: aspectsForModel,
+            title: listingTitle,
+            description,
+          })
           const schemaMap = new Map(
             aspectsForModel
               .filter((a: any) => a?.name)
