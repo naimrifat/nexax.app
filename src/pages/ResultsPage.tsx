@@ -1751,6 +1751,14 @@ export default function ResultsPage() {
             if (!it?.accepted) return;
             const name = String(it?.name || '').trim();
             if (!name) return;
+            const lowerName = name.toLowerCase();
+            if (lowerName === 'size') {
+              const sizeValue = Array.isArray(it.value) ? (it.value[0] ?? '') : it.value;
+              const sizeKey = Object.keys(next).find((k) => k.toLowerCase() === 'size') || 'Size';
+              if (!hasValue(next[sizeKey])) next[sizeKey] = sizeValue as any;
+              if (sizeKey !== name && !hasValue(next[name])) next[name] = sizeValue as any;
+              return;
+            }
             if (hasValue(next[name])) return;
             next[name] = it.value as any;
           });
