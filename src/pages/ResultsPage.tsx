@@ -303,6 +303,7 @@ function extractApiMessage(json: any): string {
 }
 
 /* ---------- Size helpers ---------- */
+// Note: detectSizeTypeForFamily(...) is not used in ResultsPage.tsx.
 function normalize(s: string): string {
   return String(s || '').toLowerCase().trim();
 }
@@ -1736,6 +1737,12 @@ export default function ResultsPage() {
         if (!res.ok || json?.ok === false) return;
         const items = Array.isArray(json?.data?.item_specifics) ? json.data.item_specifics : [];
 
+        console.log('[DEBUG][SIZE][API]', {
+          size: items?.find((x: any) => (x?.name || '').toLowerCase() === 'size')?.value,
+          sizeType: items?.find((x: any) => (x?.name || '').toLowerCase() === 'size type')?.value,
+          raw: items?.filter((x: any) => ['size', 'size type'].includes((x?.name || '').toLowerCase())) ?? [],
+        });
+
         if (!items.length) return;
 
         setSpecificsValues((prev) => {
@@ -1746,6 +1753,10 @@ export default function ResultsPage() {
             if (!name) return;
             if (hasValue(next[name])) return;
             next[name] = it.value as any;
+          });
+          console.log('[DEBUG][SIZE][HYDRATE]', {
+            sizeValue: next?.['Size'] ?? next?.['size'],
+            sizeTypeValue: next?.['Size Type'] ?? next?.['size type'],
           });
           return next;
         });
@@ -2288,6 +2299,15 @@ export default function ResultsPage() {
     const shouldClearSize =
       !!currentSizeKey && !!currentSizeValue && isSizeTypeUpdate && !filteredSizeOptions.includes(currentSizeValue);
 
+    if (isSizeTypeUpdate) {
+      console.log('[DEBUG][SIZETYPE][SET]', {
+        reason: 'setSchemaSpecificValue',
+        nextSizeType: valueToStore,
+        prevSizeType: getSpecificValueByMatcher(specificsValues, isSizeTypeAspectName),
+        categoryPath: getCategoryPathString(category),
+      });
+    }
+
     setIsDirty(true);
     setSpecificsValues((prev) => {
       const next = { ...prev, [name]: valueToStore };
@@ -2337,6 +2357,12 @@ export default function ResultsPage() {
        }
 
       if (/size type/i.test(next[idx].name || '')) {
+        console.log('[DEBUG][SIZETYPE][SET]', {
+          reason: 'updateSpecific',
+          nextSizeType: value,
+          prevSizeType: getSizeTypeValueFromSpecifics(next),
+          categoryPath: getCategoryPathString(category),
+        });
         next = applySizeTypeFilterToSpecifics(next, getCategoryPathString(category));
       }
       return next;
@@ -3405,10 +3431,24 @@ export default function ResultsPage() {
                 const hasError = shouldHighlight && !!aspect?.required && isMissing;
 
                 const baseOptions = Array.isArray(aspect?.values) ? aspect.values : [];
-                const options =
-                  shouldApplySchemaSizeTypeDependency && isPrimarySizeAspectName(name)
-                    ? filterSizeOptionsBySizeType(selectedSchemaSizeTypeValue, baseOptions)
-                    : baseOptions;
+                const isSizeAspect = shouldApplySchemaSizeTypeDependency && isPrimarySizeAspectName(name);
+                if (isSizeAspect) {
+                  console.log('[DEBUG][SIZE][OPTIONS_ALL]', {
+                    count: baseOptions?.length ?? 0,
+                    sample: (baseOptions ?? []).slice(0, 20),
+                  });
+                }
+                const options = isSizeAspect
+                  ? filterSizeOptionsBySizeType(selectedSchemaSizeTypeValue, baseOptions)
+                  : baseOptions;
+                if (isSizeAspect) {
+                  console.log('[DEBUG][SIZE][OPTIONS_FILTERED]', {
+                    sizeType: selectedSchemaSizeTypeValue,
+                    count: options?.length ?? 0,
+                    has2XL: (options ?? []).includes('2XL'),
+                    sample: (options ?? []).slice(0, 20),
+                  });
+                }
 
                 const spec: ItemSpecific = {
                   name,
@@ -3420,6 +3460,13 @@ export default function ResultsPage() {
                   freeTextAllowed: aspect?.freeTextAllowed !== false,
                   type: aspect?.selectionOnly ? 'dropdown' : 'text',
                 };
+
+                if (isSizeAspect) {
+                  console.log('[DEBUG][SIZE][SELECT_VALUE]', {
+                    value: spec.value,
+                    type: Array.isArray(spec.value) ? 'array' : typeof spec.value,
+                  });
+                }
 
                 return (
                   <div key={`${name}-${i}`} className="flex flex-col gap-1">
