@@ -382,10 +382,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           try {
+            const treeRes = await fetch(
+              'https://api.ebay.com/sell/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US',
+              { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+            )
+            const treeText = await treeRes.text().catch(() => '')
+            if (!treeRes.ok) {
+              result = {
+                ok: false,
+                error: 'EBAY_CONDITIONS_ERROR',
+                data: { details: String(treeText || '').slice(0, 500) },
+                requestId,
+              }
+              break
+            }
+            const treeJson = treeText ? JSON.parse(treeText) : {}
+            const categoryTreeId = String(treeJson?.categoryTreeId || '').trim()
+            if (!categoryTreeId) {
+              result = {
+                ok: false,
+                error: 'EBAY_CONDITIONS_ERROR',
+                data: { details: 'Missing categoryTreeId from eBay taxonomy' },
+                requestId,
+              }
+              break
+            }
+
             const conditionsRes = await fetch(
-              `https://api.ebay.com/commerce/taxonomy/v1/get_item_condition_policies?category_id=${encodeURIComponent(
-                categoryId
-              )}`,
+              `https://api.ebay.com/sell/taxonomy/v1/category_tree/${encodeURIComponent(
+                categoryTreeId
+              )}/get_item_condition_policies?category_id=${encodeURIComponent(categoryId)}`,
               { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
             )
             const conditionsText = await conditionsRes.text().catch(() => '')
@@ -409,7 +435,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   p?.condition?.conditionName ||
                   p?.name
                 return {
-                  id: id != null ? Number(id) : null,
+                  id: id != null ? String(id) : '',
                   name: String(name || '').trim(),
                 }
               })
