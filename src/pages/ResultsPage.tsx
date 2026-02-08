@@ -1081,10 +1081,13 @@ export default function ResultsPage() {
           return;
         }
 
-        const next = Array.isArray(data?.conditions) ? data.conditions : [];
+        const rawConditions = Array.isArray(data?.data?.conditions) ? data.data.conditions : [];
+        const next = rawConditions.map((c: any) => ({
+          conditionId: Number(c?.id ?? c?.conditionId ?? c?.condition_id ?? 0),
+          conditionName: String(c?.name ?? c?.conditionName ?? c?.condition_name ?? ''),
+        })).filter((c: any) => c.conditionId && c.conditionName);
 
-        // Backend returns { conditions, rawCategoryId, marketplaceId }
-        setConditionRequired(true);
+        setConditionRequired(next.length > 0);
         setConditionOptions(next);
 
 
@@ -3331,8 +3334,8 @@ export default function ResultsPage() {
               const isConditionMissing = !String(conditionId || '').trim();
 
               const options: { id: string; label: string }[] = (conditionOptions || []).map((c) => ({
-                id: String(c.conditionId),
-                label: String(c.conditionName),
+                id: String((c as any).id ?? c.conditionId),
+                label: String((c as any).name ?? c.conditionName),
               }));
 
               const selectedId = String(conditionId || '').trim();
@@ -3345,6 +3348,7 @@ export default function ResultsPage() {
                     ref={conditionSelectRef}
                     id="condition_id"
                     value={selectedId}
+                    disabled={conditionsLoading || options.length === 0}
                     onChange={(e) => {
                       const nextId = String(e.target.value || '').trim();
                       const opt = options.find((o) => o.id === nextId) || null;
@@ -3368,7 +3372,9 @@ export default function ResultsPage() {
                       fontSize: 14,
                     }}
                   >
-                    <option value="">Select…</option>
+                    <option value="">
+                      {options.length === 0 ? 'No conditions available for this category' : 'Select…'}
+                    </option>
                     {options.map((o) => (
                       <option key={o.id} value={o.id}>
                         {o.label}
