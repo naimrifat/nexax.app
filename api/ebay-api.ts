@@ -315,9 +315,126 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           Telemetry.record?.(action, !!result?.ok, latency)
         }
         break
+      case 'getCategoryConditions':
+        {
+          const t0 = Date.now()
+          const categoryId = String(payload?.categoryId ?? payload?.category_id ?? '').trim()
+          if (!categoryId) {
+            result = {
+              ok: false,
+              error: 'MISSING_CATEGORY_ID',
+              data: { details: 'categoryId is required' },
+              requestId,
+            }
+            break
+          }
+
+          let workspaceId = normalizeWorkspaceId(payload)
+          if (!workspaceId) {
+            const { data: userRow, error: userRowErr } = await adminClient
+              .from('users')
+              .select('workspace_id')
+              .eq('auth_provider_user_id', user.id)
+              .maybeSingle()
+            if (userRowErr) {
+              result = {
+                ok: false,
+                error: 'FAILED_TO_RESOLVE_WORKSPACE',
+                data: { details: userRowErr.message },
+                requestId,
+              }
+              break
+            }
+            workspaceId = String((userRow as any)?.workspace_id || '').trim()
+          }
+
+          if (!workspaceId) {
+            result = {
+              ok: false,
+              error: 'WORKSPACE_NOT_FOUND',
+              data: { details: 'Workspace ID not found for user' },
+              requestId,
+            }
+            break
+          }
+
+          let accessToken = ''
+          try {
+            accessToken = await getValidEbayToken(workspaceId)
+          } catch (err: any) {
+            result = {
+              ok: false,
+              error: err?.code || 'EBAY_CONDITIONS_ERROR',
+              data: { details: String(err?.message || 'Failed to get eBay token') },
+              requestId,
+            }
+            break
+          }
+
+          if (!accessToken) {
+            result = {
+              ok: false,
+              error: 'EBAY_CONDITIONS_ERROR',
+              data: { details: 'Missing eBay access token' },
+              requestId,
+            }
+            break
+          }
+
+          try {
+            const conditionsRes = await fetch(
+              `https://api.ebay.com/commerce/taxonomy/v1/get_item_condition_policies?category_id=${encodeURIComponent(
+                categoryId
+              )}`,
+              { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+            )
+            const conditionsText = await conditionsRes.text().catch(() => '')
+            if (!conditionsRes.ok) {
+              result = {
+                ok: false,
+                error: 'EBAY_CONDITIONS_ERROR',
+                data: { details: String(conditionsText || '').slice(0, 500) },
+                requestId,
+              }
+              break
+            }
+            const data = conditionsText ? JSON.parse(conditionsText) : {}
+            const rawPolicies = Array.isArray(data?.itemConditionPolicies) ? data.itemConditionPolicies : []
+            const conditions = rawPolicies
+              .map((p: any) => {
+                const id = p?.conditionId ?? p?.condition?.conditionId
+                const name =
+                  p?.conditionDescription ||
+                  p?.condition?.conditionDescription ||
+                  p?.condition?.conditionName ||
+                  p?.name
+                return {
+                  id: id != null ? Number(id) : null,
+                  name: String(name || '').trim(),
+                }
+              })
+              .filter((c: any) => c.id && c.name)
+
+            result = {
+              ok: true,
+              data: { conditions },
+              error: null,
+              requestId,
+            }
+            const latency = Date.now() - t0
+            Telemetry.record?.(action, !!result?.ok, latency)
+          } catch (err: any) {
+            result = {
+              ok: false,
+              error: 'EBAY_CONDITIONS_ERROR',
+              data: { details: String(err?.message || 'Failed to fetch conditions') },
+              requestId,
+            }
+          }
+        }
+        break
       case 'getCategorySpecifics':
       case 'getCategorySuggestions':
-      case 'getCategoryConditions':
         {
           const t0 = Date.now()
           if (actionKey === 'getCategorySpecifics') {
