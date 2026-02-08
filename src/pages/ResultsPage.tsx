@@ -623,6 +623,7 @@ export default function ResultsPage() {
   const [conditionOptions, setConditionOptions] = useState<{ conditionId: number; conditionName: string }[]>([]);
   const [conditionRequired, setConditionRequired] = useState(false);
   const [conditionsLoading, setConditionsLoading] = useState(false);
+  const [conditionError, setConditionError] = useState('');
   const [conditionId, setConditionId] = useState<string>('');
   const [conditionName, setConditionName] = useState<string>('');
   const [conditionDescription, setConditionDescription] = useState<string>('');
@@ -1046,6 +1047,7 @@ export default function ResultsPage() {
         setConditionId('');
         setConditionName('');
         setConditionDescription('');
+        setConditionError('');
         return;
       }
 
@@ -1061,6 +1063,7 @@ export default function ResultsPage() {
         if (sessionErr || !session?.access_token) {
           setConditionOptions([]);
           setConditionRequired(true);
+          setConditionError('');
           return;
         }
 
@@ -1075,9 +1078,17 @@ export default function ResultsPage() {
 
         const data: any = await response.json().catch(() => ({}));
 
-        if (!response.ok) {
+        if (!response.ok || data?.ok === false) {
           setConditionOptions([]);
           setConditionRequired(true);
+          const details = String(data?.data?.details || data?.details || '').toLowerCase();
+          if (response.status === 403 || details.includes('access denied') || details.includes('scope')) {
+            setConditionError(
+              'Your eBay connection needs additional permission to load category conditions. Please reconnect eBay.'
+            );
+          } else {
+            setConditionError('');
+          }
           return;
         }
 
@@ -1089,6 +1100,7 @@ export default function ResultsPage() {
 
         setConditionRequired(next.length > 0);
         setConditionOptions(next);
+        setConditionError('');
 
 
         if (conditionId) {
@@ -3348,7 +3360,7 @@ export default function ResultsPage() {
                     ref={conditionSelectRef}
                     id="condition_id"
                     value={selectedId}
-                    disabled={conditionsLoading || options.length === 0}
+                    disabled={conditionsLoading || options.length === 0 || !!conditionError}
                     onChange={(e) => {
                       const nextId = String(e.target.value || '').trim();
                       const opt = options.find((o) => o.id === nextId) || null;
@@ -3373,7 +3385,11 @@ export default function ResultsPage() {
                     }}
                   >
                     <option value="">
-                      {options.length === 0 ? 'No conditions available for this category' : 'Select…'}
+                      {conditionError
+                        ? 'No conditions available for this category'
+                        : options.length === 0
+                          ? 'No conditions available for this category'
+                          : 'Select…'}
                     </option>
                     {options.map((o) => (
                       <option key={o.id} value={o.id}>
@@ -3381,6 +3397,12 @@ export default function ResultsPage() {
                       </option>
                     ))}
                   </select>
+
+                  {conditionError && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#b45309', maxWidth: 520 }}>
+                      {conditionError}
+                    </div>
+                  )}
 
                   {needsDescription && (
                     <div style={{ marginTop: 10 }}>
