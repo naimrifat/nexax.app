@@ -359,13 +359,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           let accessToken = ''
+          let debugUrl = ''
           try {
             accessToken = await getValidEbayToken(workspaceId)
           } catch (err: any) {
             result = {
               ok: false,
               error: err?.code || 'EBAY_CONDITIONS_ERROR',
-              data: { details: String(err?.message || 'Failed to get eBay token') },
+              data: { details: `exception url=${debugUrl || 'n/a'} err=${String(err?.stack || err?.message || err).slice(0, 500)}` },
               requestId,
             }
             break
@@ -375,28 +376,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             result = {
               ok: false,
               error: 'EBAY_CONDITIONS_ERROR',
-              data: { details: 'Missing eBay access token' },
+              data: { details: 'token_missing' },
               requestId,
             }
             break
           }
 
           try {
-            const treeRes = await fetch(
-              'https://api.ebay.com/sell/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US',
-              { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
-            )
+            debugUrl =
+              'https://api.ebay.com/sell/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US'
+            const treeRes = await fetch(debugUrl, {
+              headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+            })
             const treeText = await treeRes.text().catch(() => '')
             if (!treeRes.ok) {
               result = {
                 ok: false,
                 error: 'EBAY_CONDITIONS_ERROR',
-                data: { details: String(treeText || '').slice(0, 500) },
+                data: { details: `status=${treeRes.status} url=${debugUrl} body=${String(treeText || '').slice(0, 500)}` },
                 requestId,
               }
               break
             }
-            const treeJson = treeText ? JSON.parse(treeText) : {}
+            let treeJson: any = {}
+            try {
+              treeJson = treeText ? JSON.parse(treeText) : {}
+            } catch (err: any) {
+              result = {
+                ok: false,
+                error: 'EBAY_CONDITIONS_ERROR',
+                data: { details: `json_parse_failed url=${debugUrl} body=${String(treeText || '').slice(0, 500)}` },
+                requestId,
+              }
+              break
+            }
             const categoryTreeId = String(treeJson?.categoryTreeId || '').trim()
             if (!categoryTreeId) {
               result = {
@@ -408,23 +421,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               break
             }
 
-            const conditionsRes = await fetch(
-              `https://api.ebay.com/sell/taxonomy/v1/category_tree/${encodeURIComponent(
-                categoryTreeId
-              )}/get_item_condition_policies?category_id=${encodeURIComponent(categoryId)}`,
-              { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
-            )
+            debugUrl = `https://api.ebay.com/sell/taxonomy/v1/category_tree/${encodeURIComponent(
+              categoryTreeId
+            )}/get_item_condition_policies?category_id=${encodeURIComponent(categoryId)}`
+            const conditionsRes = await fetch(debugUrl, {
+              headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+            })
             const conditionsText = await conditionsRes.text().catch(() => '')
             if (!conditionsRes.ok) {
               result = {
                 ok: false,
                 error: 'EBAY_CONDITIONS_ERROR',
-                data: { details: String(conditionsText || '').slice(0, 500) },
+                data: { details: `status=${conditionsRes.status} url=${debugUrl} body=${String(conditionsText || '').slice(0, 500)}` },
                 requestId,
               }
               break
             }
-            const data = conditionsText ? JSON.parse(conditionsText) : {}
+            let data: any = {}
+            try {
+              data = conditionsText ? JSON.parse(conditionsText) : {}
+            } catch (err: any) {
+              result = {
+                ok: false,
+                error: 'EBAY_CONDITIONS_ERROR',
+                data: { details: `json_parse_failed url=${debugUrl} body=${String(conditionsText || '').slice(0, 500)}` },
+                requestId,
+              }
+              break
+            }
             const rawPolicies = Array.isArray(data?.itemConditionPolicies) ? data.itemConditionPolicies : []
             const conditions = rawPolicies
               .map((p: any) => {
@@ -453,7 +477,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             result = {
               ok: false,
               error: 'EBAY_CONDITIONS_ERROR',
-              data: { details: String(err?.message || 'Failed to fetch conditions') },
+              data: { details: `exception url=${debugUrl || 'n/a'} err=${String(err?.stack || err?.message || err).slice(0, 500)}` },
               requestId,
             }
           }
