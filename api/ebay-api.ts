@@ -384,7 +384,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           try {
             debugUrl =
-              'https://api.ebay.com/sell/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US'
+              'https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US'
             const treeRes = await fetch(debugUrl, {
               headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
             })
@@ -421,7 +421,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               break
             }
 
-            debugUrl = `https://api.ebay.com/sell/taxonomy/v1/category_tree/${encodeURIComponent(
+            debugUrl = `https://api.ebay.com/commerce/taxonomy/v1/category_tree/${encodeURIComponent(
               categoryTreeId
             )}/get_item_condition_policies?category_id=${encodeURIComponent(categoryId)}`
             const conditionsRes = await fetch(debugUrl, {
@@ -459,7 +459,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   p?.condition?.conditionName ||
                   p?.name
                 return {
-                  id: id != null ? String(id) : '',
+                  id: id != null ? Number(id) : null,
                   name: String(name || '').trim(),
                 }
               })
