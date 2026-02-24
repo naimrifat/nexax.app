@@ -309,7 +309,7 @@ function isSizeAspectName(name: string): boolean {
 }
 
 function filterSizeOptionsBySizeType(sizeType: string, allOptions: string[] = [], categoryPath: string = ''): string[] {
-  return filterSizesForFamilyAndSizeType(categoryPath, sizeType, allOptions);
+  return allOptions;
 }
 
 function applySizeTypeFilterToSpecifics(specs: ItemSpecific[], categoryPath: string = ''): ItemSpecific[] {
