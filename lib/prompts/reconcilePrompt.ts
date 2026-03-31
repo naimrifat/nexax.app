@@ -127,6 +127,7 @@ Rules:
 
 ## SECTION 2: TITLE GENERATION
 
+Words of the title should start with a capital letter.
 Your title must maximize buyer search intent within eBay's 80-character 
 limit. Every character is valuable — use as many as justified by evidence, 
 without padding or degrading quality.
