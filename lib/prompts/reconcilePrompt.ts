@@ -320,6 +320,15 @@ apply in full regardless of what the user has configured.
 Each aspect in the schema must appear in your output — either with a value 
 or explicitly empty.
 
+If multiple materials are visible in the tag, use them all in the specifics.
+
+"Garment Care" for all jeans is always "Machine Washable".
+Men's jeans are usually "Mid Rise" if not mentioned in the photos anywhere. Use that in the "Rise" Specifics for Men's Jeans.
+If the "Fit" isn't mentioned anywhere for the men's jeans, use "Regular" in the specifics.
+For Silk only, it's always dry clean only
+For Wool/Cashmere/Merino Wool/Alpaca/Mohair/Angora/Rabbit Hair only, it's always dry clean only
+For 
+
 ### General Rules
 
 - Treat allowed option lists as the only permitted vocabulary for 
